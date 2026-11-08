@@ -1,22 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { DOKUMEN_WAJIB, hitungState, selisihHari, tanggalWib, type Snapshot } from "./doc-tracker-state.js";
+import { DOKUMEN_WAJIB, STATES, bastSj, dokumenDariArsip, gabungDokumen, hitungState, selisihHari, tanggalWib, type ArsipRujukan, type Snapshot } from "./doc-tracker-state.js";
 
 const dokLengkap = { po_customer: true, sj_ttd_gudang: true, sj_ttd_sales: true, sj_ttd_kepala_sales: true };
 
 const snap = (o: Partial<Snapshot> = {}): Snapshot => ({
   soTanggal: "2026-11-01",
-  reviewAt: null,
-  approvedAt: null,
   sj: [],
   faktur: [],
   dokumen: {},
-  stempelWajib: true,
   today: "2026-11-20",
   ...o,
 });
-const sj = (o: Partial<{ nomor: string; tanggal: string | null; kirimAt: string | null; terimaAt: string | null; bastAt: string | null }> = {}) => ({
+const sj = (o: Partial<{ nomor: string; tanggal: string | null; kirimAt: string | null; terimaAt: string | null; bastAt: string | null; bastInstalasiAt: string | null }> = {}) => ({
   nomor: "SJ1", tanggal: null, kirimAt: null, terimaAt: null, bastAt: null, ...o,
 });
 
@@ -29,11 +26,13 @@ test("SO baru tanpa apa-apa → Draft, tanpa anomali, umur dari tanggal SO", () 
   assert.equal(r.billingRisiko, false);
 });
 
-test("urutan state: review → approved → sent → received → executed → billed → paid → closed", () => {
-  const s = snap({ reviewAt: "2026-11-02T03:00:00Z" });
-  assert.equal(hitungState(s).state, "review");
-  s.approvedAt = "2026-11-03T03:00:00Z";
-  assert.equal(hitungState(s).state, "approved");
+test("7 state, tanpa Review/Approved", () => {
+  assert.deepEqual([...STATES], ["draft", "sent", "received", "executed", "billed", "paid", "closed"]);
+});
+
+test("urutan state: draft → sent → received → executed → billed → paid → closed", () => {
+  const s = snap();
+  assert.equal(hitungState(s).state, "draft");
   s.sj = [sj({ kirimAt: "2026-11-04T03:00:00Z" })];
   assert.equal(hitungState(s).state, "sent");
   s.sj = [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z" })];
@@ -54,7 +53,6 @@ test("urutan state: review → approved → sent → received → executed → b
 
 test("Closed butuh SEMUA dokumen wajib; teknisi hanya informasi; lunas tanpa dokumen = anomali", () => {
   const base = snap({
-    reviewAt: "2026-11-02T03:00:00Z", approvedAt: "2026-11-03T03:00:00Z",
     sj: [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z", bastAt: "2026-11-06T03:00:00Z" })],
     faktur: [{ nomor: "F1", tanggal: "2026-11-07", lunas: true, lunasAt: "2026-11-15" }],
   });
@@ -71,10 +69,10 @@ test("dokumen kurang sebelum lunas bukan anomali (belum waktunya Closed)", () =>
   assert.equal(r.dokumenKurang.length, DOKUMEN_WAJIB.length);
 });
 
-test("faktur saja (tanpa stempel/SJ) → Billed; tahap kosong di bawahnya jadi belumTercatat, bukan penahan", () => {
+test("faktur saja (tanpa SJ) → Billed; tahap kosong di bawahnya jadi belumTercatat, bukan penahan", () => {
   const r = hitungState(snap({ faktur: [{ nomor: "F1", tanggal: "2026-11-07", lunas: false }] }));
   assert.equal(r.state, "billed");
-  assert.deepEqual(r.belumTercatat, ["review", "approved", "sent", "received", "executed"]);
+  assert.deepEqual(r.belumTercatat, ["sent", "received", "executed"]);
   assert.equal(r.umurHari, 13); // dari tanggal faktur
 });
 
@@ -86,7 +84,7 @@ test("SJ (DO) terbit + semua faktur lunas → Paid; DO saja sudah bukti Sent", (
   assert.equal(r.state, "paid");
   assert.equal(r.tahap.sent.selesai, true);
   assert.equal(r.tahap.sent.at, "2026-11-03");
-  assert.deepEqual(r.belumTercatat, ["review", "approved", "received", "executed"]);
+  assert.deepEqual(r.belumTercatat, ["received", "executed"]);
 });
 
 test("Sent dari DO: waktu = kirim_at bila ada, kalau tidak tanggal DO; terakhir di antara SJ", () => {
@@ -113,7 +111,6 @@ test("Received/Executed tetap butuh terima/BAST SEMUA SJ", () => {
 
 test("Billed tanpa BAST → tetap Billed, Received/Executed masuk belumTercatat", () => {
   const r = hitungState(snap({
-    reviewAt: "2026-11-02T03:00:00Z", approvedAt: "2026-11-03T03:00:00Z",
     sj: [sj({ kirimAt: "2026-11-04T03:00:00Z" })],
     faktur: [{ nomor: "F1", tanggal: "2026-11-07", lunas: false }],
   }));
@@ -122,39 +119,15 @@ test("Billed tanpa BAST → tetap Billed, Received/Executed masuk belumTercatat"
   assert.deepEqual(r.anomali, []);
 });
 
-test("SO lama (stempelWajib=false): Review/Approved tersirat bila hilir ada → tidak masuk belumTercatat", () => {
-  const r = hitungState(snap({ stempelWajib: false, sj: [sj({ kirimAt: "2026-11-04T03:00:00Z" })] }));
-  assert.equal(r.state, "sent");
-  assert.equal(r.tahap.review.tersirat, true);
-  assert.equal(r.tahap.approved.tersirat, true);
-  assert.deepEqual(r.belumTercatat, []);
-  // SO lama tanpa hilir tetap Draft (tak ada yang tersirat)
-  const kosong = hitungState(snap({ stempelWajib: false }));
-  assert.equal(kosong.state, "draft");
-  assert.equal(kosong.tahap.review.selesai, false);
-});
-
-test("Approved distempel tanpa Review: SO lama → Review tersirat; SO baru → state Approved, Review belumTercatat", () => {
-  const lama = hitungState(snap({ stempelWajib: false, approvedAt: "2026-11-03T03:00:00Z" }));
-  assert.equal(lama.state, "approved");
-  assert.equal(lama.tahap.review.tersirat, true);
-  assert.deepEqual(lama.belumTercatat, []);
-  const baru = hitungState(snap({ approvedAt: "2026-11-03T03:00:00Z" }));
-  assert.equal(baru.state, "approved");
-  assert.deepEqual(baru.belumTercatat, ["review"]);
-  assert.deepEqual(baru.anomali, []);
-});
-
-test("SO baru tanpa stempel tapi DO terbit → Sent, Review/Approved belumTercatat", () => {
+test("SO tanpa stempel tapi DO terbit → Sent, tanpa belumTercatat (tak ada lagi tahap stempel)", () => {
   const r = hitungState(snap({ sj: [sj({ tanggal: "2026-11-04" })] }));
   assert.equal(r.state, "sent");
-  assert.deepEqual(r.belumTercatat, ["review", "approved"]);
+  assert.deepEqual(r.belumTercatat, []);
   assert.deepEqual(r.anomali, []);
 });
 
 test("Paid hanya bila SEMUA faktur lunas", () => {
   const s = snap({
-    reviewAt: "2026-11-02T03:00:00Z", approvedAt: "2026-11-03T03:00:00Z",
     sj: [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z", bastAt: "2026-11-06T03:00:00Z" })],
     faktur: [
       { nomor: "F1", tanggal: "2026-11-07", lunas: true, lunasAt: "2026-11-10" },
@@ -167,7 +140,6 @@ test("Paid hanya bila SEMUA faktur lunas", () => {
 
 test("billing-at-risk: BAST tanpa faktur lebih dari N hari (default 3), tepat di batas belum", () => {
   const dasar = {
-    reviewAt: "2026-11-02T03:00:00Z", approvedAt: "2026-11-03T03:00:00Z",
     sj: [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z", bastAt: "2026-11-10T03:00:00Z" })], // WIB 10 Nov
   };
   assert.equal(hitungState(snap({ ...dasar, today: "2026-11-13" })).billingRisiko, false); // tepat 3 hari
@@ -183,8 +155,7 @@ test("billing-at-risk: ambang bisa diatur lewat env", () => {
   process.env.DOC_TRACKER_BILLING_HARI = "10";
   try {
     const s = snap({
-      reviewAt: "2026-11-02T03:00:00Z", approvedAt: "2026-11-03T03:00:00Z",
-      sj: [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z", bastAt: "2026-11-10T03:00:00Z" })],
+        sj: [sj({ kirimAt: "2026-11-04T03:00:00Z", terimaAt: "2026-11-05T03:00:00Z", bastAt: "2026-11-10T03:00:00Z" })],
       today: "2026-11-14",
     });
     assert.equal(hitungState(s).billingRisiko, false);
@@ -199,4 +170,88 @@ test("tanggalWib & selisihHari: UTC malam lewat ke hari WIB berikutnya", () => {
   assert.equal(tanggalWib("2026-11-10"), "2026-11-10");
   assert.equal(tanggalWib(null), null);
   assert.equal(selisihHari("2026-02-27", "2026-03-02"), 3);
+});
+
+test("Executed dari BAST Instalasi Aftersales (tanpa #BAST WA)", () => {
+  const r = hitungState(snap({ sj: [sj({ tanggal: "2026-11-03", bastInstalasiAt: "2026-11-06T03:00:00Z" })] }));
+  assert.equal(r.state, "executed");
+  assert.equal(r.tahap.executed.at, "2026-11-06T03:00:00Z");
+  assert.equal(r.hitungan.bast, 1);
+  assert.deepEqual(r.belumTercatat, ["received"]);
+});
+
+test("Executed campuran: SJ-1 BAST WA, SJ-2 BAST Instalasi → semua SJ ber-BAST; SJ tanpa keduanya menahan", () => {
+  const s = snap({
+    sj: [
+      sj({ nomor: "SJ1", bastAt: "2026-11-05T03:00:00Z" }),
+      sj({ nomor: "SJ2", bastInstalasiAt: "2026-11-07T03:00:00Z" }),
+      sj({ nomor: "SJ3" }),
+    ],
+  });
+  assert.equal(hitungState(s).state, "sent");
+  assert.equal(hitungState(s).hitungan.bast, 2);
+  s.sj.pop();
+  const r = hitungState(s);
+  assert.equal(r.state, "executed");
+  assert.equal(r.tahap.executed.at, "2026-11-07T03:00:00Z");
+});
+
+test("bastSj: sumber WA vs Instalasi, yang lebih dulu menang", () => {
+  assert.deepEqual(bastSj(sj()), { at: null, sumber: null });
+  assert.deepEqual(bastSj(sj({ bastAt: "2026-11-05T03:00:00Z" })), { at: "2026-11-05T03:00:00Z", sumber: "wa" });
+  assert.deepEqual(bastSj(sj({ bastInstalasiAt: "2026-11-05T03:00:00Z" })), { at: "2026-11-05T03:00:00Z", sumber: "instalasi" });
+  assert.deepEqual(bastSj(sj({ bastAt: "2026-11-06T03:00:00Z", bastInstalasiAt: "2026-11-05T03:00:00Z" })).sumber, "instalasi");
+  assert.deepEqual(bastSj(sj({ bastAt: "2026-11-04T03:00:00Z", bastInstalasiAt: "2026-11-05T03:00:00Z" })).sumber, "wa");
+});
+
+test("billing-at-risk juga dari BAST Instalasi", () => {
+  const s = snap({ sj: [sj({ bastInstalasiAt: "2026-11-10T03:00:00Z" })], today: "2026-11-14" });
+  assert.equal(hitungState(s).billingRisiko, true);
+});
+
+const arsip = (o: Partial<ArsipRujukan>): ArsipRujukan => ({ nomor: "A1", buku_kode: "SJ", ref_sj: null, ref_po: null, ref_faktur: null, ...o });
+
+test("arsip SJ ber-ttd → tiga ttd SJ tercentang sekaligus; cocok dipangkas & tak peka huruf", () => {
+  const r = dokumenDariArsip(["UJI-SJ-01"], [], [arsip({ nomor: "SJ/2026/11/0001", ref_sj: " uji-sj-01 " })]);
+  assert.deepEqual(r.sj_ttd_gudang, ["SJ/2026/11/0001"]);
+  assert.deepEqual(r.sj_ttd_sales, ["SJ/2026/11/0001"]);
+  assert.deepEqual(r.sj_ttd_kepala_sales, ["SJ/2026/11/0001"]);
+  assert.equal(r.po_customer, undefined);
+  assert.equal(r.sj_ttd_teknisi, undefined);
+});
+
+test("arsip SJ: SO dengan beberapa SJ butuh arsip untuk SEMUA SJ; buku selain SJ tak dihitung", () => {
+  const dua = ["UJI-SJ-01", "UJI-SJ-02"];
+  assert.deepEqual(dokumenDariArsip(dua, [], [arsip({ ref_sj: "UJI-SJ-01" })]), {});
+  const lengkap = dokumenDariArsip(dua, [], [arsip({ nomor: "A1", ref_sj: "UJI-SJ-01" }), arsip({ nomor: "A2", ref_sj: "UJI-SJ-02" })]);
+  assert.deepEqual(lengkap.sj_ttd_gudang, ["A1", "A2"]);
+  assert.deepEqual(dokumenDariArsip(["UJI-SJ-01"], [], [arsip({ buku_kode: "BA", ref_sj: "UJI-SJ-01" })]), {});
+  assert.deepEqual(dokumenDariArsip([], [], [arsip({ ref_sj: "UJI-SJ-01" })]), {}); // SO tanpa SJ tak pernah tercentang
+});
+
+test("arsip PO customer: ref_po terisi DAN merujuk SJ atau faktur SO", () => {
+  assert.deepEqual(dokumenDariArsip(["UJI-SJ-01"], [], [arsip({ nomor: "A9", buku_kode: "LN", ref_sj: "uji-sj-01", ref_po: "PO-UJI-1" })]).po_customer, ["A9"]);
+  assert.deepEqual(dokumenDariArsip([], ["UJI-F-01"], [arsip({ nomor: "A8", buku_kode: "LN", ref_faktur: "UJI-F-01", ref_po: "PO-UJI-1" })]).po_customer, ["A8"]);
+  // ref_po kosong → bukan bukti PO
+  assert.equal(dokumenDariArsip([], ["UJI-F-01"], [arsip({ ref_faktur: "UJI-F-01", ref_po: "  " })]).po_customer, undefined);
+  // ref_po ada tetapi rujukan milik SO lain
+  assert.equal(dokumenDariArsip(["UJI-SJ-01"], ["UJI-F-01"], [arsip({ ref_sj: "UJI-SJ-99", ref_po: "PO-UJI-1" })]).po_customer, undefined);
+});
+
+test("gabungDokumen: manual ATAU arsip; manual 'tidak' tak membatalkan arsip", () => {
+  const g = gabungDokumen({ po_customer: false, sj_ttd_teknisi: true }, { po_customer: ["A1"], sj_ttd_gudang: ["A2"] });
+  assert.deepEqual(g, { po_customer: true, sj_ttd_gudang: true, sj_ttd_teknisi: true });
+  assert.deepEqual(gabungDokumen({ sj_ttd_sales: false }, {}), { sj_ttd_sales: false });
+});
+
+test("Closed dari arsip: lunas + arsip SJ & PO lengkap tanpa centang manual", () => {
+  const nomorSj = ["UJI-SJ-01"];
+  const dariArsip = dokumenDariArsip(nomorSj, ["UJI-F-01"], [arsip({ nomor: "A1", ref_sj: "UJI-SJ-01", ref_po: "PO-UJI-1" })]);
+  const r = hitungState(snap({
+    sj: [sj({ nomor: "UJI-SJ-01", tanggal: "2026-11-03" })],
+    faktur: [{ nomor: "UJI-F-01", tanggal: "2026-11-07", lunas: true, lunasAt: "2026-11-15" }],
+    dokumen: gabungDokumen({}, dariArsip),
+  }));
+  assert.equal(r.state, "closed");
+  assert.deepEqual(r.anomali, []);
 });

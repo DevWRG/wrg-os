@@ -2,7 +2,7 @@ import { teruskan } from "./_gerbang";
 
 export const dynamic = "force-dynamic";
 
-// DOC — daftar transaksi + funnel 9 state. Hanya parameter yang dikenal yang diteruskan;
+// DOC — daftar transaksi + funnel 7 state. Hanya parameter yang dikenal yang diteruskan;
 // nilainya divalidasi apps/api (400 bila salah).
 export async function GET(req: Request) {
   const src = new URL(req.url).searchParams;

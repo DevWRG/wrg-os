@@ -8,13 +8,23 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-import { KETERANGAN_STATE, LABEL_DOKUMEN, LABEL_STATE, STATES, ambil, labelTahap, rp, waktu, type DocDetail, type JenisDokumen } from "./types";
+import { KETERANGAN_STATE, LABEL_DOKUMEN, LABEL_STATE, STATES, ambil, labelTahap, rp, waktu, type DocDetail, type JenisDokumen, type SjBukti } from "./types";
 
 const JENIS: JenisDokumen[] = ["po_customer", "sj_ttd_gudang", "sj_ttd_sales", "sj_ttd_kepala_sales", "sj_ttd_teknisi"];
 
-// Detail satu transaksi: timeline 9 tahap beserta buktinya, SJ & faktur terkait, dan (bila canEdit)
-// stempel Review/Approved, checklist tanda tangan, serta tautan faktur manual (tautan otomatis dari Accurate
-// hanya ditampilkan, tak bisa dilepas). Pemanggil memberi
+// BAST satu SJ: WA #BAST atau BAST Instalasi Aftersales, yang lebih dulu (cermin bastSj di apps/api).
+const bastSj = (s: SjBukti): { at: string | null; sumber: "BAST WA" | "BAST Instalasi" | null } => {
+  const wa = s.bastAt ?? null;
+  const ins = s.bastInstalasiAt ?? null;
+  if (wa && ins) return Date.parse(ins) < Date.parse(wa) ? { at: ins, sumber: "BAST Instalasi" } : { at: wa, sumber: "BAST WA" };
+  if (wa) return { at: wa, sumber: "BAST WA" };
+  if (ins) return { at: ins, sumber: "BAST Instalasi" };
+  return { at: null, sumber: null };
+};
+
+// Detail satu transaksi: timeline 7 tahap beserta buktinya, SJ & faktur terkait, dan (bila canEdit)
+// checklist tanda tangan serta tautan faktur manual (tautan otomatis dari Accurate hanya ditampilkan, tak bisa
+// dilepas; centang dari Arsip juga tak bisa dibatalkan — toggle hanya mengubah catatan manual). Pemanggil memberi
 // `key={soId}` supaya state lama tak bocor ke transaksi lain. Setiap aksi → muat ulang detail + beri tahu
 // pemanggil (onBerubah) agar funnel/daftar ikut segar.
 export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
@@ -58,6 +68,7 @@ export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
   };
 
   const h = d?.hasil;
+  const sumberBast = d ? [...new Set(d.sj.map((s) => bastSj(s).sumber).filter((x): x is NonNullable<typeof x> => x != null))] : [];
   return (
     <Dialog open={soId != null} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl">
@@ -97,7 +108,8 @@ export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
                       <span className={cn("w-24 font-medium", !t.selesai && "text-muted-foreground")}>{LABEL_STATE[s]}</span>
                       <span className="text-muted-foreground">{KETERANGAN_STATE[s]}</span>
                       <span className="ml-auto text-xs tabular-nums">
-                        {t.tersirat ? <span className="text-muted-foreground">tersirat (SO lama)</span> : belum ? <span className="text-muted-foreground">belum tercatat</span> : t.at ? waktu(t.at.length === 10 ? `${t.at}T00:00:00+07:00` : t.at) : ""}
+                        {s === "executed" && t.selesai && sumberBast.length > 0 && <span className="text-muted-foreground mr-2">{sumberBast.join(" + ")}</span>}
+                        {belum ? <span className="text-muted-foreground">belum tercatat</span> : t.at ? waktu(t.at.length === 10 ? `${t.at}T00:00:00+07:00` : t.at) : ""}
                       </span>
                     </li>
                   );
@@ -110,12 +122,17 @@ export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
                   <p className="text-muted-foreground text-sm">Belum ada SJ yang tertaut ke SO ini.</p>
                 ) : (
                   <ul className="space-y-0.5 text-sm">
-                    {d.sj.map((s) => (
-                      <li key={s.nomor} className="flex flex-wrap gap-x-3">
-                        <span className="font-medium">{s.nomor}</span>
-                        <span className="text-muted-foreground text-xs">{s.tanggal ? `DO ${s.tanggal} · ` : ""}kirim {waktu(s.kirimAt)} · terima {waktu(s.terimaAt)} · BAST {waktu(s.bastAt)}</span>
-                      </li>
-                    ))}
+                    {d.sj.map((s) => {
+                      const b = bastSj(s);
+                      return (
+                        <li key={s.nomor} className="flex flex-wrap gap-x-3">
+                          <span className="font-medium">{s.nomor}</span>
+                          <span className="text-muted-foreground text-xs">
+                            {s.tanggal ? `DO ${s.tanggal} · ` : ""}kirim {waktu(s.kirimAt)} · terima {waktu(s.terimaAt)} · BAST {waktu(b.at)}{b.sumber ? ` (${b.sumber})` : ""}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </section>
@@ -154,46 +171,34 @@ export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
               </section>
 
               <section className="space-y-1">
-                <h4 className="text-sm font-semibold">Stempel</h4>
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  {(["review", "approved"] as const).map((t) => {
-                    const st = d.stempel[t];
-                    return (
-                      <span key={t} className="flex items-center gap-2">
-                        <Badge variant={st ? "outline" : "secondary"}>{LABEL_STATE[t]}{st ? ` · ${st.by}, ${waktu(st.at)}` : " · belum"}</Badge>
-                        {canEdit && !st && (
-                          <Button size="sm" variant="outline" disabled={busy} onClick={() => aksi("stamp", { tahap: t })}>Tandai {LABEL_STATE[t]}</Button>
-                        )}
-                        {canEdit && st && (t === "approved" || !d.stempel.approved) && (
-                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => aksi("stamp/cabut", { tahap: t })}>Cabut</Button>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-              </section>
-
-              <section className="space-y-1">
                 <h4 className="text-sm font-semibold">Checklist dokumen</h4>
                 <ul className="space-y-1 text-sm">
                   {JENIS.map((j) => {
                     const row = d.dokumen[j];
+                    const arsip = d.dokumen_arsip?.[j] ?? [];
+                    const dariArsip = arsip.length > 0;
                     const wajib = d.dokumen_wajib.includes(j);
                     return (
-                      <li key={j} className="flex items-center gap-2">
+                      <li key={j} className="flex flex-wrap items-center gap-x-2">
                         <input
-                          type="checkbox" className="size-4" checked={row?.ada === true} disabled={!canEdit || busy}
+                          type="checkbox" className="size-4" checked={dariArsip || row?.ada === true} disabled={!canEdit || busy || dariArsip}
                           onChange={(e) => aksi("dokumen", { jenis: j, ada: e.target.checked })}
                           aria-label={LABEL_DOKUMEN[j]}
+                          title={dariArsip ? "Tercentang otomatis dari Arsip Dokumen — tidak bisa dibatalkan di sini" : undefined}
                         />
                         <span>{LABEL_DOKUMEN[j]}</span>
                         {!wajib && <span className="text-muted-foreground text-xs">(informasi)</span>}
-                        {row?.ada && <span className="text-muted-foreground text-xs">oleh {row.by}, {waktu(row.at)}</span>}
+                        {dariArsip && <span className="text-xs text-emerald-700 dark:text-emerald-400">dari Arsip {arsip.join(", ")}</span>}
+                        {row?.ada && <span className="text-muted-foreground text-xs">{dariArsip ? "juga dicentang " : ""}oleh {row.by}, {waktu(row.at)}</span>}
                       </li>
                     );
                   })}
                 </ul>
-                <p className="text-muted-foreground text-xs">Closed butuh faktur lunas dan semua dokumen wajib (non-informasi) tercentang.</p>
+                <p className="text-muted-foreground text-xs">
+                  Closed butuh faktur lunas dan semua dokumen wajib (non-informasi) tercentang. Scan SJ bertanda tangan di Arsip Dokumen
+                  (buku SJ, rujukan No. SJ) otomatis mencentang ketiga ttd SJ; arsip yang membawa No. PO dan merujuk SJ/faktur SO ini
+                  mencentang PO customer.
+                </p>
               </section>
             </>
           )}
