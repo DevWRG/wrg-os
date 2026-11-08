@@ -2493,7 +2493,17 @@ app.post("/sph", async (c) => {
   //
   // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
   // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
-  if (!body?.customer_id) {
+  // Pengecualian: calon customer yang BELUM ada di Accurate (`customer_baru: true`)
+  // — nama ketikan dipakai (dirapikan, 3–120 huruf), customer_id dikosongkan.
+  // SPH semacam ini tak punya kontak di Accounts, jadi tak bisa dikirim lewat WA.
+  const calonBaru = (body as { customer_baru?: unknown } | undefined)?.customer_baru === true;
+  if (body && calonBaru) {
+    const nama = String(body.customer_name ?? "").trim().replace(/\s+/g, " ");
+    if (nama.length < 3 || nama.length > 120) {
+      return c.json({ error: "nama calon customer wajib 3–120 huruf" }, 400);
+    }
+    body = { ...body, customer_id: null, customer_name: nama };
+  } else if (!body?.customer_id) {
     return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
   }
   // Pembuat = pelaku sesi (x-user-id dari BFF), bukan created_by kiriman klien.

@@ -222,9 +222,12 @@ export default function SphNewPage() {
       const data = await ambilJson<{ id: string }>("/api/sph", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // Cuma id customer yang dikirim — nama di-derive server dari mirror.
+        // Customer katalog: cuma id yang dikirim — nama di-derive server dari mirror.
+        // Calon customer baru (belum di Accurate): nama ketikan + penanda customer_baru.
         body: JSON.stringify({
-          customer_id: String(customer.id),
+          ...(customer.baru || customer.id == null
+            ? { customer_name: customer.label, customer_baru: true }
+            : { customer_id: String(customer.id) }),
           items: cart.map((r) => ({
             pricelist_item_id: r.item.id,
             qty: r.qty,
@@ -312,7 +315,7 @@ export default function SphNewPage() {
             <Card className="overflow-visible">
               <CardHeader>
                 <CardTitle>Untuk customer siapa?</CardTitle>
-                <CardDescription>Cari nama faskes lalu pilih dari daftar katalog Accurate.</CardDescription>
+                <CardDescription>Cari nama faskes dari katalog Accurate. Belum ada di Accurate? Pilih &quot;Calon customer baru&quot;.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 pb-2">
                 <div className="max-w-xl">
@@ -324,6 +327,7 @@ export default function SphNewPage() {
                     value={customer}
                     onChange={setCustomer}
                     inputId="sph-customer"
+                    izinkanBaru="Calon customer baru"
                     placeholder="Ketik nama customer…"
                     required
                   />
@@ -333,12 +337,14 @@ export default function SphNewPage() {
                     <Building2 className="size-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
                     <span className="min-w-0 flex-1 truncate">
                       <span className="font-medium">{customer.label}</span> terpilih
+                      {customer.baru && <span className="text-muted-foreground"> · calon customer, belum di Accurate</span>}
                     </span>
                   </div>
                 ) : (
                   <p className="text-muted-foreground max-w-xl text-xs">
-                    Nama di surat diambil dari master Accurate, bukan dari ketikan. Customer belum ada di daftar? Minta admin menyinkronkan
-                    katalog customer.
+                    Customer dari katalog: nama di surat diambil dari master Accurate. Faskes belum ada di Accurate? Ketik minimal 3 huruf lalu
+                    pilih &quot;+ Calon customer baru&quot; — nama ketikan dipakai di surat. SPH untuk calon customer belum bisa dikirim lewat WA
+                    dari sistem (belum ada kontak di Accounts); unduh PDF-nya.
                   </p>
                 )}
                 {/* ruang untuk dropdown pencarian customer */}
