@@ -83,6 +83,9 @@ import {
 } from "./repo/permintaan-produk.js";
 import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
 import { TutupBukuError, geserTutupBuku, ringkasTutupBuku, runTutupBukuCountdown } from "./repo/tutup-buku.js";
+import { FakturisError, runCekFakturisDiam, runRekapFakturis, simpanLabelAkun, statusFakturis } from "./repo/fakturis-diam.js";
+import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js";
+import { CekError, buatCek, daftarCek, runCekHarian, ubahDraft, ubahStatus } from "./repo/cek-keluar.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   ingestInvoices,
@@ -5190,6 +5193,67 @@ app.get("/do-belum-faktur", async (c) => {
     return c.json(await listDoBelumFaktur({ tab: c.req.query("tab"), q: c.req.query("q"), cabang: c.req.query("cabang"),
       hanya_terlambat: c.req.query("hanya_terlambat") === "1", limit: n("limit"), offset: n("offset") }));
   } catch (e) { return doFakturErr(c, e); }
+});
+// F10 Penerbitan Faktur — gerbang menu "/penerbitan-faktur" DIPERIKSA DI BFF; `oleh` dari sesi.
+const fakturisErr = (c: Context, e: unknown) => {
+  if (e instanceof FakturisError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[fakturis-diam]", e);
+  return c.json({ error: "gagal memproses data penerbitan faktur" }, 500);
+};
+// F10 bagian 3 — Register Cek keluar. Gerbang menu "/register-cek" + izin per aksi DIPERIKSA DI BFF
+// (tambah = input/ajukan/serahkan/cair/batal, ubah = setujui/tolak); `oleh` dari sesi.
+const cekErr = (c: Context, e: unknown) => {
+  if (e instanceof CekError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[cek-keluar]", e);
+  return c.json({ error: "gagal memproses register cek" }, 500);
+};
+app.get("/cek-keluar", async (c) => {
+  try { return c.json(await daftarCek({ status: c.req.query("status"), hari: c.req.query("hari") })); } catch (e) { return cekErr(c, e); }
+});
+app.get("/cek-keluar/pengingat-pratinjau", async (c) => {
+  try { return c.json(await runCekHarian({ dryRun: true })); } catch (e) { return cekErr(c, e); }
+});
+app.post("/cek-keluar", async (c) => {
+  const b = await bodyJson(c);
+  try { return c.json(await buatCek(b, String(b.oleh ?? "").trim())); } catch (e) { return cekErr(c, e); }
+});
+app.put("/cek-keluar/:id", async (c) => {
+  const b = await bodyJson(c);
+  try { return c.json(await ubahDraft(c.req.param("id"), b, String(b.oleh ?? "").trim())); } catch (e) { return cekErr(c, e); }
+});
+app.post("/cek-keluar/:id/aksi", async (c) => {
+  const b = await bodyJson(c);
+  const oleh = String(b.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "pelaku tak diketahui" }, 400);
+  try { return c.json(await ubahStatus(c.req.param("id"), b.aksi, { oleh, catatan: b.catatan })); } catch (e) { return cekErr(c, e); }
+});
+
+// F10 bagian 2 — Faktur Revisi (tab di menu Penerbitan Faktur, gerbang di BFF).
+const revisiErr = (c: Context, e: unknown) => {
+  if (e instanceof RevisiError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[faktur-revisi]", e);
+  return c.json({ error: "gagal memproses faktur revisi" }, 500);
+};
+app.get("/faktur-revisi", async (c) => {
+  try { return c.json(await daftarRevisi({ hari: c.req.query("hari") })); } catch (e) { return revisiErr(c, e); }
+});
+app.post("/faktur-revisi/:id/tutup", async (c) => {
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await tutupManual(c.req.param("id"), b)); } catch (e) { return revisiErr(c, e); }
+});
+app.get("/fakturis-diam", async (c) => {
+  try { return c.json(await statusFakturis()); } catch (e) { return fakturisErr(c, e); }
+});
+// Pratinjau alarm + rekap mingguan (dry-run: tanpa tulis DB, tanpa WA).
+app.get("/fakturis-diam/pratinjau", async (c) => {
+  try {
+    const [cek, rekap] = await Promise.all([runCekFakturisDiam({ dryRun: true }), runRekapFakturis({ dryRun: true })]);
+    return c.json({ cek, rekap });
+  } catch (e) { return fakturisErr(c, e); }
+});
+app.put("/fakturis-diam/akun", async (c) => {
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await simpanLabelAkun(b)); } catch (e) { return fakturisErr(c, e); }
 });
 // Pratinjau rekap WA mingguan (dry-run, tak mengirim apa pun). BFF: izin ubah.
 // F61 Tutup Buku Countdown (migrasi 295). Gerbang menu "/do-belum-faktur" di BFF:

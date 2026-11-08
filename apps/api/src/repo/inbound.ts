@@ -1,4 +1,5 @@
 import { db } from "../db.js";
+import { bukaRevisi, revisiAktif } from "./revisi-faktur.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
@@ -102,6 +103,7 @@ export type InboundKind =
   | "kso"
   | "jadwal"
   | "order"
+  | "revisi"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -111,7 +113,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order", "revisi",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -124,6 +126,8 @@ const OVERTIME_LINE = /^\s*#\s*overtime\b/i;
 // F91 — cek status satu invoice. `\b` penting: #FAKTURIS (nama grup/fitur
 // F149) tidak boleh ikut terpicu.
 const FAKTUR_LINE = /^\s*#\s*faktur\b/i;
+// F10 — #REVISI <nomor faktur> | alasan: permintaan revisi faktur + SLA (repo/revisi-faktur.ts).
+const REVISI_LINE = /^\s*#\s*revisi\b/i;
 // #APPROVE/#REJECT <kode> [alasan] — di main HANYA melayani kode OT-xxxx
 // (lembur). Engine approval F11 (APR-xxxx) belum dipromosikan ke main.
 const APPROVE_REJECT_LINE = /^\s*#\s*(approve|reject)\b/i;
@@ -176,6 +180,7 @@ export function detectKind(body: string | null): InboundKind {
       if (BRIEF_LINE.test(line)) return "brief";
       if (JADWAL_LINE.test(line)) return "jadwal";
       if (ORDER_LINE.test(line)) return "order";
+      if (REVISI_LINE.test(line)) return "revisi";
     }
   }
   return "none";
@@ -1639,6 +1644,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
   // nominal + customer. Sender cukup dikenal & aktif, setara #CEK (keputusan
   // user 2026-09-28) — tanpa scope per-AM.
+  // #REVISI <nomor faktur> | alasan — F10 bagian 2. Pengirim ketat (menulis atas nama
+  // orang). Saklar F10_REVISI_ENABLED mati → diabaikan diam-diam seperti hashtag belum ada.
+  if (kind === "revisi") {
+    if (!revisiAktif()) return finish({ skipped: "f10-revisi-off" });
+    const rv = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!rv) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await bukaRevisi(extractHashtagArg(row.body, REVISI_LINE), { nama: rv.nama ?? row.sender_name ?? "" }, target);
+    } catch (e) {
+      console.error("[inbound] #REVISI gagal diproses:", (e as Error).message);
+      text = "⚠️ #REVISI gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "revisi", via: rv.via, reply });
+  }
+
   if (kind === "faktur") {
     const fk = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name , ketat: true });
     if (!fk) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
