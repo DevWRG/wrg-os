@@ -262,7 +262,7 @@ import {
   type AksiApproval,
 } from "./repo/insentif-approval.js";
 import { listHodOptions } from "./repo/master-hod.js";
-import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
+import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurements, saveMeasurements, getOkrOverview, getKpiCatalog, createEmployee, updateEmployee, deleteEmployee, EmployeeInputError, replaceEmployeeDetail, getVoiceAggregate, getHodResolution, getOrgReporting, populateHodKey, getHods, type MeasurementInput, type EmployeeWrite, type SpineDetail } from "./repo/employee-spine.js";
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -3652,14 +3652,21 @@ app.post("/employee-spine/employees", async (c) => {
   let body: EmployeeWrite;
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (!body?.nama?.trim()) return c.json({ error: "field 'nama' wajib" }, 400);
-  return c.json(await createEmployee(body), 201);
+  try { return c.json(await createEmployee(body), 201); } catch (e) {
+    if (e instanceof EmployeeInputError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
 });
 app.patch("/employee-spine/employees/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: EmployeeWrite;
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   if (!body?.nama?.trim()) return c.json({ error: "field 'nama' wajib" }, 400);
-  const r = await updateEmployee(c.req.param("id"), body);
+  let r: { updated: boolean };
+  try { r = await updateEmployee(c.req.param("id"), body); } catch (e) {
+    if (e instanceof EmployeeInputError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
   return r.updated ? c.json(r) : c.json({ error: "karyawan tak ditemukan" }, 404);
 });
 app.delete("/employee-spine/employees/:id", async (c) => {
