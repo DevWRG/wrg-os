@@ -2,7 +2,7 @@
 
 Tiga pengaman operasional Finance dari briefing 24 Mei 2026: komputer fakturis offline 11+ jam, kasus cek kosong
 sampai panggilan Polrestabes, dan faktur revisi tanpa SLA. **F10 mengambil alih F29** (Cash Management & Cek
-Verification) — register cek dibangun di sini. Status: **spesifikasi** (cakupan disetujui user 7 Nov 2026), belum dibangun.
+Verification) — register cek dibangun di sini. Status: cakupan disetujui user 7 Nov 2026 · bagian 1 dibangun (#2096 + menu Penerbitan Faktur) · bagian 2 dibangun (8 Nov) · bagian 3 belum.
 
 ## Masalah (data prod 7 Nov 2026)
 
@@ -53,7 +53,9 @@ Tiket dianggap selesai ketika sync faktur (2-jam-an) menemukan salah satu:
 2. **`optLock` naik** pada id yang sama (edit di tempat).
 
 `selesai_at` = `createDate` faktur baru / waktu sync yang melihat perubahan. Finance juga bisa menutup manual di web
-(`ditutup_manual` + catatan, mis. "tidak perlu revisi").
+(catatan wajib, mis. "tidak perlu revisi") — status **Ditutup manual**, tidak ikut hitungan % tepat SLA.
+Catatan: edit di tempat baru terlihat saat faktur itu tersinkron ulang (jendela 7 hari sync 2-jam-an, atau sapuan
+faktur OPEN 05:30), jadi deteksi edit pada faktur lama/lunas bisa tertunda.
 
 ### Deteksi tanpa #REVISI
 
@@ -63,9 +65,11 @@ per cabang/AM/fakturis kelihatan. Sumber: `accurate_invoice_hilang.ada_kembaran`
 ### SLA
 
 - Default **1 hari kerja** sejak `diminta_at` (`F10_REVISI_SLA_JAM_KERJA`, default 8), dihitung jam kerja + hari libur F14.
-- Lewat batas → pengingat ke grup Finance sekali; rekap harian tiket terbuka/terlambat masuk rekap overdue F91 pagi.
-- Web tab "Faktur Revisi": tiket terbuka (umur, sisa SLA), selesai (lama proses), dan revisi terdeteksi; filter cabang/AM;
-  ringkasan median lama proses & % tepat SLA per bulan.
+- Lewat batas → pengingat ke grup Finance sekali per tiket (dicek tiap sync; gagal kirim = dicoba lagi sync berikutnya).
+  Rekap harian ke rekap overdue F91 tidak dibangun dulu.
+- Web: tab **Faktur Revisi** di menu Penerbitan Faktur (izin yang sama) — tiket terbuka/selesai/terdeteksi 60 hari,
+  ringkasan % tepat SLA + median lama proses (jam kerja), tutup manual (izin ubah), ekspor Excel 180 hari.
+- `#REVISI` aktif hanya bila `F10_REVISI_ENABLED=true`; mati = pesan diabaikan.
 
 ## 3. Register cek (ambil alih F29)
 

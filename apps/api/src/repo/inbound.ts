@@ -1,3 +1,4 @@
+import { bukaRevisi, revisiAktif } from "./revisi-faktur.js";
 import { db } from "../db.js";
 import { detectDaily, parseDaily, stripInvisible } from "../parsers/dailyplan.js";
 import { parseAmPlan, parseAmReport, bersihkanNamaCustomer } from "../parsers/am.js";
@@ -142,6 +143,7 @@ export const INBOUND_HASHTAGS = [
   "order",
   "bon",
   "opname",
+  "revisi",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -204,6 +206,8 @@ const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
 const ORDER_LINE = /^\s*#\s*order\b/i;
 const BON_LINE = /^\s*#\s*bon\b/i;
 const OPNAME_LINE = /^\s*#\s*opname\b/i;
+// F10 — #REVISI <nomor faktur> | alasan: permintaan revisi faktur + SLA (repo/revisi-faktur.ts).
+const REVISI_LINE = /^\s*#\s*revisi\b/i;
 // Peran app_user yang boleh membaca Senin Brief lewat WA.
 const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
 export const briefingTerbuka = (): boolean => (process.env.BRIEFING_WA_OPEN ?? "false").toLowerCase() === "true";
@@ -246,6 +250,7 @@ export function detectKind(body: string | null): InboundKind {
       if (ORDER_LINE.test(line)) return "order";
       if (BON_LINE.test(line)) return "bon";
       if (OPNAME_LINE.test(line)) return "opname";
+      if (REVISI_LINE.test(line)) return "revisi";
     }
   }
   return "none";
@@ -2140,6 +2145,23 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, await buildFakturReply(arg));
     return finish({ kind: "faktur", via: fk.via, reply });
+  }
+
+  // #REVISI <nomor faktur> | alasan — F10 bagian 2. Pengirim ketat (menulis atas nama
+  // orang). Saklar F10_REVISI_ENABLED mati → diabaikan diam-diam seperti hashtag belum ada.
+  if (kind === "revisi") {
+    if (!revisiAktif()) return finish({ skipped: "f10-revisi-off" });
+    const rv = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!rv) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await bukaRevisi(extractHashtagArg(row.body, REVISI_LINE), { nama: rv.nama ?? row.sender_name ?? "" }, target);
+    } catch (e) {
+      console.error("[inbound] #REVISI gagal diproses:", (e as Error).message);
+      text = "⚠️ #REVISI gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "revisi", via: rv.via, reply });
   }
 
   // #CALL / #NOTE <faskes>: <isi> — F95 Interaction Log. Dicatat ke
