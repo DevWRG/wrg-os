@@ -3099,7 +3099,7 @@ const laporanDari = async (c: Context) => {
 };
 app.get("/report-library/:key", async (c) => {
   const r = await laporanDari(c);
-  return "err" in r ? r.err : c.json(pratinjauLaporan(r.laporan));
+  return "err" in r ? r.err : c.json(pratinjauLaporan(r.laporan, Number(c.req.query("hal") ?? 0), Number(c.req.query("per") ?? 10)));
 });
 // Semua laporan yang diminta dalam SATU PDF. `keys` = daftar key dipisah koma, sudah
 // disaring BFF menurut izin menu sumber user; di sini hanya key valid yang dipakai.
