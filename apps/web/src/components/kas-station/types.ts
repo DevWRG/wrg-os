@@ -52,6 +52,31 @@ export function awalMinggu(tanggal: string): string {
 export const tgl = (t: string | null): string =>
   t ? new Date(`${t.slice(0, 10)}T00:00:00Z`).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }) : "—";
 
+/**
+ * Daftar tanggal → teks ringkas; hari berurutan digabung jadi rentang, tahun ditulis sekali bila sama.
+ * 2..7 Nov → "2–7 Nov 2026"; 2 & 4 Nov → "2 Nov, 4 Nov 2026"; 30 Nov..2 Des → "30 Nov – 2 Des 2026".
+ */
+export function rentangTanggal(daftar: string[]): string {
+  const urut = [...new Set(daftar.map((t) => t.slice(0, 10)))].sort();
+  if (urut.length === 0) return "";
+  const grup: [string, string][] = [];
+  for (const t of urut) {
+    const akhir = grup[grup.length - 1];
+    if (akhir && tambahHari(akhir[1], 1) === t) akhir[1] = t;
+    else grup.push([t, t]);
+  }
+  const satuTahun = urut[0].slice(0, 4) === urut[urut.length - 1].slice(0, 4);
+  const bulan = (t: string) => new Date(`${t}T00:00:00Z`).toLocaleDateString("id-ID", { month: "short", timeZone: "UTC" });
+  const hari = (t: string) => String(Number(t.slice(8, 10)));
+  const thn = (t: string) => (satuTahun ? "" : ` ${t.slice(0, 4)}`);
+  const teks = grup.map(([a, b]) => {
+    if (a === b) return `${hari(a)} ${bulan(a)}${thn(a)}`;
+    if (a.slice(0, 7) === b.slice(0, 7)) return `${hari(a)}–${hari(b)} ${bulan(b)}${thn(b)}`;
+    return `${hari(a)} ${bulan(a)}${thn(a)} – ${hari(b)} ${bulan(b)}${thn(b)}`;
+  });
+  return teks.join(", ") + (satuTahun ? ` ${urut[0].slice(0, 4)}` : "");
+}
+
 // timestamptz::text dari Postgres = "2026-10-18 02:00:00.123+07" → ISO-8601 yang dikenal Date.
 export const waktu = (t: string | null): string => {
   if (!t) return "—";
