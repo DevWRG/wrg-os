@@ -48,6 +48,7 @@ import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as 
 import { TutupBukuError, geserTutupBuku, ringkasTutupBuku, runTutupBukuCountdown } from "./repo/tutup-buku.js";
 import { FakturisError, runCekFakturisDiam, runRekapFakturis, simpanLabelAkun, statusFakturis } from "./repo/fakturis-diam.js";
 import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js";
+import { CekError, buatCek, daftarCek, runCekHarian, ubahDraft, ubahStatus } from "./repo/cek-keluar.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
@@ -6576,6 +6577,34 @@ const fakturisErr = (c: Context, e: unknown) => {
   console.error("[fakturis-diam]", e);
   return c.json({ error: "gagal memproses data penerbitan faktur" }, 500);
 };
+// F10 bagian 3 — Register Cek keluar. Gerbang menu "/register-cek" + izin per aksi DIPERIKSA DI BFF
+// (tambah = input/ajukan/serahkan/cair/batal, ubah = setujui/tolak); `oleh` dari sesi.
+const cekErr = (c: Context, e: unknown) => {
+  if (e instanceof CekError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[cek-keluar]", e);
+  return c.json({ error: "gagal memproses register cek" }, 500);
+};
+app.get("/cek-keluar", async (c) => {
+  try { return c.json(await daftarCek({ status: c.req.query("status"), hari: c.req.query("hari") })); } catch (e) { return cekErr(c, e); }
+});
+app.get("/cek-keluar/pengingat-pratinjau", async (c) => {
+  try { return c.json(await runCekHarian({ dryRun: true })); } catch (e) { return cekErr(c, e); }
+});
+app.post("/cek-keluar", async (c) => {
+  const b = await bodyJson(c);
+  try { return c.json(await buatCek(b, String(b.oleh ?? "").trim())); } catch (e) { return cekErr(c, e); }
+});
+app.put("/cek-keluar/:id", async (c) => {
+  const b = await bodyJson(c);
+  try { return c.json(await ubahDraft(c.req.param("id"), b, String(b.oleh ?? "").trim())); } catch (e) { return cekErr(c, e); }
+});
+app.post("/cek-keluar/:id/aksi", async (c) => {
+  const b = await bodyJson(c);
+  const oleh = String(b.oleh ?? "").trim();
+  if (!oleh) return c.json({ error: "pelaku tak diketahui" }, 400);
+  try { return c.json(await ubahStatus(c.req.param("id"), b.aksi, { oleh, catatan: b.catatan })); } catch (e) { return cekErr(c, e); }
+});
+
 // F10 bagian 2 — Faktur Revisi (tab di menu Penerbitan Faktur, gerbang di BFF).
 const revisiErr = (c: Context, e: unknown) => {
   if (e instanceof RevisiError) return c.json({ error: e.message }, e.status as 400);

@@ -58,6 +58,7 @@ import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/li
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
+import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { canViewReportLibrary } from "@/lib/report-library";
@@ -519,6 +520,9 @@ export const NAV: NavGroup[] = [
       // F10 — alarm fakturis diam + beban akun fakturis, dari createDate/createdBy cermin Accurate.
       // Kunci izin sendiri ("penerbitan-faktur"), default tertutup: butuh Sync Fitur + centang.
       { title: "Penerbitan Faktur", url: "/penerbitan-faktur", icon: FileClock, badge: "NEW", show: canViewPenerbitanFaktur },
+      // F10 (ambil alih F29) — register cek/giro keluar: kasir input → HoD Finance setuju → serahkan → cair.
+      // Kunci izin sendiri ("register-cek"): tambah = kasir, ubah = penyetuju. Default tertutup.
+      { title: "Register Cek", url: "/register-cek", icon: Banknote, badge: "NEW", show: canViewRegisterCek },
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
       { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },

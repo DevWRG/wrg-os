@@ -73,6 +73,7 @@ import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
 import { runTutupBukuCountdown } from "./repo/tutup-buku.js";
 import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
 import { prosesRevisiSesudahSync, revisiAktif } from "./repo/revisi-faktur.js";
+import { cekAktif, runCekHarian } from "./repo/cek-keluar.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -1976,6 +1977,27 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`tutup-buku-countdown=${tutupBukuExpr}`);
+  }
+
+  // f10-cek-harian — register cek: cair otomatis dari rekening koran + pengingat jatuh tempo H-3/H
+  // (sekali per cek per tahap, notif_state). Saklar F10_CEK_ENABLED (default mati). Hari kerja saja.
+  const cekHarianExpr = process.env.F10_CEK_CRON ?? "30 8 * * 1-5";
+  if (cekAktif() && cron.validate(cekHarianExpr)) {
+    cron.schedule(
+      cekHarianExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runCekHarian();
+          if (r.cair || r.pengingat) console.log(`[scheduler] f10-cek-harian @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] f10-cek-harian gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`f10-cek-harian=${cekHarianExpr}`);
   }
 
   // f10-fakturis-rekap — beban faktur per akun minggu lalu + kejadian diam → grup Finance.

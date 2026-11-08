@@ -2,7 +2,7 @@
 
 Tiga pengaman operasional Finance dari briefing 24 Mei 2026: komputer fakturis offline 11+ jam, kasus cek kosong
 sampai panggilan Polrestabes, dan faktur revisi tanpa SLA. **F10 mengambil alih F29** (Cash Management & Cek
-Verification) — register cek dibangun di sini. Status: cakupan disetujui user 7 Nov 2026 · bagian 1 dibangun (#2096 + menu Penerbitan Faktur) · bagian 2 dibangun (8 Nov) · bagian 3 belum.
+Verification) — register cek dibangun di sini. Status: cakupan disetujui user 7 Nov 2026 · bagian 1 (#2096, #2101) · bagian 2 (#2101) · bagian 3 dibangun 8 Nov.
 
 ## Masalah (data prod 7 Nov 2026)
 
@@ -74,24 +74,29 @@ per cabang/AM/fakturis kelihatan. Sumber: `accurate_invoice_hilang.ada_kembaran`
 ## 3. Register cek (ambil alih F29)
 
 Hanya **cek/giro keluar** (yang diterbitkan WRG) — pencegahan kasus cek kosong. Cek masuk dari customer di luar cakupan
-tahap ini.
+tahap ini. Dibangun 8 Nov 2026 (migrasi 293, menu `/register-cek`).
 
 - Input lewat **web** (menu Finance → Register Cek), bukan WA (`#CEK` sudah dipakai cek faktur F4/QW3).
-  Field: nomor seri cek, bank & rekening sumber, tanggal terbit, tanggal jatuh tempo (giro), penerima, nominal, keperluan,
-  dokumen dasar (no. faktur pembelian/PO, opsional), foto/scan cek (unggah ke folder arsip Drive F156).
-- **Alur status:** `draft → diajukan → disetujui | ditolak → diserahkan → cair | batal | tolak_bank`.
-  - Kasir input & ajukan → **HoD Finance** menyetujui/menolak (satu langkah, keputusan user) lewat web atau balas WA
-    `ya C<id>` / `tolak C<id> <alasan>` (pola gerbang `ya R<n>` F-CASHIN). Penyetuju di-set lewat UI.
-  - Cek belum disetujui **tidak boleh** ditandai diserahkan.
-- **Pengaman cek kosong:** sebelum disetujui, tampilkan total cek beredar (disetujui/diserahkan, belum cair) per rekening
-  per tanggal jatuh tempo, dan **saldo rekening yang diinput Finance** (input manual harian/mingguan; saldo bank tak ada
-  di mirror). Kalau total jatuh tempo pada satu tanggal > saldo terakhir → peringatan merah di layar persetujuan dan di
-  pesan WA ke HoD.
-- Nomor seri unik per bank+rekening; nomor terlewat/loncat dalam satu buku cek ditandai (deteksi cek hilang).
-- Pengingat jatuh tempo H-3 dan H ke grup Finance untuk cek diserahkan yang belum ditandai cair.
-- **Audit:** setiap perubahan status + siapa + kapan tercatat (append-only); cek tidak bisa dihapus, hanya `batal` dengan alasan.
-- Hak akses: menu baru default tertutup (RBAC matriks). Kasir = input; HoD Finance = setuju; Direktur/admin = baca semua.
-  Nominal & penerima = data uang → gerbang BFF wajib cek izin sejak PR pertama.
+  Field: rekening (master `bank_account` F-CASHIN, hanya jenis kas), jenis cek/giro, nomor seri, tanggal terbit,
+  tanggal efektif (giro), penerima, nominal, keperluan, dokumen dasar (opsional). Foto/scan cek **belum** (menyusul).
+- **Alur status:** `draft → diajukan → disetujui | ditolak → diserahkan → cair | tolak_bank`; `draft/diajukan/disetujui → batal`.
+  - Izin matriks menu `register-cek`: **tambah** = input, ajukan, serahkan, cair, tolak bank, batal (kasir);
+    **ubah** = setujui / tolak (HoD Finance). Pembuat cek **tidak bisa** menyetujui ceknya sendiri (dicek di API).
+  - Tolak, tolak bank, dan batal wajib alasan. Cek belum disetujui tidak bisa ditandai diserahkan.
+  - Persetujuan **lewat web saja**; WA hanya memberi tahu (`F10_CEK_WA_TARGET`) saat cek diajukan. Balasan WA
+    `ya C<id>` belum dibangun.
+- **Pengaman cek kosong:** saldo pembanding = **saldo akhir rekening koran terakhir** yang disetor lewat `#KORAN`
+  (F-CASHIN `bank_statement`, yang `perlu_review` diabaikan) — tidak ada input saldo manual. Total cek beredar
+  (disetujui + diserahkan, belum cair) + cek yang diajukan > saldo → peringatan merah di daftar, di form input, dan di WA
+  ke penyetuju. Rekening tanpa rekening koran disebut "tidak ada pembanding".
+- **Cair otomatis** (job harian): mutasi debit rekening yang sama, nominal persis, tanggal ≥ terbit, dan deskripsinya
+  memuat angka nomor seri (sama persis, atau potongan ekor ≥ 6 digit). Nol atau lebih dari satu kandidat → tidak
+  ditebak, ditandai manual. Satu mutasi tak dipakai dua cek.
+- Nomor seri unik per rekening; nomor loncat (seri baru ≠ seri terakhir + 1, awalan sama) ditandai di daftar.
+- Pengingat jatuh tempo H-3 dan H (sekali per cek per tahap) ke grup Finance untuk cek diserahkan yang belum cair —
+  `F10_CEK_CRON` default 08:30 hari kerja.
+- **Audit:** `cek_keluar_log` append-only (aplikasi hanya INSERT/SELECT); cek tidak bisa dihapus.
+- Saklar `F10_CEK_ENABLED` (default mati) untuk job harian + WA. Menu tetap bisa dipakai tanpa saklar (izin matriks).
 
 ## Data (garis besar, nomor migrasi ditentukan saat build)
 
@@ -101,7 +106,7 @@ tahap ini.
 | `faktur_revisi` | `id`, `nomor`, `invoice_id_awal`, `opt_lock_awal`, `alasan`, `diminta_oleh`, `diminta_at`, `sumber` (wa/deteksi), `batas_sla`, `invoice_id_baru`, `selesai_at`, `ditutup_manual`, `catatan` |
 | `cek_keluar` | register cek + status terakhir |
 | `cek_keluar_log` | riwayat status append-only |
-| `rekening_saldo` | saldo rekening input manual per tanggal |
+| ~~`rekening_saldo`~~ | tidak dibuat — saldo dari `bank_statement` F-CASHIN |
 | `fakturis_akun` | pemetaan `createdBy` Accurate → master_user (diisi lewat UI) |
 
 ## Saklar (default mati)
@@ -123,6 +128,6 @@ Uji WA dari dev hanya ke grup "Research".
 
 ## Pertanyaan terbuka
 
-- Saldo rekening: diinput siapa dan seberapa sering (harian/mingguan)?
+- ~~Saldo rekening diinput siapa?~~ Terjawab: diambil dari rekening koran `#KORAN` (F-CASHIN), tanpa input manual.
 - Jam kerja fakturis sama 08:00–17:00 di semua cabang, atau ada fakturis cabang?
 - `#REVISI` boleh dikirim customer-facing staff selain AM (mis. Admin Sales cabang)?
