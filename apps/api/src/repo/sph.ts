@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 import { db, isDbEnabled } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
 import { PPN_PRICEBOOK, PERIODE_DEFAULT } from "./pricebook.js";
+import { effectivePermissions } from "./rbac.js";
+import { bolehFinalSph, bolehReviewSph, samaOrang, type IdentitasPelaku } from "../lib/sales-doc-gate.js";
 
 const rnd = (v: number) => Math.round(v); // half-up, sama konvensi pricebook.ts
 
@@ -41,6 +43,10 @@ export interface CreateSphInput {
   periode?: string;
   items: SphItemInput[];
   created_by?: string | null;
+  // Penanda pembuat utk larangan "pembuat tak boleh review/finalisasi SPH-nya
+  // sendiri" (lib/sales-doc-gate.ts). Web: app_user.id sesi; WA #SPH: am_id pengirim.
+  created_by_user_id?: string | null;
+  created_by_am_id?: string | null;
   // Opsional krn jalur #SPH WA (format 1-baris, lihat parsers/sph.ts) tak
   // punya tempat utk ini — default "(diisi Admin Penawaran)" dipakai kalau
   // kosong. Jalur form web WAJIB isi (lihat validasi di apps/web /sph/new).
@@ -343,7 +349,16 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   await logHumanAction(
     "sph.draft.create",
     input.created_by,
-    { doc_id: docId, customer_id: customerId, customer_name: customerName, item_count: lineItems.length, total, model },
+    {
+      doc_id: docId,
+      customer_id: customerId,
+      customer_name: customerName,
+      item_count: lineItems.length,
+      total,
+      model,
+      created_by_user_id: input.created_by_user_id ?? null,
+      created_by_am_id: input.created_by_am_id ?? null,
+    },
     "create",
   );
 
@@ -414,18 +429,98 @@ export interface SphActionResult {
   ok: boolean;
   error?: string;
   status?: string;
+  forbidden?: boolean; // ditolak krn izin/identitas → route balas 403
+}
+
+// Pelaku aksi dari SESI (x-user-id yg diteruskan BFF), bukan dari body.
+// nama = name || email, sama dgn actorName() di web (lib/feature-guard.ts).
+export interface PelakuSesi extends IdentitasPelaku {
+  userId: string;
+  nama: string;
+  role: string | null;
+  superuser: boolean;
+  hodPeran: string | null; // master_hod.peran bila hod_key user AKTIF, selain itu null
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function pelakuDariUser(userId: string | null | undefined): Promise<PelakuSesi | null> {
+  const id = String(userId ?? "").trim();
+  if (!UUID_RE.test(id)) return null; // app_user.id uuid — id rusak jangan sampai jadi error cast
+  const sql = db();
+  const [u] = await sql`
+    SELECT u.id::text AS id, u.name, u.email, u.role, u.am_id, h.peran AS hod_peran
+    FROM app_user u
+    LEFT JOIN master_hod h ON h.hod_key = u.hod_key AND h.aktif
+    WHERE u.id = ${id}
+  `;
+  if (!u) return null;
+  let superuser = false;
+  try {
+    superuser = (await effectivePermissions(id)).superuser;
+  } catch {
+    /* RBAC belum siap → anggap non-superuser */
+  }
+  return {
+    userId: String(u.id),
+    nama: String(u.name ?? "").trim() || String(u.email),
+    amId: u.am_id ? String(u.am_id) : null,
+    role: u.role ? String(u.role) : null,
+    superuser,
+    hodPeran: u.hod_peran ? String(u.hod_peran) : null,
+  };
+}
+
+// sales_doc tak punya kolom pembuat → ambil dari audit_log 'sph.draft.create'
+// (human_actor + penanda di payload). null = tak tercatat (SPH lama/seed):
+// larangan pembuat tak bisa ditegakkan utk dokumen itu.
+export async function pembuatSph(docId: string): Promise<IdentitasPelaku | null> {
+  const sql = db();
+  const [r] = await sql`
+    SELECT human_actor, payload->>'created_by_user_id' AS user_id, payload->>'created_by_am_id' AS am_id
+    FROM audit_log
+    WHERE event_type = 'sph.draft.create' AND payload->>'doc_id' = ${docId}
+    ORDER BY occurred_at ASC
+    LIMIT 1
+  `;
+  if (!r) return null;
+  return {
+    nama: r.human_actor ? String(r.human_actor) : null,
+    userId: r.user_id ? String(r.user_id) : null,
+    amId: r.am_id ? String(r.am_id) : null,
+  };
+}
+
+async function pelakuPembuat(docId: string, pelaku: IdentitasPelaku): Promise<boolean> {
+  const pembuat = await pembuatSph(docId);
+  return !!pembuat && samaOrang(pelaku, pembuat);
+}
+
+// Dipakai approveSalesDoc (tahap 2) & confirmSphVariant.
+export async function cekFinalSph(docId: string, pelaku: IdentitasPelaku): Promise<string | null> {
+  const p = bolehFinalSph({ isCreator: await pelakuPembuat(docId, pelaku) });
+  return p.ok ? null : p.error;
 }
 
 // Tahap 1/2: HOD Business review. draft → hod_review. Khusus doc_type='sph'
 // (doc_type lain tetap 1 tahap via approveSalesDoc di salesdoc.ts).
-export async function hodReviewSph(id: string, reviewerId?: string): Promise<SphActionResult> {
+// Peninjau = pelaku sesi; boleh hanya HoD Business aktif (atau admin/superuser)
+// dan BUKAN pembuat SPH (lib/sales-doc-gate.ts bolehReviewSph).
+export async function hodReviewSph(id: string, reviewer: PelakuSesi): Promise<SphActionResult> {
   const sql = db();
   const rows = await sql`SELECT id, status, doc_type FROM sales_doc WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "dokumen tidak ditemukan" };
   if (rows[0].doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
   if (rows[0].status !== "draft") return { ok: false, error: `dokumen sudah ${rows[0].status}` };
-  await sql`UPDATE sales_doc SET status = 'hod_review', hod_reviewed_by = ${reviewerId ?? null}, hod_reviewed_at = now() WHERE id = ${id}`;
-  await logHumanAction("sph.hod_review", reviewerId, { doc_id: id }, "review");
+  const p = bolehReviewSph({
+    hodPeran: reviewer.hodPeran,
+    role: reviewer.role,
+    superuser: reviewer.superuser,
+    isCreator: await pelakuPembuat(id, reviewer),
+  });
+  if (!p.ok) return { ok: false, error: p.error, forbidden: true };
+  await sql`UPDATE sales_doc SET status = 'hod_review', hod_reviewed_by = ${reviewer.nama}, hod_reviewed_at = now() WHERE id = ${id}`;
+  await logHumanAction("sph.hod_review", reviewer.nama, { doc_id: id, reviewer_user_id: reviewer.userId }, "review");
   return { ok: true, status: "hod_review" };
 }
 
@@ -450,16 +545,18 @@ export async function unconfirmedVariantItems(
 export async function confirmSphVariant(
   salesDocId: string,
   lineItemId: number,
-  confirmedBy?: string,
+  pelaku: PelakuSesi,
 ): Promise<SphActionResult> {
   const sql = db();
   const rows = await sql`SELECT id FROM sph_line_item WHERE id = ${lineItemId} AND sales_doc_id = ${salesDocId}`;
   if (rows.length === 0) return { ok: false, error: "baris item tidak ditemukan di dokumen ini" };
+  const tolak = await cekFinalSph(salesDocId, pelaku);
+  if (tolak) return { ok: false, error: tolak, forbidden: true };
   await sql`
-    UPDATE sph_line_item SET variant_confirmed = true, variant_confirmed_by = ${confirmedBy ?? null}, variant_confirmed_at = now()
+    UPDATE sph_line_item SET variant_confirmed = true, variant_confirmed_by = ${pelaku.nama}, variant_confirmed_at = now()
     WHERE id = ${lineItemId}
   `;
-  await logHumanAction("sph.variant_confirm", confirmedBy, { line_item_id: lineItemId, doc_id: salesDocId }, "confirm");
+  await logHumanAction("sph.variant_confirm", pelaku.nama, { line_item_id: lineItemId, doc_id: salesDocId }, "confirm");
   return { ok: true };
 }
 

@@ -91,7 +91,7 @@ import {
   sendSalesDoc,
   cancelSalesDoc,
 } from "./repo/salesdoc.js";
-import { createSphDraft, getSphDetail, hodReviewSph, confirmSphVariant } from "./repo/sph.js";
+import { createSphDraft, getSphDetail, hodReviewSph, confirmSphVariant, pelakuDariUser } from "./repo/sph.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -2103,6 +2103,8 @@ app.get("/sales/docs", async (c) => {
 });
 
 // Siklus kirim A6 (aksi manusia, Layer 5): approve → send → (atau cancel).
+// Gerbang izin (edit /sales-docs) di BFF; BFF menimpa approver_id dgn pelaku
+// sesi + meneruskan x-user-id. Pelaku dari x-user-id menang atas body.
 app.post("/sales/docs/:id/approve", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { approver_id?: string } = {};
@@ -2111,8 +2113,9 @@ app.post("/sales/docs/:id/approve", async (c) => {
   } catch {
     /* body opsional */
   }
-  const r = await approveSalesDoc(c.req.param("id"), body.approver_id);
-  return c.json(r, r.ok ? 200 : 400);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await approveSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 app.post("/sales/docs/:id/send", async (c) => {
@@ -2124,7 +2127,8 @@ app.post("/sales/docs/:id/send", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.to) return c.json({ error: "body.to (tujuan) wajib" }, 400);
-  const r = await sendSalesDoc(c.req.param("id"), body.to, body.approver_id);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await sendSalesDoc(c.req.param("id"), body.to, pelaku?.nama ?? body.approver_id);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -2136,7 +2140,8 @@ app.post("/sales/docs/:id/cancel", async (c) => {
   } catch {
     /* body opsional */
   }
-  const r = await cancelSalesDoc(c.req.param("id"), body.approver_id);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await cancelSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -2468,7 +2473,14 @@ app.post("/sph", async (c) => {
   if (!body?.customer_id) {
     return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
   }
-  const r = await createSphDraft(body);
+  // Pembuat = pelaku sesi (x-user-id dari BFF), bukan created_by kiriman klien.
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await createSphDraft({
+    ...body,
+    created_by: pelaku?.nama ?? body.created_by ?? null,
+    created_by_user_id: pelaku?.userId ?? null,
+    created_by_am_id: pelaku?.amId ?? null,
+  });
   return c.json(r, r.ok ? 201 : 400);
 });
 
@@ -2481,32 +2493,33 @@ app.get("/sph/:id", async (c) => {
 
 // Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
 // endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
+// Peninjau = pelaku sesi (x-user-id); syarat HoD Business aktif / admin /
+// superuser + bukan pembuat ditegakkan di hodReviewSph. Body diabaikan.
 app.post("/sph/:id/review", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { reviewer_id?: string } = {};
-  try {
-    body = await c.req.json();
-  } catch {
-    /* body opsional */
-  }
-  const r = await hodReviewSph(c.req.param("id"), body.reviewer_id);
-  return c.json(r, r.ok ? 200 : 400);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await hodReviewSph(c.req.param("id"), pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 // HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
-// Body: { line_item_id, confirmed_by? }. Wajib dilakukan tiap baris
-// unconfirmed sebelum POST /sales/docs/:id/approve bisa lolos utk SPH.
+// Body: { line_item_id }. Wajib dilakukan tiap baris unconfirmed sebelum
+// POST /sales/docs/:id/approve bisa lolos utk SPH. Pelaku = sesi (x-user-id),
+// pembuat SPH tak boleh mengonfirmasi SPH-nya sendiri.
 app.post("/sph/:id/confirm-variant", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { line_item_id?: number; confirmed_by?: string } = {};
+  let body: { line_item_id?: number } = {};
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
-  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, body.confirmed_by);
-  return c.json(r, r.ok ? 200 : 400);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 // F11 Approval Engine — base/generic (migrasi 106). Body:
