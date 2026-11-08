@@ -71,6 +71,7 @@ import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
 import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
+import { prosesRevisiSesudahSync, revisiAktif } from "./repo/revisi-faktur.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
 import { terapkanKpiBulan } from "./repo/kpi-measure.js";
 
@@ -876,6 +877,15 @@ export function startScheduler(): ScheduleStatus {
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
           // F10 — alarm fakturis diam, menempel di sini karena faktur baru hanya terlihat sesudah
           // sync. Hanya bila sync sukses: mirror basi = alarm palsu. Libur sudah dilewati di atas.
+          // F10 bagian 2 — tutup otomatis tiket #REVISI, deteksi input ulang, pengingat lewat SLA.
+          if (revisiAktif() && r.ok) {
+            try {
+              const rv = await prosesRevisiSesudahSync();
+              if (rv.ditutup || rv.dideteksi || rv.terlambat_dikirim) console.log(`[scheduler] f10-revisi ${JSON.stringify(rv)}`);
+            } catch (e5) {
+              console.error(`[scheduler] f10-revisi gagal @ ${startedAt}:`, e5);
+            }
+          }
           if (fakturisDiamEnabled && r.ok) {
             try {
               const d = await runCekFakturisDiam();
@@ -932,6 +942,7 @@ export function startScheduler(): ScheduleStatus {
     );
     live.push(`accurate-sync=${accExpr}`);
     if (fakturisDiamEnabled) live.push(`f10-fakturis-diam=sesudah accurate-sync`);
+    if (revisiAktif()) live.push(`f10-revisi=sesudah accurate-sync`);
   }
 
   // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;

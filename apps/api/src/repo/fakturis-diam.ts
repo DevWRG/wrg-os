@@ -165,7 +165,14 @@ export async function runCekFakturisDiam(opts: { dryRun?: boolean; sekarang?: Da
                  WHERE id = ${buka.id}`;
       return { ...base, aksi: "pulih", menit, sent: w.sent, error: w.error };
     }
-    return { ...base, aksi: "masih-diam", menit: menitJamKerja(sejak, sekarang, jk) };
+    const menit = menitJamKerja(sejak, sekarang, jk);
+    // Alarm yang gagal terkirim (gateway mati / target kosong) dicoba lagi tiap sync selama masih diam.
+    if (!buka.alarm_terkirim && !dryRun) {
+      const w = await kirim(buildAlarmWa(terakhir, sejak, menit, sekarang));
+      if (w.sent) await sql`UPDATE fakturis_diam SET alarm_terkirim = true WHERE id = ${buka.id}`;
+      return { ...base, aksi: "masih-diam", menit, sent: w.sent, error: w.error };
+    }
+    return { ...base, aksi: "masih-diam", menit };
   }
 
   const sejak = awalDiam(terakhir?.at ?? null, sekarang, jk);
@@ -242,4 +249,83 @@ export async function runRekapFakturis(opts: { dryRun?: boolean; sekarang?: Date
       ON CONFLICT (key) DO UPDATE SET signature = EXCLUDED.signature, count = notif_state.count + 1, sent_at = now()`;
   }
   return { minggu, sent: w.sent, dryRun, error: w.error };
+}
+
+// ---------------------------------------------------------------- layar /penerbitan-faktur
+
+export class FakturisError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export interface AkunFakturis { created_by: string; label: string | null; faktur_60h: number; faktur_7h: number; terakhir_at: string | null }
+export interface KejadianDiam { id: number; sejak_at: string; pulih_at: string | null; menit: number; faktur_terakhir: string | null; pulih_faktur: string | null; alarm_terkirim: boolean }
+
+/** Status sekarang + riwayat 30 hari + akun pembuat 60 hari (baca saja, tanpa WA). */
+export async function statusFakturis(sekarang = new Date()) {
+  const sql = db();
+  const jk = jamKerjaDariEnv();
+  const ambang = ambangJamDariEnv();
+  const cekNow = await runCekFakturisDiam({ dryRun: true, sekarang });
+  const terakhir = await fakturTerakhir();
+  const kejadian = await sql<{ id: string; sejak_at: Date; pulih_at: Date | null; faktur_terakhir: string | null; pulih_faktur: string | null; alarm_terkirim: boolean }[]>`
+    SELECT id::text, sejak_at, pulih_at, faktur_terakhir, pulih_faktur, alarm_terkirim
+      FROM fakturis_diam WHERE sejak_at >= now() - interval '30 days' ORDER BY sejak_at DESC`;
+  const rows = await sql<{ created_by: string | null; create_date: string | null; label: string | null }[]>`
+    SELECT i.raw->>'createdBy' AS created_by, i.raw->>'createDate' AS create_date, a.label
+      FROM accurate_invoice i
+      LEFT JOIN fakturis_akun a ON a.created_by = i.raw->>'createdBy'
+     WHERE i.tanggal >= current_date - 70 AND i.raw ? 'createdBy'`;
+  const batas60 = sekarang.getTime() - 60 * 86400000;
+  const batas7 = sekarang.getTime() - 7 * 86400000;
+  const akun = new Map<string, AkunFakturis>();
+  for (const r of rows) {
+    if (!r.created_by) continue;
+    const at = parseCreateDate(r.create_date);
+    if (!at || at.getTime() < batas60) continue;
+    const a = akun.get(r.created_by) ?? { created_by: r.created_by, label: r.label, faktur_60h: 0, faktur_7h: 0, terakhir_at: null };
+    a.faktur_60h += 1;
+    if (at.getTime() >= batas7) a.faktur_7h += 1;
+    if (!a.terakhir_at || at.toISOString() > a.terakhir_at) a.terakhir_at = at.toISOString();
+    akun.set(r.created_by, a);
+  }
+  // Akun yang sudah diberi label tapi tak membuat faktur 60 hari tetap tampil supaya labelnya bisa dihapus.
+  for (const l of await sql<{ created_by: string; label: string }[]>`SELECT created_by, label FROM fakturis_akun`) {
+    if (!akun.has(l.created_by)) akun.set(l.created_by, { created_by: l.created_by, label: l.label, faktur_60h: 0, faktur_7h: 0, terakhir_at: null });
+  }
+  return {
+    ambang_jam: ambang,
+    jam_kerja: jk,
+    status: cekNow.aksi === "alarm" || cekNow.aksi === "masih-diam" ? "diam" : "normal",
+    menit_diam: cekNow.aksi === "normal" || cekNow.aksi === "pulih" ? 0 : cekNow.menit,
+    terakhir: terakhir ? { nomor: terakhir.nomor, akun: terakhir.akun, label: terakhir.label, at: terakhir.at.toISOString() } : null,
+    kejadian: kejadian.map<KejadianDiam>((k) => ({
+      id: Number(k.id),
+      sejak_at: new Date(k.sejak_at).toISOString(),
+      pulih_at: k.pulih_at ? new Date(k.pulih_at).toISOString() : null,
+      menit: menitJamKerja(new Date(k.sejak_at), k.pulih_at ? new Date(k.pulih_at) : sekarang, jk),
+      faktur_terakhir: k.faktur_terakhir,
+      pulih_faktur: k.pulih_faktur,
+      alarm_terkirim: k.alarm_terkirim,
+    })),
+    akun: [...akun.values()].sort((a, b) => b.faktur_60h - a.faktur_60h || a.created_by.localeCompare(b.created_by)),
+  };
+}
+
+/** Beri / ganti / hapus (label kosong) nama untuk akun Accurate. `oleh` dari sesi BFF. */
+export async function simpanLabelAkun(input: { created_by?: unknown; label?: unknown; oleh?: unknown }) {
+  const createdBy = String(input.created_by ?? "").trim();
+  const label = String(input.label ?? "").trim();
+  const oleh = String(input.oleh ?? "").trim() || null;
+  if (!/^\d{1,20}$/.test(createdBy)) throw new FakturisError(400, "created_by harus id akun Accurate (angka)");
+  if (label.length > 80) throw new FakturisError(400, "nama maksimal 80 karakter");
+  const sql = db();
+  if (!label) {
+    await sql`DELETE FROM fakturis_akun WHERE created_by = ${createdBy}`;
+    return { created_by: createdBy, label: null };
+  }
+  await sql`INSERT INTO fakturis_akun (created_by, label, diubah_oleh, diubah_at) VALUES (${createdBy}, ${label}, ${oleh}, now())
+    ON CONFLICT (created_by) DO UPDATE SET label = EXCLUDED.label, diubah_oleh = EXCLUDED.diubah_oleh, diubah_at = now()`;
+  return { created_by: createdBy, label };
 }
