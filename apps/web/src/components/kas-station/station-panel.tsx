@@ -102,7 +102,7 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="ks-cabang">Station (cabang)</Label>
-            <select id="ks-cabang" className={cn(selCls, "min-w-56 bg-card")} value={cabang} onChange={(e) => setPilih(e.target.value)}>
+            <select id="ks-cabang" className={cn(selCls, "min-w-56")} value={cabang} onChange={(e) => setPilih(e.target.value)}>
               {cabangOpsi.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
@@ -239,14 +239,16 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
             </Card>
           )}
 
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold">Riwayat kas harian</h3>
-            {rows.length === 0 ? (
-              <EmptyState title="Belum ada catatan kas" description={izin.stationCreate ? "Mulai dengan tombol Catat kas hari ini. Catatan pertama mengisi saldo awal kas station." : "Station ini belum punya catatan."} />
-            ) : (
-              <RiwayatHarian rows={rows} onBuka={setDetailHarian} />
-            )}
-          </div>
+          <Card>
+            <CardHeader><CardTitle className="text-base font-semibold">Riwayat kas harian</CardTitle></CardHeader>
+            <CardContent>
+              {rows.length === 0 ? (
+                <EmptyState title="Belum ada catatan kas" description={izin.stationCreate ? "Mulai dengan tombol Catat kas hari ini. Catatan pertama mengisi saldo awal kas station." : "Station ini belum punya catatan."} />
+              ) : (
+                <RiwayatHarian rows={rows} onBuka={setDetailHarian} />
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
 

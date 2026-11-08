@@ -87,7 +87,7 @@ export const waktu = (t: string | null): string => {
   return Number.isNaN(d.getTime()) ? t : d.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" });
 };
 
-export const selCls = "w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm";
+export const selCls = "w-full rounded-md border border-input bg-card px-2 py-1.5 text-sm";
 
 /** Panggil BFF /api/kas-station/*; lempar Error berisi pesan dari API bila gagal. */
 export async function kasApi<T>(path: string, init?: { method?: "GET" | "POST" | "PATCH" | "DELETE"; body?: unknown }): Promise<T> {
