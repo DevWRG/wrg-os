@@ -1816,6 +1816,8 @@ app.get("/sales/docs", async (c) => {
 });
 
 // Siklus kirim A6 (aksi manusia, Layer 5): approve → send → (atau cancel).
+// Gerbang izin (edit /sales-docs) di BFF; BFF menimpa approver_id dgn pelaku
+// sesi + meneruskan x-user-id. Tujuan send dibatasi kontak WA customer (repo).
 app.post("/sales/docs/:id/approve", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { approver_id?: string } = {};

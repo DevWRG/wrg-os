@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
+import { PESAN_TUJUAN_DITOLAK, accountIdDariCustomer, nomorTujuan, tujuanDiizinkan } from "../lib/sales-doc-gate.js";
 
 // D1 — sales_doc. Sumber: deal yang berada di stage ber-dokumen. A6 (Sales Doc
 // Drafter) menyusun dokumen via services/ai; status awal 'draft' (R2/L2 —
@@ -156,8 +157,18 @@ export async function sendSalesDoc(
   if (rows[0].status !== "approved") {
     return { ok: false, error: `harus di-approve dulu (status sekarang: ${rows[0].status})` };
   }
+  // Tujuan hanya kontak WA customer di Accounts (lib/sales-doc-gate.ts) —
+  // tanpa ini endpoint ini bisa dipakai mengirim pesan ke nomor sembarang.
+  const accountId = accountIdDariCustomer(rows[0].customer_id ? String(rows[0].customer_id) : null);
+  const kontak = accountId
+    ? (await sql`SELECT hp_wa FROM crm_contact WHERE account_id = ${accountId}::bigint AND hp_wa IS NOT NULL`).map((r) =>
+        String(r.hp_wa),
+      )
+    : [];
+  if (!tujuanDiizinkan(to, kontak)) return { ok: false, error: PESAN_TUJUAN_DITOLAK };
+  const tujuan = nomorTujuan(to) as string; // lolos tujuanDiizinkan → pasti nomor sah
   const message = `${rows[0].title ? `${rows[0].title}\n\n` : ""}${String(rows[0].draft_text)}`;
-  const gateway = await sendViaWaGateway(to, message);
+  const gateway = await sendViaWaGateway(tujuan, message);
   if (!gateway.sent) {
     return { ok: false, error: `gateway WA gagal: ${gateway.error ?? gateway.status}`, gateway };
   }
@@ -165,7 +176,7 @@ export async function sendSalesDoc(
   await logHumanAction(
     "sales.doc.send",
     approverId,
-    { doc_id: id, to, doc_type: rows[0].doc_type, customer_id: rows[0].customer_id, gateway },
+    { doc_id: id, to: tujuan, doc_type: rows[0].doc_type, customer_id: rows[0].customer_id, gateway },
     "send",
   );
   return { ok: true, status: "sent", gateway };
