@@ -218,7 +218,7 @@ function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
     const sa = pisahSnAlat(s);
     if (sa.sn && !b.sn) { b.sn = sa.sn; if (sa.alat && !b.alat) b.alat = sa.alat; continue; }
     if (sa.alat && !b.alat) { b.alat = sa.alat; continue; }
-    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#<no plan>\` atau \`SN … | alat | jenis\`.`;
+    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#NOMOR-PLAN\` atau \`SN … | alat | jenis\`.`;
   }
   return null;
 }
@@ -270,7 +270,7 @@ export function parseTeknisiReport(
         const st = parseStatus(v);
         if (!st.status) {
           statusSalah.add(b);
-          out.errors.push(`Blok ${b.nomor}: status "${v}" tak dikenal. Pakai Selesai / Pending <alasan> / Batal <alasan> / Revisit.`);
+          out.errors.push(`Blok ${b.nomor}: status "${v}" tak dikenal. Pakai Selesai / Pending ALASAN / Batal ALASAN / Revisit.`);
           return;
         }
         b.status = st.status; b.alasan = st.alasan; return;
@@ -341,7 +341,7 @@ export function parseTeknisiReport(
       out.errors.push(`Blok ${b.nomor}: tanpa nomor plan, \`RS:\` wajib diisi.`);
     }
     if (!b.status) {
-      if (!statusSalah.has(b)) out.errors.push(`Blok ${b.nomor}: \`Status:\` wajib (Selesai / Pending <alasan> / Batal <alasan> / Revisit).`);
+      if (!statusSalah.has(b)) out.errors.push(`Blok ${b.nomor}: \`Status:\` wajib (Selesai / Pending ALASAN / Batal ALASAN / Revisit).`);
     } else if ((b.status === "Pending" || b.status === "Batal") && !b.alasan) {
       const alasan = b.catatan ?? (out.blok.length === 1 ? out.catatan : null);
       if (alasan) b.alasan = alasan;
