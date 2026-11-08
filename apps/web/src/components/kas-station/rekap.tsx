@@ -14,7 +14,7 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 import { useKasData } from "./use-kas-data";
 import {
-  STATUS_LABEL, kasApi, rp, rpSelisih, selCls, tgl, waktu,
+  STATUS_LABEL, kasApi, rentangTanggal, rp, rpSelisih, selCls, tgl, waktu,
   type IzinKasStation, type Rekap, type RekapDetail, type StatusRekap,
 } from "./types";
 
@@ -138,7 +138,7 @@ export function DetailRekapDialog({ id, izin, onClose, onUbah }: { id: string; i
               ) : null}
               {r.hari_tanpa_catatan.length > 0 && (
                 <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                  Tanggal tanpa catatan kas: {r.hari_tanpa_catatan.map((t) => tgl(t)).join(", ")}.
+                  {r.hari_tanpa_catatan.length} hari belum ada catatan kas: {rentangTanggal(r.hari_tanpa_catatan)}.
                 </p>
               )}
               {r.status === "rejected" && r.decision_note && (
