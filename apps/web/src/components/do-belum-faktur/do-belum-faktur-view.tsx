@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
+import { KartuTutupBuku } from "./kartu-tutup-buku";
+
 // F149 DO Belum Difaktur — bentuk data = apps/api/src/repo/do-belum-faktur.ts.
 type Tab = "tagih" | "kso";
 interface BarisDo {
@@ -68,6 +70,7 @@ export function DoBelumFakturView({ bolehUbah }: { bolehUbah: boolean }) {
 
   return (
     <section className="space-y-4">
+      <KartuTutupBuku bolehUbah={bolehUbah} />
       <Tabs value={tab} onValueChange={(v) => gantiTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="tagih">Perlu ditagih{d ? ` (${d.ringkasan.tagih.do})` : ""}</TabsTrigger>
