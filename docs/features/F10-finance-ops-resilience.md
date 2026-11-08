@@ -74,7 +74,7 @@ per cabang/AM/fakturis kelihatan. Sumber: `accurate_invoice_hilang.ada_kembaran`
 ## 3. Register cek (ambil alih F29)
 
 Hanya **cek/giro keluar** (yang diterbitkan WRG) — pencegahan kasus cek kosong. Cek masuk dari customer di luar cakupan
-tahap ini. Dibangun 8 Nov 2026 (migrasi 293, menu `/register-cek`).
+tahap ini. Dibangun 8 Nov 2026 (migrasi 298, menu `/register-cek`).
 
 - Input lewat **web** (menu Finance → Register Cek), bukan WA (`#CEK` sudah dipakai cek faktur F4/QW3).
   Field: rekening (master `bank_account` F-CASHIN, hanya jenis kas), jenis cek/giro, nomor seri, tanggal terbit,

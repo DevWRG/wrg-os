@@ -1,4 +1,4 @@
--- 293: F10 Finance Ops Resilience bagian 3 — register cek/giro keluar (ambil alih F29), docs/features/F10-finance-ops-resilience.md.
+-- 298: F10 Finance Ops Resilience bagian 3 — register cek/giro keluar (ambil alih F29), docs/features/F10-finance-ops-resilience.md.
 --
 -- Briefing 24 Mei 2026: kasus cek kosong sampai panggilan Polrestabes. Belum ada catatan cek yang diterbitkan WRG
 -- di sistem mana pun. Register ini: kasir input → ajukan → HoD Finance setuju/tolak (pembuat tak boleh menyetujui

@@ -1,4 +1,4 @@
-// F10 bagian 3 — register cek/giro keluar (migrasi 293, ambil alih F29; docs/features/F10-finance-ops-resilience.md).
+// F10 bagian 3 — register cek/giro keluar (migrasi 298, ambil alih F29; docs/features/F10-finance-ops-resilience.md).
 //
 // Alur: draft → diajukan → disetujui | ditolak → diserahkan → cair | tolak_bank; draft/diajukan/disetujui → batal.
 //   • Hak per aksi diperiksa di BFF menu /register-cek: input/ajukan/serahkan/cair/batal = izin TAMBAH,

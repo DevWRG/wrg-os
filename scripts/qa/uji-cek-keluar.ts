@@ -1,4 +1,4 @@
-// Uji F10 bagian 3 — register cek keluar (#2095, migrasi 293) — MANUAL, butuh DB dev. Bukan bagian CI.
+// Uji F10 bagian 3 — register cek keluar (#2095, migrasi 298) — MANUAL, butuh DB dev. Bukan bagian CI.
 //
 //   DATABASE_URL="postgres:///wrg_os_dev" npx tsx scripts/qa/uji-cek-keluar.ts
 //
