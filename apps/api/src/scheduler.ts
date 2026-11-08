@@ -70,6 +70,7 @@ import { runRekapSuplaiKso } from "./repo/kso-suplai.js";
 import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runInvoiceReminder, runOverdueRecap } from "./repo/faktur.js";
 import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
+import { runTutupBukuCountdown } from "./repo/tutup-buku.js";
 import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
 import { prosesRevisiSesudahSync, revisiAktif } from "./repo/revisi-faktur.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
@@ -1949,6 +1950,32 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`do-belum-faktur-rekap=${doRekapExpr}`);
+  }
+
+  // tutup-buku-countdown (F61) — penjualan belum difaktur per AM menjelang tutup buku,
+  // ke grup sales region (TUTUP_BUKU_TARGET_EAST/_WEST) pada H-7/H-3/H-1 hari kerja;
+  // H-1 juga eskalasi ke TUTUP_BUKU_ESKALASI_TARGET. Saklar TUTUP_BUKU_COUNTDOWN_ENABLED
+  // (default mati). Dedupe per (bulan, H-n, tujuan) di notif_state.
+  const tutupBukuEnabled = process.env.TUTUP_BUKU_COUNTDOWN_ENABLED === "true";
+  const tutupBukuExpr = process.env.TUTUP_BUKU_COUNTDOWN_CRON ?? "20 8 * * 1-5";
+  if (tutupBukuEnabled && cron.validate(tutupBukuExpr)) {
+    cron.schedule(
+      tutupBukuExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runTutupBukuCountdown();
+          if ("skipped" in r && r.skipped) return; // bukan H-7/H-3/H-1: diam
+          console.log(`[scheduler] tutup-buku-countdown @ ${startedAt} ${JSON.stringify({ ...r, hasil: r.hasil.map((h) => ({ ...h, payload: undefined })) })}`);
+          for (const h of r.hasil) if (h.error || h.skipped === "tujuan grup belum diatur") console.error(`[scheduler] tutup-buku-countdown ${h.tujuan}: ${h.error ?? h.skipped}`);
+        } catch (e) {
+          console.error(`[scheduler] tutup-buku-countdown gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`tutup-buku-countdown=${tutupBukuExpr}`);
   }
 
   // f10-fakturis-rekap — beban faktur per akun minggu lalu + kejadian diam → grup Finance.
