@@ -190,6 +190,7 @@ export function DocDetailDialog({ soId, canEdit, onClose, onBerubah }: {
                         {!wajib && <span className="text-muted-foreground text-xs">(informasi)</span>}
                         {dariArsip && <span className="text-xs text-emerald-700 dark:text-emerald-400">dari Arsip {arsip.join(", ")}</span>}
                         {row?.ada && <span className="text-muted-foreground text-xs">{dariArsip ? "juga dicentang " : ""}oleh {row.by}, {waktu(row.at)}</span>}
+                        {row && !row.ada && <span className="text-muted-foreground text-xs">centang dibatalkan oleh {row.by}, {waktu(row.at)}</span>}
                       </li>
                     );
                   })}
