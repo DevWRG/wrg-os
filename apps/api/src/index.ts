@@ -45,6 +45,7 @@ import {
   opsi as ppOpsi, putuskan as ppPutuskan, simpanKelompok as ppSimpanKelompok, ubahParam as ppUbahParam, ubahPermintaan, usulkan as ppUsulkan, bacaParam as ppBacaParam,
 } from "./repo/permintaan-produk.js";
 import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
+import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
@@ -6567,6 +6568,17 @@ app.get("/do-belum-faktur", async (c) => {
   } catch (e) { return doFakturErr(c, e); }
 });
 // Pratinjau rekap WA mingguan (dry-run, tak mengirim apa pun). BFF: izin ubah.
+// F10 — pratinjau alarm fakturis diam + rekap mingguan (dry-run: tanpa tulis DB, tanpa WA).
+// Hanya dipanggil dari BFF (gerbang menu Finance diperiksa di sana).
+app.get("/fakturis-diam/pratinjau", async (c) => {
+  try {
+    const [cek, rekap] = await Promise.all([runCekFakturisDiam({ dryRun: true }), runRekapFakturis({ dryRun: true })]);
+    return c.json({ cek, rekap });
+  } catch (e) {
+    console.error("[fakturis-diam]", e);
+    return c.json({ error: "gagal memuat pratinjau fakturis diam" }, 500);
+  }
+});
 app.get("/do-belum-faktur/rekap-pratinjau", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { return c.json(await runRekapDoBelumFaktur({ dryRun: true })); } catch (e) { return doFakturErr(c, e); }
