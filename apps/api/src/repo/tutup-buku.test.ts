@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildEskalasi, buildPengingat, hariKerjaSampai, hariKerjaTerakhir, targetEskalasi, targetRegion, type RingkasRegion } from "./tutup-buku.js";
+import { buildEskalasi, buildPengingat, hariKerjaSampai, hariKerjaTerakhir, petaGrupCabang, rencanaKirim, ringkasPerRegionDari, targetEskalasi, targetRegion, type BarisJual, type RingkasRegion } from "./tutup-buku.js";
 
 test("hariKerjaTerakhir: lewati Sabtu/Minggu & libur", () => {
   assert.equal(hariKerjaTerakhir("2026-11", new Set()), "2026-11-30");            // Senin
@@ -50,4 +50,35 @@ test("target grup dari env", () => {
   assert.equal(targetRegion("East", { TUTUP_BUKU_TARGET_EAST: " 1-2@g.us " }), "1-2@g.us");
   assert.equal(targetRegion("West", {}), null);
   assert.equal(targetEskalasi({ TUTUP_BUKU_ESKALASI_TARGET: "9@g.us" }), "9@g.us");
+});
+
+test("petaGrupCabang: pemisah ; / baris baru, nama dinormalkan, entri cacat dibuang", () => {
+  const m = petaGrupCabang({ TUTUP_BUKU_TARGET_CABANG: " Madura = 1@g.us ;NTT=2@g.us\nNTB=2@g.us;rusak;KOSONG=; SOLO & YOGYAKARTA=3@g.us" });
+  assert.deepEqual([...m], [["MADURA", "1@g.us"], ["NTT", "2@g.us"], ["NTB", "2@g.us"], ["SOLO & YOGYAKARTA", "3@g.us"]]);
+  assert.equal(petaGrupCabang({}).size, 0);
+});
+
+test("rencanaKirim: per grup cabang (cabang segrup digabung), sisa ke grup region, tanpa region dilewati", () => {
+  const rows: BarisJual[] = [
+    { region: "East", cabang: "MADURA", am: "AM A", jenis: "so", nilai: 5_000_000 },
+    { region: "East", cabang: "NTT", am: "AM B", jenis: "do", nilai: 1_000_000, terlambat: true },
+    { region: "East", cabang: "NTB", am: "AM B", jenis: "so", nilai: 2_000_000 },
+    { region: "East", cabang: "BALI", am: "AM C", jenis: "do", nilai: 300_000 },
+    { region: "West", cabang: "PALEMBANG", am: "AM D", jenis: "so", nilai: 700_000 },
+    { region: "LAIN", cabang: "TANPA CABANG", am: "VACANT", jenis: "do", nilai: 100_000 },
+  ];
+  const peta = new Map([["MADURA", "1@g.us"], ["NTT", "2@g.us"], ["NTB", "2@g.us"]]);
+  const p = rencanaKirim(rows, peta, (g) => (g === "East" ? "E@g.us" : null));
+  assert.deepEqual(p.map((x) => [x.tujuan, x.to, x.kunci]), [
+    ["Cab. MADURA", "1@g.us", "g:1@g.us"],
+    ["Cab. NTB, NTT", "2@g.us", "g:2@g.us"],
+    ["Sales East (BALI) — grup region", "E@g.us", "East"],
+    ["Sales West (PALEMBANG) — grup region", null, "West"],
+  ]);
+  const ntt = p[1].ringkas;
+  assert.equal(ntt.so, 1); assert.equal(ntt.do_, 1);
+  assert.deepEqual(ntt.per_am, [{ am: "AM B", so: 1, so_nilai: 2_000_000, do_: 1, do_nilai: 1_000_000, do_terlambat: 1 }]);
+  assert.match(buildPengingat(ntt, "2026-11", "2026-11-30", 7), /\(7 hari kerja lagi\)\* · Cab\. NTB, NTT/);
+  const reg = ringkasPerRegionDari(rows);
+  assert.deepEqual(reg.map((r) => [r.region, r.so, r.do_]), [["East", 2, 2], ["LAIN", 0, 1], ["West", 1, 0]]);
 });
