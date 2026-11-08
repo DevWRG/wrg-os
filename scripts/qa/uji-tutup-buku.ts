@@ -90,11 +90,20 @@ async function main() {
     cek("kosongkan → kembali ke bawaan", !kb.digeser && kb.tanggal === bawaan.tanggal, kb);
 
     console.log("3. Pratinjau");
+    const simpanCab = process.env.TUTUP_BUKU_TARGET_CABANG;
+    delete process.env.TUTUP_BUKU_TARGET_CABANG;
     const p3 = await runTutupBukuCountdown({ dryRun: true, paksaSisa: 3 });
-    const tE = p3.hasil.find((h) => h.tujuan === "Sales East")?.payload ?? "";
+    const tE = p3.hasil.find((h) => h.tujuan.startsWith("Sales East"))?.payload ?? "";
     cek("H-3 East memuat AM Timur & nilai", /3 hari kerja lagi/.test(tE) && /AM Timur 292 — 1 SO belum dikirim \(Rp4 jt\) · 1 DO belum difaktur \(Rp2 jt\)/.test(tE), tE.slice(0, 300));
     cek("H-3 tanpa eskalasi", !p3.hasil.some((h) => h.tujuan === "Eskalasi HoD"));
     const p1 = await runTutupBukuCountdown({ dryRun: true, paksaSisa: 1 });
+    process.env.TUTUP_BUKU_TARGET_CABANG = "uji292-e = c292@g.us";
+    const pc = await runTutupBukuCountdown({ dryRun: true, paksaSisa: 7 });
+    const tc = pc.hasil.find((h) => h.tujuan === "Cab. UJI292-E");
+    cek("grup cabang: pesan sendiri berisi AM cabang itu saja", Boolean(tc) && /· Cab\. UJI292-E/.test(tc!.payload ?? "") && /AM Timur 292/.test(tc!.payload ?? "") && !/AM Barat 292/.test(tc!.payload ?? ""), pc.hasil.map((h) => h.tujuan));
+    cek("cabang tanpa grup tetap ke grup region", /AM Barat 292/.test(pc.hasil.find((h) => h.tujuan.startsWith("Sales West"))?.payload ?? ""), pc.hasil.map((h) => h.tujuan));
+    cek("AM Timur tak dobel di pesan region", !pc.hasil.filter((h) => h.tujuan.startsWith("Sales")).some((h) => /AM Timur 292/.test(h.payload ?? "")));
+    delete process.env.TUTUP_BUKU_TARGET_CABANG;
     cek("H-1 ada eskalasi HoD + kata BESOK", /BESOK/.test(p1.hasil.find((h) => h.tujuan === "Eskalasi HoD")?.payload ?? ""), p1.hasil.map((h) => h.tujuan));
 
     console.log("4. Job");
@@ -109,6 +118,7 @@ async function main() {
     const stub = await runTutupBukuCountdown({ paksaSisa: 3, region: "East" });
     const [tanda] = await sql`SELECT count(*)::int AS n FROM notif_state WHERE key = ${`tutup-buku:${bulan}:H3:East`}`;
     cek("stub gateway → sent=false & tak ditandai", stub.hasil[0]?.sent === false && Number(tanda.n) === 0, { h: stub.hasil, n: tanda.n });
+    if (simpanCab !== undefined) process.env.TUTUP_BUKU_TARGET_CABANG = simpanCab;
     process.env.TUTUP_BUKU_TARGET_EAST = simpan.TUTUP_BUKU_TARGET_EAST; if (simpan.TUTUP_BUKU_TARGET_EAST === undefined) delete process.env.TUTUP_BUKU_TARGET_EAST;
   } finally {
     await bersih();
