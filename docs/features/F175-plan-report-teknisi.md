@@ -154,7 +154,7 @@ Terpisah dari `sales_plan` / `activity_log` supaya metrik kunjungan sales tak te
 
 **Fase 1 bagian 1 (8 Nov 2026)** — di belakang saklar `TEKNISI_PLAN_REPORT_ENABLED` (default mati; mati = Teknisi
 tetap lewat format sales seperti sebelumnya):
-- Migrasi `290_teknisi_plan_report.sql`: empat tabel di bagian Data. Rujukan ke tabel modul Aftersales bertipe `uuid`
+- Migrasi `291_teknisi_plan_report.sql`: empat tabel di bagian Data. Rujukan ke tabel modul Aftersales bertipe `uuid`
   tanpa FK, supaya migrasi bisa dipromosikan sebelum modul itu sampai main.
 - Parser `parsers/teknisi.ts` (+ tes): #PLAN, #REPORT tiga bentuk, alias label/jenis/status, galat yang jelas.
   Format salah = **tidak disimpan sama sekali**, bot membalas daftar galat + contoh.
