@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlarmClock, FileClock, Users, Timer } from "lucide-react";
 
 import { StatCard } from "@/components/dashboard/stat-card";
 import { Button } from "@/components/ui/button";
+import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FakturRevisiTab } from "@/components/penerbitan-faktur/faktur-revisi-tab";
 import { cn } from "@/lib/utils";
@@ -59,11 +59,20 @@ function FakturisTab({ bolehUbah }: { bolehUbah: boolean }) {
   const [d, setD] = useState<Status | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pratinjau, setPratinjau] = useState<string | null>(null);
+  const [karyawan, setKaryawan] = useState<string[]>([]);
 
   const muat = useCallback(() => {
     kirim<Status>("/api/penerbitan-faktur").then((x) => { setD(x); setErr(null); }).catch((e: Error) => setErr(e.message));
   }, []);
   useEffect(() => { muat(); }, [muat]);
+  // Nama fakturis dipilih dari daftar karyawan (Karyawan 360), bukan diketik bebas —
+  // supaya ejaan di pesan WA sama dengan master karyawan.
+  useEffect(() => {
+    if (!bolehUbah) return;
+    kirim<{ employees: { nama: string }[] }>("/api/employee-spine/employees")
+      .then((x) => setKaryawan([...new Set(x.employees.map((e) => e.nama.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "id"))))
+      .catch(() => setKaryawan([]));
+  }, [bolehUbah]);
 
   const total60 = d?.akun.reduce((s, a) => s + a.faktur_60h, 0) ?? 0;
   const teratas = d?.akun[0];
@@ -115,7 +124,7 @@ function FakturisTab({ bolehUbah }: { bolehUbah: boolean }) {
             <h2 className="text-sm font-semibold">Akun fakturis</h2>
             <p className="text-muted-foreground text-xs">Akun Accurate yang membuat faktur. Beri nama supaya pesan WA menyebut orangnya, bukan nomor akun.</p>
             {d.akun.length === 0 ? <EmptyState title="Belum ada faktur 60 hari terakhir" description="Cek sinkron Accurate." /> : (
-              <div className="bg-card overflow-x-auto rounded-lg border">
+              <div className="bg-card overflow-x-auto rounded-lg border sm:overflow-visible">
                 <table className="w-full text-sm">
                   <thead><tr className="border-b text-left">
                     <th className="p-2">Akun Accurate</th><th className="p-2">Nama</th>
@@ -125,7 +134,7 @@ function FakturisTab({ bolehUbah }: { bolehUbah: boolean }) {
                     {d.akun.map((a) => (
                       <tr key={a.created_by} className="border-b last:border-0">
                         <td className="p-2 font-mono text-xs">{a.created_by}</td>
-                        <td className="p-2">{bolehUbah ? <LabelAkun akun={a} onTersimpan={muat} /> : (a.label ?? <span className="text-muted-foreground">—</span>)}</td>
+                        <td className="p-2">{bolehUbah ? <LabelAkun akun={a} karyawan={karyawan} onTersimpan={muat} /> : (a.label ?? <span className="text-muted-foreground">—</span>)}</td>
                         <td className="p-2 text-right tabular-nums">{a.faktur_7h.toLocaleString("id-ID")}</td>
                         <td className="p-2 text-right tabular-nums">
                           {a.faktur_60h.toLocaleString("id-ID")}
@@ -181,23 +190,27 @@ function FakturisTab({ bolehUbah }: { bolehUbah: boolean }) {
   );
 }
 
-function LabelAkun({ akun, onTersimpan }: { akun: Akun; onTersimpan: () => void }) {
-  const [v, setV] = useState(akun.label ?? "");
+function LabelAkun({ akun, karyawan, onTersimpan }: { akun: Akun; karyawan: string[]; onTersimpan: () => void }) {
   const [sibuk, setSibuk] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const berubah = v.trim() !== (akun.label ?? "");
+  // Label lama yang tak ada di master karyawan tetap tampil sebagai opsi, supaya tidak hilang diam-diam.
+  const opsi = useMemo<ComboboxOption[]>(() => {
+    const nama = akun.label && !karyawan.includes(akun.label) ? [akun.label, ...karyawan] : karyawan;
+    return nama.map((n) => ({ value: n, label: n }));
+  }, [akun.label, karyawan]);
   return (
     <div className="flex items-center gap-2">
-      <Input className="h-8 w-48" placeholder="Nama fakturis…" value={v} maxLength={80} onChange={(e) => setV(e.target.value)} />
-      {berubah && (
-        <Button size="sm" disabled={sibuk} onClick={() => {
+      <Combobox value={akun.label ?? ""} options={opsi} disabled={sibuk} triggerClassName="h-8 w-56"
+        placeholder="Pilih nama fakturis…" searchPlaceholder="Cari nama karyawan…"
+        onChange={(v) => {
+          if (!v || v === akun.label) return;
           setSibuk(true);
           kirim("/api/penerbitan-faktur/akun", {
             method: "PUT", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ created_by: akun.created_by, label: v.trim() }),
+            body: JSON.stringify({ created_by: akun.created_by, label: v }),
           }).then(() => { setErr(null); onTersimpan(); }).catch((e: Error) => setErr(e.message)).finally(() => setSibuk(false));
-        }}>Simpan</Button>
-      )}
+        }} />
+      {sibuk && <span className="text-muted-foreground text-xs">Menyimpan…</span>}
       {err && <span className="text-destructive text-xs">{err}</span>}
     </div>
   );
