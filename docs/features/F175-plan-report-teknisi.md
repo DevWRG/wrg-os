@@ -1,7 +1,7 @@
 # F175 — Plan & Report Teknisi (format WA khusus Aftersales)
 
 WA `#PLAN` / `#REPORT` untuk role **Teknisi** dengan format per alat, bukan format sales. Pengganti bertahap
-Google Form "Kegiatan Teknisi". Status: **Fase 1 bagian 1 dibangun** (8 Nov 2026, lihat "Status pembangunan"); spesifikasi disetujui user 6 Nov 2026.
+Google Form "Kegiatan Teknisi". Status: **Fase 1 dibangun** (8 Nov 2026, lihat "Status pembangunan"); spesifikasi disetujui user 6 Nov 2026.
 
 ## Masalah (keadaan dev 6 Nov 2026)
 
@@ -167,8 +167,21 @@ tetap lewat format sales seperti sebelumnya):
 - `reportPerOrang` (plandash): Teknisi dibaca dari `teknisi_plan_item` bila ada isinya, kalau tidak dari `sales_plan`
   (sebelumnya salah dibaca dari counter `sales_todo` → ≈0). `unmatched` Teknisi = alat `perlu_cek`.
 
-**Belum (bagian 2):** efek ke `jadwal_rutin` / `maintenance_schedule` / `service_ticket` / `install_schedule`
-(saklar sendiri), pencocokan tiket servis (tabel tiket tak punya nomor `T-`; dicocokkan lewat unit + faskes), job
-Plan Tidak Realisasi, foto susulan per alat (caption nomor blok / digit SN), shortcut `#install/#servis/…` ke format
-baru.
+**Fase 1 bagian 2 (8 Nov 2026):**
+- Efek `#REPORT` (`repo/teknisi-efek.ts`, saklar **`TEKNISI_EFEK_ENABLED`** default mati, terpisah dari saklar jalur WA):
+  PM Selesai → `jadwal_rutin` bulan itu `selesai` hanya bila semua SN di snapshot `alat`-nya sudah dilaporkan PM
+  Selesai bulan itu (kalau belum: "x/y alat selesai") + `maintenance_schedule` unit maju satu siklus; Service Selesai →
+  satu-satunya tiket terbuka faskes itu `resolved` (lebih dari satu = tak ditutup, "tutup manual"); Install Selesai →
+  `install_schedule` unit `done` (langkah training/BAST tak dilompati). SQL langsung, bukan memanggil modul Aftersales,
+  dijaga `to_regclass` — supaya bisa dipromosikan sebelum modul itu sampai main. Alat `perlu_cek` tak diberi efek. Hasil
+  disimpan di `teknisi_kunjungan_alat.efek` (migrasi `293`) dan tampil di balasan (`↳ …`).
+- Plan Tidak Realisasi: job `teknisi-tidak-realisasi` (09:00 WIB, saklar `TEKNISI_TIDAK_REALISASI_ENABLED`, cron
+  `TEKNISI_TIDAK_REALISASI_CRON`) menandai item plan tanggal < hari ini yang tak dilaporkan; view
+  `teknisi_plan_tidak_realisasi_v` = itu + alat yang dilaporkan Batal.
+- Foto: foto dari pengirim yang sama ≤30 menit SEBELUM teks report ikut jadi foto kunjungan; foto susulan ≤30 menit
+  sesudahnya → kunjungan terakhir teknisi itu (caption `1`/`2` = blok, ekor SN = alat itu, lainnya = foto umum).
+- Shortcut `#install/#servis/#training/#kalibrasi` yang memuat baris `Status:` → jalur per alat dengan jenis dari
+  hashtag; teks bebas lama tetap ke `teknisi_report`.
 
+**Belum:** pencocokan tiket per nomor (tabel tiket tak punya nomor `T-`; `tiket_teks` hanya disimpan), Fase 2 (draf plan
+otomatis), Fase 3 (tab Plan & Report di Readiness Board).
