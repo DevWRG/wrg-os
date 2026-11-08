@@ -62,6 +62,9 @@ import { susunDraft, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { runPreVisitCheck } from "./repo/pickup-plan.js";
 import { runRekapDoBelumFaktur } from "./repo/do-belum-faktur.js";
 import { runTutupBukuCountdown } from "./repo/tutup-buku.js";
+import { runCekFakturisDiam, runRekapFakturis } from "./repo/fakturis-diam.js";
+import { prosesRevisiSesudahSync, revisiAktif } from "./repo/revisi-faktur.js";
+import { cekAktif, runCekHarian } from "./repo/cek-keluar.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
@@ -293,6 +296,8 @@ export function startScheduler(): ScheduleStatus {
   // (default off) — mengirim WA.
   const auditFindingReminderEnabled = (process.env.AUDIT_FINDING_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
   const invoiceReminderEnabled = (process.env.INVOICE_REMINDER_ENABLED ?? "false").toLowerCase() === "true";
+  // F10 — alarm fakturis diam (sesudah accurate-sync) + rekap mingguan beban akun fakturis. Default MATI.
+  const fakturisDiamEnabled = (process.env.F10_SPOF_ENABLED ?? "false").toLowerCase() === "true";
   const timezone = TZ();
   const jobs: JobDef[] = [
     {
@@ -369,12 +374,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled,
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -632,6 +637,23 @@ export function startScheduler(): ScheduleStatus {
           }
           const r = await syncAccurateInvoices({});
           console.log(`[scheduler] accurate-sync @ ${startedAt} ${JSON.stringify(r).slice(0, 200)}`);
+          // F10 bagian 2 — tutup otomatis tiket #REVISI, deteksi input ulang, pengingat lewat SLA.
+          if (revisiAktif() && r.ok) {
+            try {
+              const rv = await prosesRevisiSesudahSync();
+              if (rv.ditutup || rv.dideteksi || rv.terlambat_dikirim) console.log(`[scheduler] f10-revisi ${JSON.stringify(rv)}`);
+            } catch (e5) {
+              console.error(`[scheduler] f10-revisi gagal @ ${startedAt}:`, e5);
+            }
+          }
+          if (fakturisDiamEnabled && r.ok) {
+            try {
+              const d = await runCekFakturisDiam();
+              if (d.aksi !== "normal") console.log(`[scheduler] f10-fakturis-diam ${JSON.stringify(d)}`);
+            } catch (e4) {
+              console.error(`[scheduler] f10-fakturis-diam gagal @ ${startedAt}:`, e4);
+            }
+          }
           // Mirror sales-order/delivery-order utk menu Orders/Shipments. Paginasi
           // berhenti berdasarkan tanggal (sinceDays), bukan jumlah halaman.
           try {
@@ -679,6 +701,8 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`accurate-sync=${accExpr}`);
+    if (fakturisDiamEnabled) live.push(`f10-fakturis-diam=sesudah accurate-sync`);
+    if (revisiAktif()) live.push(`f10-revisi=sesudah accurate-sync`);
   }
 
   // mirror-freshness — pengawas kesegaran mirror Accurate. Bukan penarik data;
@@ -1610,6 +1634,49 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`do-belum-faktur-rekap=${doRekapExpr}`);
+  }
+
+  // f10-cek-harian — register cek: cair otomatis dari rekening koran + pengingat jatuh tempo H-3/H
+  // (sekali per cek per tahap, notif_state). Saklar F10_CEK_ENABLED (default mati). Hari kerja saja.
+  const cekHarianExpr = process.env.F10_CEK_CRON ?? "30 8 * * 1-5";
+  if (cekAktif() && cron.validate(cekHarianExpr)) {
+    cron.schedule(
+      cekHarianExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runCekHarian();
+          if (r.cair || r.pengingat) console.log(`[scheduler] f10-cek-harian @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] f10-cek-harian gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`f10-cek-harian=${cekHarianExpr}`);
+  }
+
+  // f10-fakturis-rekap — beban faktur per akun minggu lalu + kejadian diam → grup Finance.
+  // Ikut saklar F10_SPOF_ENABLED. Dicek tiap hari kerja, terkirim SEKALI per minggu ISO.
+  const fakturisRekapExpr = process.env.F10_REKAP_CRON ?? "15 8 * * 1-5";
+  if (fakturisDiamEnabled && cron.validate(fakturisRekapExpr)) {
+    cron.schedule(
+      fakturisRekapExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) return;
+          const r = await runRekapFakturis();
+          if ("skipped" in r && r.skipped) return;
+          console.log(`[scheduler] f10-fakturis-rekap @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] f10-fakturis-rekap gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`f10-fakturis-rekap=${fakturisRekapExpr}`);
   }
 
   // tutup-buku-countdown (F61) — penjualan belum difaktur per AM menjelang tutup buku,

@@ -30,6 +30,8 @@ import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
+import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
+import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
@@ -427,6 +429,12 @@ export const NAV: NavGroup[] = [
       // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
       // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
       { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
+      // F10 — alarm fakturis diam + beban akun fakturis + faktur revisi (#REVISI), dari cermin Accurate.
+      // Kunci izin sendiri ("penerbitan-faktur"), default tertutup: butuh Sync Fitur + centang.
+      { title: "Penerbitan Faktur", url: "/penerbitan-faktur", icon: FileClock, badge: "NEW", show: canViewPenerbitanFaktur },
+      // F10 (ambil alih F29) — register cek/giro keluar: kasir input → HoD Finance setuju → serahkan → cair.
+      // Kunci izin sendiri ("register-cek"): tambah = kasir, ubah = penyetuju. Default tertutup.
+      { title: "Register Cek", url: "/register-cek", icon: Banknote, badge: "NEW", show: canViewRegisterCek },
       // F150 Profitabilitas Area — biaya operasional vs revenue netto per area. Kunci izin
       // "profitabilitas-area", default tertutup: butuh Sync Fitur + centang grup; sebelum itu
       // fallback Direktur/admin/superuser saja (HoD baru melihat cabangnya sendiri setelah
