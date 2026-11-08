@@ -32,6 +32,7 @@ import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
+import { canViewCn } from "@/lib/cn-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
@@ -440,6 +441,9 @@ export const NAV: NavGroup[] = [
       // fallback Direktur/admin/superuser saja (HoD baru melihat cabangnya sendiri setelah
       // grupnya dicentang di Akses Grup).
       { title: "Profitabilitas Area", url: "/profitabilitas-area", icon: Scale, badge: "NEW", show: canViewProfitabilitasArea },
+      // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
+      // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
+      { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
     ],
   },
   {
