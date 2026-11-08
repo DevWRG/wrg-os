@@ -49,8 +49,8 @@ CREATE TABLE IF NOT EXISTS cn_pengajuan (
   tarif            numeric NOT NULL CHECK (tarif > 0),                     -- snapshot dari kontrak
   total_dpp        numeric NOT NULL DEFAULT 0,
   total_cn         numeric NOT NULL DEFAULT 0,
-  hod_sales_key    text NOT NULL,                 -- master_hod.hod_key: rocky (East) / yogi (West) — approver akhir
-  hod_business_key text,                          -- mufid / arman; terisi = diajukan LEWAT HoD Business (ia meninjau dulu)
+  hod_sales_key    text NOT NULL,                 -- master_hod.hod_key HoD Sales (East/West) — approver akhir
+  hod_business_key text,                          -- master_hod.hod_key HoD Business; terisi = diajukan LEWAT HoD Business (ia meninjau dulu)
   status           text NOT NULL DEFAULT 'diajukan'
                    CHECK (status IN ('diajukan', 'ditinjau', 'disetujui', 'divalidasi', 'terealisasi', 'ditolak', 'dibatalkan')),
   bukti_url        text,                          -- bukti transfer; wajib saat terealisasi (diisi GA)

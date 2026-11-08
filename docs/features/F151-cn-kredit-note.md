@@ -26,9 +26,9 @@ Rebate ke customer berdasarkan **kontrak**, dihitung dari **DPP faktur**, diajuk
 
 | # | Keputusan | Alasan |
 |---|---|---|
-| 1 | **HoD Sales = approver akhir** (`rocky` East / `yogi` West); **HoD Business = peninjau opsional** (`mufid` IVD / `arman` Medical). Pengaju memilih keduanya di form | jawaban #2: "ke HoD Sales atau HoD Business, setelah itu HoD Sales approve". Kunci dari `master_hod` (198) |
+| 1 | **HoD Sales = approver akhir** (Sales East / Sales West); **HoD Business = peninjau opsional** (IVD / Medical). Pengaju memilih keduanya di form | jawaban #2: "ke HoD Sales atau HoD Business, setelah itu HoD Sales approve". Kunci dari `master_hod` (198) |
 | 2 | Lewat HoD Business → wajib `ditinjau` dulu; tanpa HoD Business → HoD Sales langsung `disetujui` | rute terkunci di tabel, tak bisa dilompati (diuji) |
-| 3 | Finance (`ika`) memvalidasi, GA (`husni`) merealisasikan; **tolak** oleh pemegang tahap berjalan; **batal** hanya oleh pengaju, hanya sebelum `disetujui` | jawaban #6. Setelah disetujui hanya Finance/GA yang bisa menolak |
+| 3 | Finance memvalidasi, GA merealisasikan; **tolak** oleh pemegang tahap berjalan; **batal** hanya oleh pengaju, hanya sebelum `disetujui` | jawaban #6. Setelah disetujui hanya Finance/GA yang bisa menolak |
 | 4 | Tarif/jenis di-**snapshot** ke pengajuan; DPP & nilai CN per faktur di-snapshot ke `cn_pengajuan_item`. **Nilai dihitung SERVER** dari DPP mirror; angka dari klien diabaikan | kontrak/mirror berubah kemudian tak menggeser angka yang sudah diajukan |
 | 5 | Persen: `round(DPP × tarif/100)` per faktur. Nominal: tarif = total per pengajuan, dibagi sebanding DPP (largest remainder) sehingga jumlah item **persis** = tarif | tak ada selisih sen/rupiah |
 | 6 | Validasi per transaksi: faktur milik customer kontrak, tanggal dalam periode (inklusif), DPP > 0, belum dicakup pengajuan aktif. Satu faktur = satu pengajuan aktif (indeks unik parsial) | SOP "validasi CN per transaksi"; balapan dua pengajuan: tepat satu menang (diuji) |
@@ -43,4 +43,4 @@ Rebate ke customer berdasarkan **kontrak**, dihitung dari **DPP faktur**, diajuk
 - **Batas nilai → Direktur**: rekomendasi awal punya ambang approval Direktur; jawaban #2 tidak menyebutnya, jadi tidak dibuat.
 - **Row-level scope**: semua pemegang izin `cn` melihat semua pengajuan (Sales belum dibatasi ke customer-nya sendiri).
 - **Ekspor CSV** laporan, unggah berkas (kontrak/bukti) — tautan https dulu.
-- **Identifikasi Finance/GA** selain `hod_key` (`ika`/`husni`) dan title (`finance`, `ga`, …) — tambahkan bila staf non-HoD ikut memegang tahap.
+- **Identifikasi Finance/GA** selain `hod_key` dan title (`finance`, `ga`, …) — tambahkan bila staf non-HoD ikut memegang tahap.
