@@ -42,6 +42,8 @@ test("user tanpa grup = tanpa akses walau role direktur (by design canOrLegacy)"
 test("izinUntukRute: peta method + path ke izin yang tepat", () => {
   assert.deepEqual(izinUntukRute("GET", "cabang"), [["kas-station", "view"], ["kas-station-review", "view"]]);
   assert.deepEqual(izinUntukRute("GET", "harian"), [["kas-station", "view"]]);
+  assert.deepEqual(izinUntukRute("GET", "ringkasan"), [["kas-station", "view"], ["kas-station-review", "view"]]);
+  assert.equal(izinUntukRute("POST", "ringkasan"), null);
   assert.deepEqual(izinUntukRute("GET", "rekap/abc"), [["kas-station", "view"], ["kas-station-review", "view"]]);
   assert.deepEqual(izinUntukRute("POST", "harian"), [["kas-station", "create"]]);
   assert.deepEqual(izinUntukRute("POST", "rekap/abc/submit"), [["kas-station", "create"]]);

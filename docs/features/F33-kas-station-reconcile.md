@@ -89,9 +89,27 @@ role admin/direktur) melihat semua. Daftar dipaksa ke cabangnya, `POST` cabang l
 by id → 404; akun tanpa cabang = daftar kosong + tulis 403. Tanpa header (skrip operator) = semua.
 **Pengaju ≠ penyetuju**: pemutus rekap yang sama dengan `submitted_by` (fallback `created_by`) → 403.
 
-Endpoint API (`apps/api`, prefix `/kas-station`): `GET cabang`, `GET|POST harian`, `GET|PATCH|DELETE harian/:id`,
+Endpoint API (`apps/api`, prefix `/kas-station`): `GET cabang`, `GET ringkasan`, `GET|POST harian`, `GET|PATCH|DELETE harian/:id`,
 `POST harian/:id/transaksi`, `PATCH|DELETE harian/:id/transaksi/:trxId`, `GET|POST rekap`, `GET rekap/:id`,
 `POST rekap/:id/{submit,decide,realisasi}`.
+
+## Layar (dirombak 8 Nov 2026, permintaan user: lebih mudah dipakai)
+
+Dua peran, dua layar (pemegang kedua izin mendapat tab):
+
+- **Station** — kartu ringkasan (saldo kas, hari ini sudah/belum dicatat, keluar minggu ini, rekap yang perlu diajukan);
+  satu tombol utama *Catat kas hari ini* / *Tambah transaksi hari ini*; kalender minggu berjalan (klik hari → detail);
+  daftar *Rekap yang perlu diajukan* (minggu lalu yang belum diajukan atau ditolak) dengan tombol **Ajukan** = buat/segarkan
+  rekap + ajukan dalam satu klik (`POST rekap` lalu `POST rekap/:id/submit`); riwayat harian.
+  Form catat: tombol Keluar/Masuk, satu baris transaksi siap isi, ringkasan *saldo awal + masuk − keluar = saldo akhir*
+  dan selisih uang fisik dihitung langsung saat mengetik.
+- **Pusat** — kartu (menunggu tinjauan, belum direalisasi, station aktif 7 hari, total saldo); kotak masuk rekap
+  `submitted` dengan Setujui / Tolak (alasan wajib) / Rincian; rekap disetujui yang belum direalisasi; tabel semua
+  station dari `GET /kas-station/ringkasan`; riwayat rekap.
+
+`GET /kas-station/ringkasan` (izin lihat station **atau** pusat; cakupan cabang sama dengan daftar lain): per station
+`tanggal_terakhir`, `saldo_akhir`, `selisih`, `hari_7`, `rekap_menunggu`, `rekap_belum_realisasi`, `rekap_ditolak`.
+Station terdaftar yang belum pernah mencatat ikut tampil (nilai null).
 
 ## Sengaja TIDAK dibuat (belum ada keputusan bisnis — jangan ditebak)
 

@@ -3,31 +3,38 @@
 import { useState } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
-import { cn } from "@/lib/utils";
-import { HarianTab } from "./harian-tab";
-import { RekapTab } from "./rekap-tab";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PusatPanel } from "./pusat-panel";
+import { StationPanel } from "./station-panel";
 import { useKasData } from "./use-kas-data";
 import type { IzinKasStation } from "./types";
 
-type Tab = "harian" | "rekap";
+// F33 — dua peran, dua layar: Station (kas cabang mencatat & mengajukan) dan Pusat (meninjau,
+// memutuskan, merealisasi). Pemegang kedua izin (mis. admin) mendapat tab; selainnya langsung
+// melihat layarnya sendiri tanpa tab.
+type Mode = "station" | "pusat";
 
 export function KasStationView({ izin }: { izin: IzinKasStation }) {
-  const [tab, setTab] = useState<Tab>(izin.stationView ? "harian" : "rekap");
+  const bisaStation = izin.stationView;
+  const bisaPusat = izin.reviewView;
+  const [mode, setMode] = useState<Mode>(bisaPusat ? "pusat" : "station");
   const { data, galat, loading } = useKasData<{ cabang: string[] }>("cabang");
   const cabangOpsi = data?.cabang ?? [];
-  const chip = (t: Tab) =>
-    cn("rounded-md border px-3 py-1.5 text-sm", tab === t ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent");
 
   if (galat) return <EmptyState title="Data tidak dapat dimuat" description={galat} />;
   if (loading && !data) return <p className="text-muted-foreground text-sm">Memuat…</p>;
 
-  return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
-        {izin.stationView && <button type="button" className={chip("harian")} onClick={() => setTab("harian")}>Kas Harian</button>}
-        <button type="button" className={chip("rekap")} onClick={() => setTab("rekap")}>Rekap Mingguan</button>
-      </div>
-      {tab === "harian" && izin.stationView ? <HarianTab izin={izin} cabangOpsi={cabangOpsi} /> : <RekapTab izin={izin} cabangOpsi={cabangOpsi} />}
-    </div>
-  );
+  if (bisaStation && bisaPusat) {
+    return (
+      <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="gap-4">
+        <TabsList>
+          <TabsTrigger value="pusat">Pusat — tinjau &amp; realisasi</TabsTrigger>
+          <TabsTrigger value="station">Station — catat kas</TabsTrigger>
+        </TabsList>
+        <TabsContent value="pusat"><PusatPanel izin={izin} cabangOpsi={cabangOpsi} /></TabsContent>
+        <TabsContent value="station"><StationPanel izin={izin} cabangOpsi={cabangOpsi} /></TabsContent>
+      </Tabs>
+    );
+  }
+  return bisaPusat ? <PusatPanel izin={izin} cabangOpsi={cabangOpsi} /> : <StationPanel izin={izin} cabangOpsi={cabangOpsi} />;
 }

@@ -508,6 +508,82 @@ export async function listCabang(): Promise<string[]> {
   return rows.map((r) => String(r.c));
 }
 
+/** Ringkasan per station untuk layar pusat (dan kartu station). */
+export interface RingkasanStation {
+  cabang: string;
+  /** Catatan harian terakhir; null = station belum pernah mencatat. */
+  tanggal_terakhir: string | null;
+  saldo_akhir: number | null;
+  selisih: number | null;
+  /** Jumlah hari tercatat dalam 7 hari terakhir (WIB, termasuk hari ini). */
+  hari_7: number;
+  rekap_menunggu: number;
+  rekap_belum_realisasi: number;
+  rekap_ditolak: number;
+}
+
+/**
+ * Satu baris per station. `cabang` = filter cakupan (string = satu station; undefined = semua
+ * station terdaftar + yang sudah punya catatan). Saldo akhir dihitung sama dengan mapHarian.
+ */
+export async function ringkasanStation(cabang?: string): Promise<RingkasanStation[]> {
+  const sql = db();
+  const daftar = cabang ? [normCabang(cabang)] : await listCabang();
+  const hari = wibHariIni();
+  const rows = await sql`
+    WITH cab AS (
+      SELECT DISTINCT c AS cabang FROM (
+        SELECT unnest(${daftar}::text[]) AS c
+        UNION SELECT cabang FROM kas_station_harian WHERE ${cabang ? sql`cabang = ${normCabang(cabang)}` : sql`true`}
+      ) x
+    ),
+    akhir AS (
+      SELECT DISTINCT ON (h.cabang) h.cabang, h.id, h.tanggal::text AS tanggal, h.saldo_awal, h.saldo_fisik
+      FROM kas_station_harian h ORDER BY h.cabang, h.tanggal DESC
+    ),
+    mutasi AS (
+      SELECT a.cabang,
+        COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'masuk'), 0) AS masuk,
+        COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'keluar'), 0) AS keluar
+      FROM akhir a LEFT JOIN kas_station_transaksi t ON t.harian_id = a.id GROUP BY a.cabang
+    ),
+    tujuh AS (
+      SELECT cabang, COUNT(*) AS n FROM kas_station_harian
+      WHERE tanggal BETWEEN (${hari}::date - 6) AND ${hari}::date GROUP BY cabang
+    ),
+    rk AS (
+      SELECT cabang,
+        COUNT(*) FILTER (WHERE status = 'submitted') AS menunggu,
+        COUNT(*) FILTER (WHERE status = 'approved' AND realisasi_at IS NULL) AS belum_realisasi,
+        COUNT(*) FILTER (WHERE status = 'rejected') AS ditolak
+      FROM kas_station_rekap GROUP BY cabang
+    )
+    SELECT c.cabang, a.tanggal, a.saldo_awal, a.saldo_fisik, m.masuk, m.keluar,
+      COALESCE(s.n, 0) AS hari_7, COALESCE(r.menunggu, 0) AS menunggu,
+      COALESCE(r.belum_realisasi, 0) AS belum_realisasi, COALESCE(r.ditolak, 0) AS ditolak
+    FROM cab c
+    LEFT JOIN akhir a ON a.cabang = c.cabang
+    LEFT JOIN mutasi m ON m.cabang = c.cabang
+    LEFT JOIN tujuh s ON s.cabang = c.cabang
+    LEFT JOIN rk r ON r.cabang = c.cabang
+    ORDER BY c.cabang
+  `;
+  return rows.map((r) => {
+    const ada = r.tanggal != null;
+    const saldo = ada ? hitungSaldoAkhir(num(r.saldo_awal), num(r.masuk), num(r.keluar)) : null;
+    return {
+      cabang: String(r.cabang),
+      tanggal_terakhir: ada ? String(r.tanggal) : null,
+      saldo_akhir: saldo,
+      selisih: saldo === null ? null : hitungSelisih(numOrNull(r.saldo_fisik), saldo),
+      hari_7: Number(r.hari_7),
+      rekap_menunggu: Number(r.menunggu),
+      rekap_belum_realisasi: Number(r.belum_realisasi),
+      rekap_ditolak: Number(r.ditolak),
+    };
+  });
+}
+
 export interface ListHarianOpts { cabang?: string; dari?: string; sampai?: string; limit?: number }
 
 export async function listHarian(opts: ListHarianOpts = {}): Promise<HarianRow[]> {
