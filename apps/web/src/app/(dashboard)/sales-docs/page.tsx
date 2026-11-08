@@ -86,10 +86,11 @@ export default function SalesDocsPage() {
     setBusy(id);
     setError(null);
     try {
-      const body: Record<string, string> = { approver_id: "web-ui" };
+      // Pelaku (approver) diisi server dari sesi — tak dikirim dari sini.
+      const body: Record<string, string> = {};
       if (action === "send") {
         const to = (toInputs[id] ?? "").trim();
-        if (!to) throw new Error("isi tujuan (nomor/jid) dulu");
+        if (!to) throw new Error("isi nomor WA kontak customer dulu");
         body.to = to;
       }
       const res = await fetch(`/api/sales/docs/${id}/${action}`, {
@@ -178,7 +179,7 @@ export default function SalesDocsPage() {
                 {d.status === "approved" && (
                   <div className="space-y-2">
                     <Input
-                      placeholder="Tujuan (mis. 628xxx@c.us / email)"
+                      placeholder="No. WA kontak customer di Accounts (mis. 0812xxxx)"
                       value={toInputs[d.id] ?? ""}
                       onChange={(e) =>
                         setToInputs((prev) => ({ ...prev, [d.id]: e.target.value }))
