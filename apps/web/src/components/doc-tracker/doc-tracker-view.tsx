@@ -10,7 +10,7 @@ import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { cn } from "@/lib/utils";
 
 import { DocDetailDialog } from "./doc-detail-dialog";
-import { KETERANGAN_STATE, LABEL_STATE, STATES, ambil, rp, type DocRow, type DocState, type DocTrackerList } from "./types";
+import { KETERANGAN_STATE, LABEL_STATE, STATES, ambil, labelTahap, rp, type DocRow, type DocState, type DocTrackerList } from "./types";
 
 type Saring = "semua" | "dikirim_belum_dibayar" | "billing" | "anomali";
 
@@ -29,7 +29,12 @@ const buatKolom = (onBuka: (soId: number) => void): DataColumn<DocRow>[] => [
   { id: "customer", header: "Customer", sortable: true, accessor: (r) => r.customer },
   {
     id: "state", header: "State", sortable: true, accessor: (r) => STATES.indexOf(r.state),
-    cell: (r) => <Badge variant={r.state === "closed" ? "outline" : "secondary"}>{LABEL_STATE[r.state]}</Badge>,
+    cell: (r) => (
+      <span className="flex flex-col items-start gap-0.5">
+        <Badge variant={r.state === "closed" ? "outline" : "secondary"}>{LABEL_STATE[r.state]}</Badge>
+        {r.belum_tercatat.length > 0 && <span className="text-muted-foreground text-[11px] leading-tight">belum tercatat: {labelTahap(r.belum_tercatat)}</span>}
+      </span>
+    ),
   },
   {
     id: "kirim", header: "Pengiriman", searchable: false,
@@ -72,6 +77,7 @@ const kolomExport: ExportColumn<DocRow>[] = [
   { header: "Tgl SO", value: (r) => r.tanggal },
   { header: "State", value: (r) => LABEL_STATE[r.state] },
   { header: "Umur di state (hari)", value: (r) => r.umur_hari },
+  { header: "Belum tercatat", value: (r) => labelTahap(r.belum_tercatat) },
   { header: "SJ", value: (r) => r.hitungan.sj },
   { header: "BAST", value: (r) => r.hitungan.bast },
   { header: "Faktur", value: (r) => r.hitungan.faktur },
@@ -175,9 +181,10 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
       />
 
       <p className="text-muted-foreground text-xs">
-        State dihitung dari data yang sudah ada — SO, SJ, pengiriman/BAST (F12/F42), dan faktur — ditambah stempel Review/Approved dan checklist
-        dokumen yang dicatat di sini. SO sebelum {data.stempel_mulai} dianggap Review/Approved tersirat bila tahap berikutnya sudah ada. Tahap
-        berurutan: bukti di tahap lanjut tanpa tahap sebelumnya ditandai &quot;dokumen kurang&quot;. TTF tidak dilacak (keputusan Direktur).
+        State = tahap terjauh yang buktinya ada — SO, SJ/DO Accurate (DO terbit = Sent), terima/BAST (F12/F42), faktur (tertaut otomatis
+        dari Accurate atau manual), stempel Review/Approved, dan checklist dokumen. Tahap di bawahnya yang belum berbukti tidak menahan,
+        hanya ditulis &quot;belum tercatat&quot;. SO sebelum {data.stempel_mulai} dianggap Review/Approved tersirat bila tahap berikutnya sudah
+        ada. &quot;Dokumen kurang&quot; = sudah lunas tetapi dokumen wajib belum lengkap. TTF tidak dilacak (keputusan Direktur).
       </p>
 
       <DocDetailDialog key={buka ?? "tutup"} soId={buka} canEdit={canEdit} onClose={() => setBuka(null)} onBerubah={segarkan} />
