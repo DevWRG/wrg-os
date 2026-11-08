@@ -102,6 +102,9 @@ import {
   ubahSyaratSph,
   kandidatPenandaTangan,
   setPenandaTanganSph,
+  listSph,
+  konteksSph,
+  kontakWaSph,
 } from "./repo/sph.js";
 import { namaFileSph, sphPdf } from "./repo/sph-pdf.js";
 import { getProductIntelligence } from "./repo/product.js";
@@ -2501,6 +2504,23 @@ app.post("/sph", async (c) => {
   return c.json(r, r.ok ? 201 : 400);
 });
 
+// F15 — daftar SPH utk halaman /sph: total, pembuat, hitungan per status, dan
+// aksi yang boleh dilakukan PENONTON (lib/sph-alur.ts) supaya layar tak menebak
+// izin. Penonton = x-user-id (sesi, dari BFF); x-bisa-edit = izin edit menu
+// Sales Docs yang dihitung BFF dari matriks akses. Keduanya hanya mengubah
+// PETUNJUK di layar — gerbang aksi tetap di route aksi masing-masing.
+// Query: status (draft|hod_review|approved|sent|canceled|semua|saya), q, limit.
+app.get("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await listSph(pelaku, c.req.header("x-bisa-edit") === "1", {
+    status: c.req.query("status") ?? null,
+    q: c.req.query("q") ?? null,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json(r);
+});
+
 // F15 dokumen cetak — pengaturan penomoran + syarat default (migrasi 300).
 // Didaftarkan SEBELUM /sph/:id supaya "pengaturan" tak dibaca sbg id.
 // Ubah: hanya admin/superuser (dicek BFF + ubahPengaturanSph dari x-user-id).
@@ -2560,6 +2580,25 @@ app.put("/sph/:id/syarat", async (c) => {
   if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
   const r = await ubahSyaratSph(c.req.param("id"), body, pelaku);
   return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// F15 — konteks penonton utk halaman detail: aksi yang boleh + alasannya,
+// nama pembuat, riwayat (audit_log). Sama dgn GET /sph: hanya penjelas layar.
+app.get("/sph/:id/konteks", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const k = await konteksSph(c.req.param("id"), pelaku, c.req.header("x-bisa-edit") === "1");
+  if (!k) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(k);
+});
+
+// F15 — pilihan tujuan kirim SPH: kontak WA customer di Accounts (sumber sama
+// dgn pemeriksaan tujuan di POST /sales/docs/:id/send). Gerbang edit di BFF.
+app.get("/sph/:id/kontak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await kontakWaSph(c.req.param("id"));
+  if (!k) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json({ kontak: k });
 });
 
 // Daftar pilihan penanda tangan (approver sesi ditandai 'approver' = default).

@@ -12,7 +12,16 @@ import { db, isDbEnabled } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
 import { PPN_PRICEBOOK, PERIODE_DEFAULT } from "./pricebook.js";
 import { effectivePermissions } from "./rbac.js";
-import { bolehFinalSph, bolehReviewSph, samaOrang, type IdentitasPelaku } from "../lib/sales-doc-gate.js";
+import {
+  accountIdDariCustomer,
+  bolehFinalSph,
+  bolehReviewSph,
+  hodBusiness,
+  nomorTujuan,
+  samaOrang,
+  type IdentitasPelaku,
+} from "../lib/sales-doc-gate.js";
+import { aksiSph, polaCariSph, type AksiSph } from "../lib/sph-alur.js";
 import {
   NOMOR_DRAF,
   SYARAT_DEFAULT,
@@ -94,6 +103,7 @@ export interface SphLineItemRow {
 export interface SphDetail {
   id: string;
   dealId: string | null;
+  customerId: string | null; // id accurate_customer (teks); null/nama utk SPH dari #SPH WA
   customerName: string | null;
   status: string;
   title: string | null;
@@ -374,7 +384,7 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
 export async function getSphDetail(id: string): Promise<SphDetail | null> {
   const sql = db();
   const docRows = await sql`
-    SELECT sd.id, sd.deal_id, sd.customer_name, sd.status, sd.title, sd.draft_text, sd.approved_by,
+    SELECT sd.id, sd.deal_id, sd.customer_id, sd.customer_name, sd.status, sd.title, sd.draft_text, sd.approved_by,
            sd.hod_reviewed_by, sd.hod_reviewed_at::text, sd.created_at::text, sd.approved_at::text,
            sd.nomor_dokumen, sd.syarat, sd.penanda_tangan_nama, sd.penanda_tangan_jabatan,
            sd.penanda_tangan_user_id::text AS penanda_tangan_user_id,
@@ -432,6 +442,7 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
   return {
     id: String(d.id),
     dealId: d.deal_id ? String(d.deal_id) : null,
+    customerId: d.customer_id ? String(d.customer_id) : null,
     customerName: d.customer_name ? String(d.customer_name) : null,
     status: String(d.status),
     title: d.title ? String(d.title) : null,
@@ -891,4 +902,255 @@ export async function finalisasiSph(
     }
     throw e;
   }
+}
+
+// ── Layar daftar & detail SPH (alur ramah pengguna) ──
+// Semua di bawah ini HANYA baca. Aksi apa yang boleh dilakukan penonton
+// dihitung lib/sph-alur.ts (aturan disalin dari gerbang aksi, tak diubah);
+// gerbang sesungguhnya tetap di route aksi masing-masing.
+
+export interface SphListRow {
+  id: string;
+  customerName: string | null;
+  customerId: string | null;
+  status: string;
+  nomorDokumen: string | null;
+  createdAt: string;
+  hodReviewedBy: string | null;
+  approvedBy: string | null;
+  pembuat: string | null;
+  jumlahItem: number;
+  variantPending: number;
+  total: number; // nett + PPN
+  aksi: AksiSph;
+}
+
+export interface SphListResult {
+  rows: SphListRow[];
+  counts: Record<string, number>; // per status + 'semua' + 'saya' (perlu aksi saya)
+}
+
+interface DocRingkas {
+  id: string;
+  customer_name: string | null;
+  customer_id: string | null;
+  status: string;
+  nomor_dokumen: string | null;
+  created_at: string;
+  hod_reviewed_by: string | null;
+  approved_by: string | null;
+  n: number;
+  pending: number;
+  total: number;
+}
+
+// Pembuat per dokumen (audit 'sph.draft.create' tertua) — satu query utk banyak id.
+async function pembuatBanyak(ids: string[]): Promise<Map<string, IdentitasPelaku>> {
+  const out = new Map<string, IdentitasPelaku>();
+  if (ids.length === 0) return out;
+  const sql = db();
+  const rows = await sql`
+    SELECT DISTINCT ON (payload->>'doc_id') payload->>'doc_id' AS doc_id, human_actor,
+           payload->>'created_by_user_id' AS user_id, payload->>'created_by_am_id' AS am_id
+    FROM audit_log
+    WHERE event_type = 'sph.draft.create' AND payload->>'doc_id' = ANY(${ids})
+    ORDER BY payload->>'doc_id', occurred_at ASC`;
+  for (const r of rows) {
+    out.set(String(r.doc_id), {
+      nama: r.human_actor ? String(r.human_actor) : null,
+      userId: r.user_id ? String(r.user_id) : null,
+      amId: r.am_id ? String(r.am_id) : null,
+    });
+  }
+  return out;
+}
+
+const bolehReviewPeran = (p: PelakuSesi | null) =>
+  !!p && (p.superuser || /^admin$/i.test(String(p.role ?? "")) || hodBusiness(p.hodPeran));
+
+export async function listSph(
+  pelaku: PelakuSesi | null,
+  bisaEdit: boolean,
+  opts: { status?: string | null; q?: string | null; limit?: number } = {},
+): Promise<SphListResult> {
+  const sql = db();
+  const pola = polaCariSph(opts.q);
+  const limit = Math.min(Math.max(Number(opts.limit) || 200, 1), 500);
+  const cari = pola
+    ? sql`AND (sd.customer_name ILIKE ${pola} OR sd.nomor_dokumen ILIKE ${pola})`
+    : sql``;
+  // 'saya' = perlu aksi saya → hanya status yang masih berjalan, disaring di bawah.
+  const st = String(opts.status ?? "").trim();
+  const filterStatus =
+    st === "saya"
+      ? sql`AND sd.status IN ('draft', 'hod_review', 'approved')`
+      : st && st !== "semua"
+        ? sql`AND sd.status = ${st}`
+        : sql``;
+  const docs = (await sql`
+    SELECT sd.id::text AS id, sd.customer_name, sd.customer_id, sd.status, sd.nomor_dokumen,
+           sd.created_at::text AS created_at, sd.hod_reviewed_by, sd.approved_by,
+           COALESCE(t.n, 0)::int AS n, COALESCE(t.pending, 0)::int AS pending, COALESCE(t.total, 0)::float8 AS total
+    FROM sales_doc sd
+    LEFT JOIN LATERAL (
+      SELECT count(*) AS n, count(*) FILTER (WHERE NOT li.variant_confirmed) AS pending,
+             sum(li.nett_ppn * li.qty) AS total
+      FROM sph_line_item li WHERE li.sales_doc_id = sd.id
+    ) t ON true
+    WHERE sd.doc_type = 'sph' ${filterStatus} ${cari}
+    ORDER BY sd.created_at DESC
+    LIMIT ${limit}`) as unknown as DocRingkas[];
+
+  // Hitungan tab: per status (ikut kata kunci cari) + "perlu aksi saya".
+  const cnt = await sql`
+    SELECT sd.status, count(*)::int AS n FROM sales_doc sd
+    WHERE sd.doc_type = 'sph' ${cari} GROUP BY sd.status`;
+  const counts: Record<string, number> = { semua: 0, saya: 0 };
+  for (const r of cnt) {
+    counts[String(r.status)] = Number(r.n);
+    counts.semua += Number(r.n);
+  }
+  // Untuk hitungan 'saya' perlu semua dokumen yang masih berjalan, bukan cuma
+  // halaman yang sedang dibuka.
+  const terbuka = (st === "saya"
+    ? docs
+    : await sql`
+        SELECT sd.id::text AS id, sd.status, COALESCE(t.pending, 0)::int AS pending
+        FROM sales_doc sd
+        LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE NOT li.variant_confirmed) AS pending
+                           FROM sph_line_item li WHERE li.sales_doc_id = sd.id) t ON true
+        WHERE sd.doc_type = 'sph' AND sd.status IN ('draft', 'hod_review', 'approved') ${cari}
+        LIMIT 500`) as unknown as Pick<DocRingkas, "id" | "status" | "pending">[];
+
+  const pembuat = await pembuatBanyak([...new Set([...docs.map((d) => d.id), ...terbuka.map((d) => d.id)])]);
+  const reviewPeran = bolehReviewPeran(pelaku);
+  const hitungAksi = (d: Pick<DocRingkas, "id" | "status" | "pending">) => {
+    const p = pembuat.get(d.id);
+    return aksiSph({
+      status: d.status,
+      isCreator: !!pelaku && !!p && samaOrang(pelaku, p),
+      bolehReviewPeran: reviewPeran,
+      bisaEdit,
+      variantPending: Number(d.pending),
+    });
+  };
+  counts.saya = terbuka.filter((d) => hitungAksi(d).perluAksiSaya).length;
+
+  let rows: SphListRow[] = docs.map((d) => ({
+    id: d.id,
+    customerName: d.customer_name,
+    customerId: d.customer_id,
+    status: d.status,
+    nomorDokumen: d.nomor_dokumen,
+    createdAt: d.created_at,
+    hodReviewedBy: d.hod_reviewed_by,
+    approvedBy: d.approved_by,
+    pembuat: pembuat.get(d.id)?.nama ?? null,
+    jumlahItem: Number(d.n),
+    variantPending: Number(d.pending),
+    total: Math.round(Number(d.total)),
+    aksi: hitungAksi(d),
+  }));
+  if (st === "saya") rows = rows.filter((r) => r.aksi.perluAksiSaya);
+  return { rows, counts };
+}
+
+export interface RiwayatSph {
+  jenis: string; // event_type audit_log
+  oleh: string | null;
+  waktu: string;
+  keterangan: string | null;
+}
+
+const LABEL_RIWAYAT: Record<string, string> = {
+  "sph.draft.create": "SPH dibuat",
+  "sph.hod_review": "Direview HoD Business",
+  "sph.variant_confirm": "Varian item dikonfirmasi",
+  "sph.syarat.ubah": "Syarat & ketentuan diubah",
+  "sph.penanda_tangan": "Penanda tangan diganti",
+  "sales.doc.approve": "Disetujui & diberi nomor",
+  "sales.doc.send": "Dikirim ke customer",
+  "sales.doc.cancel": "Dibatalkan",
+};
+
+// Nomor WA di riwayat disamarkan — cukup 4 digit terakhir utk penanda.
+const samarkan = (n: unknown) => {
+  const s = String(n ?? "").replace(/\D/g, "");
+  return s.length > 4 ? `…${s.slice(-4)}` : s;
+};
+
+export interface KonteksSph {
+  aksi: AksiSph;
+  pembuat: string | null;
+  saya: { isCreator: boolean; bolehReviewPeran: boolean; bisaEdit: boolean };
+  riwayat: RiwayatSph[];
+}
+
+export async function konteksSph(id: string, pelaku: PelakuSesi | null, bisaEdit: boolean): Promise<KonteksSph | null> {
+  const sql = db();
+  const [d] = await sql`
+    SELECT sd.status, (SELECT count(*)::int FROM sph_line_item li WHERE li.sales_doc_id = sd.id AND NOT li.variant_confirmed) AS pending
+    FROM sales_doc sd WHERE sd.id = ${id} AND sd.doc_type = 'sph'`;
+  if (!d) return null;
+  const p = await pembuatSph(id);
+  const isCreator = !!pelaku && !!p && samaOrang(pelaku, p);
+  const reviewPeran = bolehReviewPeran(pelaku);
+  const ev = await sql`
+    SELECT event_type, human_actor, occurred_at::text AS waktu, payload
+    FROM audit_log
+    WHERE payload->>'doc_id' = ${id}
+      AND event_type = ANY(${Object.keys(LABEL_RIWAYAT)})
+    ORDER BY occurred_at ASC
+    LIMIT 100`;
+  const riwayat: RiwayatSph[] = ev.map((e) => {
+    const pl = (e.payload ?? {}) as Record<string, unknown>;
+    let ket: string | null = null;
+    if (e.event_type === "sales.doc.approve" && pl.nomor) ket = `Nomor ${String(pl.nomor)}`;
+    else if (e.event_type === "sales.doc.send" && pl.to) ket = `ke WA ${samarkan(pl.to)}`;
+    else if (e.event_type === "sph.penanda_tangan" && pl.nama) ket = String(pl.nama);
+    return {
+      jenis: String(e.event_type),
+      oleh: e.human_actor ? String(e.human_actor) : null,
+      waktu: String(e.waktu),
+      keterangan: ket ?? LABEL_RIWAYAT[String(e.event_type)] ?? null,
+    };
+  });
+  return {
+    aksi: aksiSph({ status: String(d.status), isCreator, bolehReviewPeran: reviewPeran, bisaEdit, variantPending: Number(d.pending) }),
+    pembuat: p?.nama ?? null,
+    saya: { isCreator, bolehReviewPeran: reviewPeran, bisaEdit },
+    riwayat,
+  };
+}
+
+export interface KontakWaSph {
+  id: number;
+  nama: string;
+  jabatan: string | null;
+  hpWa: string; // ternormalkan 62…
+  utama: boolean;
+}
+
+// Pilihan tujuan kirim: kontak WA customer di Accounts — sumber yang SAMA
+// dengan pemeriksaan tujuanDiizinkan di sendSalesDoc, jadi apa pun yang
+// tampil di sini pasti diterima endpoint kirim.
+export async function kontakWaSph(id: string): Promise<KontakWaSph[] | null> {
+  const sql = db();
+  const [d] = await sql`SELECT customer_id FROM sales_doc WHERE id = ${id} AND doc_type = 'sph'`;
+  if (!d) return null;
+  const accountId = accountIdDariCustomer(d.customer_id ? String(d.customer_id) : null);
+  if (!accountId) return [];
+  const rows = await sql`
+    SELECT id, nama, jabatan, hp_wa, is_primary FROM crm_contact
+    WHERE account_id = ${accountId}::bigint AND hp_wa IS NOT NULL
+    ORDER BY is_primary DESC, seq, nama`;
+  const out: KontakWaSph[] = [];
+  const sudah = new Set<string>();
+  for (const r of rows) {
+    const n = nomorTujuan(String(r.hp_wa));
+    if (!n || sudah.has(n)) continue;
+    sudah.add(n);
+    out.push({ id: Number(r.id), nama: String(r.nama), jabatan: r.jabatan ? String(r.jabatan) : null, hpWa: n, utama: r.is_primary === true });
+  }
+  return out;
 }
