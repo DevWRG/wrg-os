@@ -10,6 +10,8 @@ import { balasanOrder } from "./order-wa.js";
 import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
+import { parseTeknisiPlan, parseTeknisiReport, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
+import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi } from "./teknisi-plan-report.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import { buildCekReply } from "./cek.js";
@@ -540,6 +542,57 @@ export function buildAmReportReply(
  * Dipasang SEBELUM daftar `pending` foto dihitung, supaya balasan tidak lagi
  * menagih foto yang sudah menempel.
  */
+// F175 — #PLAN/#REPORT Teknisi (format per alat). Format salah = TIDAK disimpan
+// sama sekali dan dibalas contoh (kirim ulang lengkap); faskes/alat yang tak bisa
+// dipastikan = tetap disimpan dengan tanda perlu_cek.
+async function handleTeknisiPlanReport(
+  row: WaRow,
+  kind: "plan" | "report",
+  am: { am_id: string; nama: string; role?: string | null; via?: string },
+  target: string,
+): Promise<Record<string, unknown>> {
+  const sql = db();
+  const [{ tgl_pesan }] = await sql<{ tgl_pesan: string }[]>`
+    SELECT (COALESCE(${row.received_at}::timestamptz, now()) AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl_pesan`;
+  if (kind === "plan") {
+    const p = parseTeknisiPlan(row.body ?? "");
+    if (p.errors.length || p.items.length === 0) {
+      const errors = p.errors.length ? p.errors : ["Tak ada item bernomor `1. faskes | SN/alat | jenis`."];
+      const reply = await sendViaWaGateway(target, balasanFormatSalah("plan", am.nama, errors));
+      return { error: "teknisi-plan-format", errors, via: am.via, mode: "teknisi", reply };
+    }
+    const tanggal = p.tanggal ?? String(tgl_pesan);
+    const r = await simpanPlanTeknisi({
+      teknisiId: am.am_id, role: am.role ?? null, tanggal, items: p.items,
+      waMessageId: row.message_id, submittedAt: row.received_at,
+    });
+    let body = balasanPlanTeknisi({ nama: am.nama, tanggalTampil: fmtTanggalDisplay(tanggal), late: r.late, items: r.items, dilewati: r.dilewati });
+    const peringatan = buildPeringatanTanggalPlan(tanggal, String(tgl_pesan));
+    if (peringatan) body += peringatan;
+    const reply = await sendViaWaGateway(target, body);
+    return { am_id: am.am_id, via: am.via, mode: "teknisi", tanggal, items: r.items.length, dilewati: r.dilewati, late: r.late, reply };
+  }
+  const rp = parseTeknisiReport(row.body ?? "");
+  if (rp.errors.length) {
+    const reply = await sendViaWaGateway(target, balasanFormatSalah("report", am.nama, rp.errors));
+    return { error: "teknisi-report-format", errors: rp.errors, via: am.via, mode: "teknisi", reply };
+  }
+  const tanggal = rp.tanggal ?? String(tgl_pesan);
+  const mediaPath = /^image/i.test(row.message_type ?? "") && row.media_path ? row.media_path : null;
+  const r = await simpanReportTeknisi({
+    teknisiId: am.am_id, tanggal, parse: rp, waMessageId: row.message_id, receivedAt: row.received_at, mediaPath,
+  });
+  if (r.duplikat) return { skipped: "teknisi-report-duplikat", am_id: am.am_id, mode: "teknisi" };
+  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat });
+  const peringatan = buildPeringatanTanggal(tanggal, String(tgl_pesan));
+  if (peringatan) body += peringatan;
+  const reply = await sendViaWaGateway(target, body);
+  return {
+    am_id: am.am_id, via: am.via, mode: "teknisi", tanggal, alat: r.alat.length,
+    perlu_cek: r.alat.filter((a) => a.masalah).length, foto: mediaPath ? 1 : 0, reply,
+  };
+}
+
 async function tempelFotoLaporan(row: WaRow, tanggal: string): Promise<Record<string, unknown> | null> {
   if (!String(row.message_type ?? "").toLowerCase().startsWith("image") || !row.media_path) return null;
   const sql = db();
@@ -2359,6 +2412,13 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   if (!am.aktif) return finish({ skipped: "inactive", am_id: am.am_id });
   // Track grup terakhir submit (untuk compliance reminder per-grup).
   await sql`UPDATE master_user SET last_active_group = ${row.group_jid}, last_active_at = now() WHERE am_id = ${am.am_id}`;
+
+  // F175: Teknisi pakai format per alat (faskes | SN/alat | jenis + #REPORT
+  // berlabel). Dicek SEBELUM syarat "daftar bernomor" di bawah — #REPORT teknisi
+  // satu alat sah tanpa nomor. Saklar mati = jalur sales lama tetap dipakai.
+  if (teknisiPlanReportAktif() && isTeknisi(am.role)) {
+    return finish(await handleTeknisiPlanReport(row, kind, am, target));
+  }
 
   if (!parsed || parsed.itemCount === 0) {
     // submission terdeteksi tapi tak ada item → kemungkinan salah format (hint).
