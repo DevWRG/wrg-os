@@ -13,7 +13,7 @@ import { CalendarCheck,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
   TrendingUp, CalendarClock, PackageSearch, FileClock, type LucideIcon,
-  Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck,
+  Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck, FileCheck2,
 } from "lucide-react";
 
 import { can, canOrLegacy, hasPerms } from "@/lib/perms";
@@ -33,6 +33,7 @@ import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewCn } from "@/lib/cn-access";
+import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
@@ -444,6 +445,10 @@ export const NAV: NavGroup[] = [
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
       { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      // F32 Bukti Pembayaran — foto bukti bayar + kode pengajuan, diunggah admin di dashboard
+      // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
+      // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
+      { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
     ],
   },
   {
