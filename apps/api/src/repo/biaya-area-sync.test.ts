@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { barisOtherPayment, barisPurchaseInvoice, namaDept } from "./biaya-area-sync.js";
+import { perluDitarik, barisOtherPayment, barisPurchaseInvoice, namaDept } from "./biaya-area-sync.js";
 
 const akun = new Map([
   [1, { no: "6200-02", name: "BBM, TOL, PARKIR" }],
@@ -43,4 +43,19 @@ test("namaDept: objek, string, *Name, header sebagai cadangan; '-' & kosong → 
   assert.equal(namaDept({ department: { name: "KEDIRI" } }, { department: { name: "NTB" } }), "KEDIRI");
   assert.equal(namaDept({ department: { name: "-" } }, { departmentName: "  " }), null);
   assert.equal(namaDept(undefined, undefined), null);
+});
+
+test("perluDitarik: belum tercatat / lastUpdate lebih baru → tarik; sudah tercatat (termasuk 0 baris) → lewati", () => {
+  const rows = [
+    { id: 1, lastUpdate: "2026-10-01T10:00:00.000Z" }, // belum pernah diperiksa
+    { id: 2, lastUpdate: "2026-10-01T10:00:00.000Z" }, // tercatat, tak berubah (mis. dokumen non-biaya)
+    { id: 3, lastUpdate: "2026-10-05T10:00:00.000Z" }, // tercatat, lalu diubah di Accurate
+    { id: 4, lastUpdate: null },                       // tercatat, Accurate tak memberi lastUpdate
+  ];
+  const tercatat = new Map([
+    [2, Date.parse("2026-10-01T10:00:00.000Z")],
+    [3, Date.parse("2026-10-01T10:00:00.000Z")],
+    [4, 0],
+  ]);
+  assert.deepEqual(perluDitarik(rows, tercatat).map((r) => r.id), [1, 3]);
 });
