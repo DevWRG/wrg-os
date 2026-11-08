@@ -66,6 +66,8 @@ export interface BarisJual { region: Region | "LAIN"; cabang: string; am: string
 
 const rpRingkas = (n: number) =>
   n >= 1e6 ? `Rp${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt` : `Rp${Math.round(n / 1e3).toLocaleString("id-ID")} rb`;
+/** Nilai DO: nol berarti baris DO belum bernilai di Accurate (bukan tagihan nol). */
+const rpDo = (n: number) => (n > 0 ? rpRingkas(n) : "nilai belum ada");
 const tglPanjang = (d: string) =>
   new Date(`${d}T00:00:00+07:00`).toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta", weekday: "long", day: "numeric", month: "long" });
 const namaBulan = (bulan: string) =>
@@ -79,13 +81,16 @@ export function buildPengingat(r: RingkasRegion, bulan: string, tanggal: string,
   const baris = r.per_am.slice(0, maks).map((a, i) => {
     const bag = [
       a.so && `${a.so} SO belum dikirim (${rpRingkas(a.so_nilai)})`,
-      a.do_ && `${a.do_} DO belum difaktur (${rpRingkas(a.do_nilai)})`,
+      a.do_ && `${a.do_} DO belum difaktur (${rpDo(a.do_nilai)})`,
     ].filter(Boolean).join(" · ");
     return `${i + 1}. ${a.am} — ${bag}`;
   });
   return [
     `⏳ *Tutup buku ${namaBulan(bulan)} — ${tglPanjang(tanggal)} (${kapan})*${r.label ? ` · ${r.label}` : r.region === "LAIN" ? "" : ` · Sales ${r.region}`}`,
-    `Penjualan yang belum jadi faktur: ${r.so} SO belum dikirim (${rpRingkas(r.so_nilai)}) dan ${r.do_} DO terkirim belum difaktur (${rpRingkas(r.do_nilai)}). Yang belum difaktur sampai tutup buku masuk ke bulan berikutnya.`,
+    `Penjualan yang belum jadi faktur: ${[
+      r.so && `${r.so} SO belum dikirim (${rpRingkas(r.so_nilai)})`,
+      r.do_ && `${r.do_} DO terkirim belum difaktur (${rpDo(r.do_nilai)})`,
+    ].filter(Boolean).join(" dan ")}. Yang belum difaktur sampai tutup buku masuk ke bulan berikutnya.`,
     "",
     "Per AM:",
     ...baris,
@@ -98,7 +103,10 @@ export function buildPengingat(r: RingkasRegion, bulan: string, tanggal: string,
 /** Teks eskalasi H-1 ke grup HoD (murni, diuji) — ringkas per region. */
 export function buildEskalasi(regions: RingkasRegion[], bulan: string, tanggal: string): string {
   const baris = regions.filter((r) => r.so + r.do_ > 0).map((r) =>
-    `• ${r.region === "LAIN" ? "Tanpa region" : `Sales ${r.region}`}: ${r.so} SO belum dikirim (${rpRingkas(r.so_nilai)}) · ${r.do_} DO belum difaktur (${rpRingkas(r.do_nilai)}) — AM terbanyak: ${r.per_am.slice(0, 3).map((a) => a.am).join(", ") || "—"}`);
+    `• ${r.region === "LAIN" ? "Tanpa region" : `Sales ${r.region}`}: ${[
+      r.so && `${r.so} SO belum dikirim (${rpRingkas(r.so_nilai)})`,
+      r.do_ && `${r.do_} DO belum difaktur (${rpDo(r.do_nilai)})`,
+    ].filter(Boolean).join(" · ")} — AM terbanyak: ${r.per_am.slice(0, 3).map((a) => a.am).join(", ") || "—"}`);
   return [
     `🔔 *Eskalasi tutup buku ${namaBulan(bulan)} — BESOK (${tglPanjang(tanggal)})*`,
     "Penjualan berikut belum jadi faktur dan akan masuk ke bulan berikutnya bila tidak selesai besok:",
