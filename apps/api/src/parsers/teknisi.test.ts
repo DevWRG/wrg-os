@@ -182,3 +182,19 @@ test("balasan plan & format salah", () => {
   assert.match(f, /belum tersimpan, Budi:\n• Blok 1/);
   assert.match(f, /#REPORT 1\nStatus: Selesai/);
 });
+
+test("report: jenis default dari shortcut (#servis) bila blok tak menulis jenis", () => {
+  const r = parseTeknisiReport("#REPORT\nRS: RS A\nSN: 1234\nStatus: Selesai", undefined, { jenisDefault: "Service" });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.blok[0].jenis, "Service");
+  const tulis = parseTeknisiReport("#REPORT\nRS: RS A\nSN: 1234\nJenis: PM\nStatus: Selesai", undefined, { jenisDefault: "Service" });
+  assert.equal(tulis.blok[0].jenis, "PM");
+});
+
+test("balasan report: baris efek + jumlah foto", () => {
+  const t = balasanReportTeknisi({
+    faskes: "RS A", foto: 2,
+    alat: [{ nomor: 1, alatLabel: "EXC200", sn: "0832", jenis: "PM", status: "Selesai", alasan: null, masalah: null, efek: "jadwal rutin bulan ini selesai" }],
+  });
+  assert.equal(t, "✅ RS A — 1 alat tercatat\n1. EXC200 (…0832) · PM · Selesai\n   ↳ jadwal rutin bulan ini selesai\n📷 2 foto terlampir");
+});

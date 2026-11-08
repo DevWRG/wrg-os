@@ -5,12 +5,13 @@
 // disimpan (supaya laporan teknisi tak hilang) tapi ditandai `perlu_cek` dengan
 // alasannya, dan alasannya ikut tampil di balasan bot.
 //
-// Efek ke modul Aftersales (PM/tiket/install selesai) dan job Plan Tidak Realisasi
-// BELUM di sini — menyusul di PR berikutnya, di belakang saklar sendiri.
+// Efek ke jadwal/tiket/install (saklar TEKNISI_EFEK_ENABLED) dan job Plan Tidak
+// Realisasi ada di teknisi-efek.ts.
 import { db } from "../db.js";
 import { accountIdDariTulisan } from "./akun-faskes.js";
 import { normSn } from "./asetTetapRekon.js";
 import { computeIsLate } from "./todo.js";
+import { terapkanEfek } from "./teknisi-efek.js";
 import type {
   JenisTeknisi, StatusTeknisi, TeknisiPlanItem, TeknisiReportParse,
 } from "../parsers/teknisi.js";
@@ -212,7 +213,11 @@ export interface AlatTerlapor {
   status: StatusTeknisi;
   alasan: string | null;
   masalah: string | null;
+  efek: string | null;
 }
+
+/** Foto dari pengirim yang sama dalam jendela ini sebelum #REPORT ikut jadi foto kunjungan. */
+export const FOTO_JENDELA_MENIT = 30;
 
 export async function simpanReportTeknisi(input: {
   teknisiId: string;
@@ -221,7 +226,9 @@ export async function simpanReportTeknisi(input: {
   waMessageId: string | null;
   receivedAt: string | null;
   mediaPath: string | null;
-}): Promise<{ duplikat: boolean; faskes: string | null; alat: AlatTerlapor[] }> {
+  /** Untuk menjodohkan foto yang dikirim SEBELUM teks report (WA mengirimnya terpisah). */
+  pengirim?: { groupJid: string; senderName: string | null } | null;
+}): Promise<{ duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number }> {
   const sql = db();
   const { parse } = input;
   const plan = await sql`
@@ -293,7 +300,7 @@ export async function simpanReportTeknisi(input: {
               COALESCE(${input.receivedAt}::timestamptz, now()))
       ON CONFLICT (wa_message_id) DO NOTHING
       RETURNING id`;
-    if (k.length === 0) return { duplikat: true };
+    if (k.length === 0) return { duplikat: true, kunjunganId: null, foto: 0 };
     const kunjunganId = Number(k[0].id);
     for (const x of baris) {
       await tx`
@@ -308,22 +315,88 @@ export async function simpanReportTeknisi(input: {
         await tx`UPDATE teknisi_plan_item SET reported_at = COALESCE(reported_at, now()) WHERE id = ${x.planId}`;
       }
     }
+    let foto = 0;
     // Report dikirim sebagai caption foto → foto kunjungan umum.
     if (input.mediaPath) {
-      await tx`
+      const f = await tx`
         INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id)
         VALUES (${kunjunganId}, ${input.mediaPath}, ${input.waMessageId})
-        ON CONFLICT DO NOTHING`;
+        ON CONFLICT DO NOTHING RETURNING id`;
+      foto += f.length;
     }
-    return { duplikat: false };
+    // Foto yang dikirim lebih dulu (tanpa caption hashtag) oleh pengirim yang sama.
+    // Pola penjodohan #KSO/#KORAN: di grup sender_jid = jid grup, jadi kuncinya
+    // grup + nama pengirim. Foto yang sudah tertaut ke kunjungan lain tak diambil.
+    if (input.pengirim && input.receivedAt) {
+      const f = await tx`
+        INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id)
+        SELECT ${kunjunganId}, w.media_path, w.message_id
+        FROM wa_message w
+        WHERE w.group_jid = ${input.pengirim.groupJid}
+          AND coalesce(w.sender_name, '') = coalesce(${input.pengirim.senderName}, '')
+          AND w.message_type ~* '^image' AND w.media_path IS NOT NULL
+          AND w.received_at BETWEEN ${input.receivedAt}::timestamptz - make_interval(mins => ${FOTO_JENDELA_MENIT})
+                                AND ${input.receivedAt}::timestamptz
+          AND w.message_id IS DISTINCT FROM ${input.waMessageId}
+          AND NOT EXISTS (SELECT 1 FROM teknisi_kunjungan_foto x WHERE x.media_path = w.media_path)
+        ON CONFLICT DO NOTHING
+        RETURNING id`;
+      foto += f.length;
+    }
+    return { duplikat: false, kunjunganId, foto };
   });
 
+  const efek = hasil.kunjunganId ? await terapkanEfek(hasil.kunjunganId) : new Map<number, string>();
   return {
     duplikat: hasil.duplikat,
     faskes: faskesLabel,
+    foto: hasil.foto,
     alat: baris.map((x) => ({
       nomor: x.b.nomor, alatLabel: x.label, sn: x.snTampil, jenis: x.jenis,
-      status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah,
+      status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah, efek: efek.get(x.b.nomor) ?? null,
     })),
   };
+}
+
+/**
+ * Foto susulan tanpa hashtag dari Teknisi → kunjungan terakhirnya dalam jendela
+ * FOTO_JENDELA_MENIT. Caption `1`/`2` = nomor blok; 3+ digit/karakter = ekor SN alat
+ * di kunjungan itu; selain itu (atau tak cocok) = foto kunjungan umum.
+ * null = tak ada kunjungan dalam jendela (biar caller memakai jalur foto lama).
+ */
+export async function tempelFotoTeknisi(input: {
+  teknisiId: string;
+  mediaPath: string;
+  caption: string | null;
+  waMessageId: string | null;
+  receivedAt: string;
+}): Promise<{ kunjungan_id: number; nomor_blok: number | null; faskes: string | null } | null> {
+  const sql = db();
+  const [k] = await sql`
+    SELECT id, faskes_teks FROM teknisi_kunjungan
+    WHERE teknisi_id = ${input.teknisiId}
+      AND reported_at BETWEEN ${input.receivedAt}::timestamptz - make_interval(mins => ${FOTO_JENDELA_MENIT})
+                          AND ${input.receivedAt}::timestamptz + interval '1 minute'
+    ORDER BY reported_at DESC LIMIT 1`;
+  if (!k) return null;
+  const alat = await sql`
+    SELECT ka.id, ka.nomor_blok, COALESCE(a.sn_raw, ka.sn_teks) AS sn
+    FROM teknisi_kunjungan_alat ka LEFT JOIN kso_asset a ON a.id = ka.kso_asset_id
+    WHERE ka.kunjungan_id = ${k.id} ORDER BY ka.nomor_blok`;
+  const cap = (input.caption ?? "").replace(/<media:[^>]*>/gi, "").trim();
+  let pilih: { id: number; nomor: number } | null = null;
+  const no = cap.match(/^#?\s*(\d{1,2})\s*$/);
+  if (no) {
+    const a = alat.find((x) => Number(x.nomor_blok) === Number(no[1]));
+    if (a) pilih = { id: Number(a.id), nomor: Number(a.nomor_blok) };
+  } else if (/^[A-Za-z0-9-]{3,}$/.test(cap)) {
+    const ekor = normSn(cap);
+    const cocok = alat.filter((x) => x.sn && normSn(x.sn).endsWith(ekor));
+    if (cocok.length === 1) pilih = { id: Number(cocok[0].id), nomor: Number(cocok[0].nomor_blok) };
+  }
+  await sql`
+    INSERT INTO teknisi_kunjungan_foto (kunjungan_id, kunjungan_alat_id, media_path, wa_message_id)
+    VALUES (${k.id}, ${pilih?.id ?? null}, ${input.mediaPath}, ${input.waMessageId})
+    ON CONFLICT (kunjungan_id, media_path) DO NOTHING`;
+  return { kunjungan_id: Number(k.id), nomor_blok: pilih?.nomor ?? null, faskes: k.faskes_teks ?? null };
 }
