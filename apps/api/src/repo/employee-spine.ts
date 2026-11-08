@@ -9,7 +9,7 @@ import { listHods } from "./master-hod.js";
 export type Perspective = "fin" | "cust" | "proc" | "learn";
 
 export interface EmployeeListItem {
-  id: string; nama: string; dept: string | null; dept_label: string | null; dept_color: string | null;
+  id: string; nama: string; inisial: string | null; dept: string | null; dept_label: string | null; dept_color: string | null;
   role: string | null; cabang: string | null; lokasi: string | null; roster_pending: boolean; kpi_count: number;
 }
 
@@ -28,12 +28,12 @@ export async function listDepartments() {
 
 export async function listEmployees(): Promise<EmployeeListItem[]> {
   const rows = await db()`
-    SELECT e.id, e.nama, e.dept, d.label AS dept_label, d.color AS dept_color, e.role, e.cabang, e.lokasi, e.roster_pending,
+    SELECT e.id, e.nama, e.inisial, e.dept, d.label AS dept_label, d.color AS dept_color, e.role, e.cabang, e.lokasi, e.roster_pending,
            (SELECT count(*) FROM kpi k WHERE k.employee_id = e.id)::int AS kpi_count
     FROM employee e LEFT JOIN department d ON d.key = e.dept
     ORDER BY d.label NULLS LAST, e.nama`;
   return rows.map((r) => ({
-    id: String(r.id), nama: String(r.nama), dept: r.dept ? String(r.dept) : null,
+    id: String(r.id), nama: String(r.nama), inisial: r.inisial ? String(r.inisial) : null, dept: r.dept ? String(r.dept) : null,
     dept_label: r.dept_label ? String(r.dept_label) : null, dept_color: r.dept_color ? String(r.dept_color) : null,
     role: r.role ? String(r.role) : null, cabang: r.cabang ? String(r.cabang) : null,
     lokasi: r.lokasi ? String(r.lokasi) : null, roster_pending: r.roster_pending === true, kpi_count: Number(r.kpi_count),
@@ -94,7 +94,7 @@ export async function getEmployee(id: string) {
   for (const b of bsc) (bscByP[String(b.perspective)] ??= []).push(String(b.objective));
   const p = pdca[0];
   return {
-    id: String(e.id), nama: String(e.nama), dept: e.dept ? String(e.dept) : null,
+    id: String(e.id), nama: String(e.nama), inisial: e.inisial ? String(e.inisial) : null, dept: e.dept ? String(e.dept) : null,
     dept_label: e.dept_label ? String(e.dept_label) : null, dept_color: e.dept_color ? String(e.dept_color) : null,
     role: e.role ? String(e.role) : null, atasan_raw: e.atasan_raw ? String(e.atasan_raw) : null,
     lokasi: e.lokasi ? String(e.lokasi) : null, masa: e.masa ? String(e.masa) : null,
@@ -155,7 +155,30 @@ export interface EmployeeWrite {
   nama: string; dept?: string | null; role?: string | null; atasan_raw?: string | null;
   lokasi?: string | null; masa?: string | null; panggilan?: string | null; cabang?: string | null;
   whatsapp?: string | null; roster_pending?: boolean; okr_objective?: string | null; quote?: string | null;
-  hod_key?: string | null;
+  hod_key?: string | null; inisial?: string | null;
+}
+
+// Input karyawan ditolak (format inisial salah / inisial sudah dipakai) — route
+// memetakan `status` ke HTTP.
+export class EmployeeInputError extends Error {
+  constructor(message: string, readonly status: 400 | 409) { super(message); }
+}
+
+// Inisial = 3 huruf kapital (A-Z); kosong → null. Huruf kecil dinaikkan.
+function normInisial(v: string | null | undefined): string | null {
+  const s = (v ?? "").trim().toUpperCase();
+  if (!s) return null;
+  if (!/^[A-Z]{3}$/.test(s)) throw new EmployeeInputError("inisial harus 3 huruf (A-Z)", 400);
+  return s;
+}
+
+// Bentrok unique index employee_inisial_uniq → 409 dengan pesan yang bisa dibaca.
+async function guardInisial<T>(inisial: string | null, run: () => Promise<T>): Promise<T> {
+  try { return await run(); } catch (e) {
+    if ((e as { code?: string }).code === "23505" && String((e as { constraint_name?: string }).constraint_name ?? "").includes("inisial"))
+      throw new EmployeeInputError(`inisial ${inisial} sudah dipakai karyawan lain`, 409);
+    throw e;
+  }
 }
 
 // Validasi hod_key = salah satu key HoD kanonik (master_hod), atau null.
@@ -176,23 +199,26 @@ export async function createEmployee(data: EmployeeWrite): Promise<{ id: string 
   const sql = db();
   const base = slugify(data.nama);
   let id = base, n = 1;
+  const inisial = normInisial(data.inisial);
   while ((await sql`SELECT 1 FROM employee WHERE id = ${id}`).length) id = `${base}-${++n}`;
-  await sql`
-    INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote, hod_key)
+  await guardInisial(inisial, async () => sql`
+    INSERT INTO employee (id, nama, dept, role, atasan_raw, lokasi, masa, panggilan, cabang, whatsapp, roster_pending, okr_objective, quote, hod_key, inisial)
     VALUES (${id}, ${data.nama}, ${data.dept ?? null}, ${data.role ?? null}, ${data.atasan_raw ?? null}, ${data.lokasi ?? null},
             ${data.masa ?? null}, ${data.panggilan ?? null}, ${data.cabang ?? null}, ${data.whatsapp ?? null},
-            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null}, ${await normHodKey(data.hod_key)})`;
+            ${data.roster_pending ?? false}, ${data.okr_objective ?? null}, ${data.quote ?? null}, ${await normHodKey(data.hod_key)}, ${inisial})`);
   return { id };
 }
 
 export async function updateEmployee(id: string, data: EmployeeWrite): Promise<{ updated: boolean }> {
-  const r = await db()`
+  const inisial = normInisial(data.inisial);
+  const hodKey = await normHodKey(data.hod_key);
+  const r = await guardInisial(inisial, async () => db()`
     UPDATE employee SET
       nama = ${data.nama}, dept = ${data.dept ?? null}, role = ${data.role ?? null}, atasan_raw = ${data.atasan_raw ?? null},
       lokasi = ${data.lokasi ?? null}, masa = ${data.masa ?? null}, panggilan = ${data.panggilan ?? null},
       cabang = ${data.cabang ?? null}, whatsapp = ${data.whatsapp ?? null}, roster_pending = ${data.roster_pending ?? false},
-      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}, hod_key = ${await normHodKey(data.hod_key)}
-    WHERE id = ${id}`;
+      okr_objective = ${data.okr_objective ?? null}, quote = ${data.quote ?? null}, hod_key = ${hodKey}, inisial = ${inisial}
+    WHERE id = ${id}`);
   return { updated: r.count > 0 };
 }
 
