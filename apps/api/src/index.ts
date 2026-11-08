@@ -6590,7 +6590,6 @@ app.get("/do-belum-faktur", async (c) => {
       hanya_terlambat: c.req.query("hanya_terlambat") === "1", limit: n("limit"), offset: n("offset") }));
   } catch (e) { return doFakturErr(c, e); }
 });
-// Pratinjau rekap WA mingguan (dry-run, tak mengirim apa pun). BFF: izin ubah.
 // F10 Penerbitan Faktur — gerbang menu "/penerbitan-faktur" DIPERIKSA DI BFF; `oleh` dari sesi.
 const fakturisErr = (c: Context, e: unknown) => {
   if (e instanceof FakturisError) return c.json({ error: e.message }, e.status as 400);
@@ -6676,6 +6675,7 @@ app.get("/tutup-buku/pratinjau", async (c) => {
     return c.json(await runTutupBukuCountdown({ dryRun: true, paksaSisa: [7, 3, 1].includes(sisa) ? sisa : 3 }));
   } catch (e) { return tutupBukuErr(c, e); }
 });
+// Pratinjau rekap WA mingguan (dry-run, tak mengirim apa pun). BFF: izin ubah.
 app.get("/do-belum-faktur/rekap-pratinjau", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { return c.json(await runRekapDoBelumFaktur({ dryRun: true })); } catch (e) { return doFakturErr(c, e); }
