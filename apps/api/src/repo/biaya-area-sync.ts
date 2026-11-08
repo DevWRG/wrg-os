@@ -156,10 +156,20 @@ async function detailDenganRetry(creds: Creds, path: string, id: number): Promis
   return null;
 }
 
-async function simpanBaris(docIds: { sumber: SumberBiaya; id: number }[], baris: BarisBiaya[], ctx: KonteksArea): Promise<void> {
+async function simpanBaris(docIds: { sumber: SumberBiaya; id: number; lastUpdate: string | null }[], baris: BarisBiaya[], ctx: KonteksArea): Promise<void> {
   const sql = db();
   await sql.begin(async (tx) => {
-    for (const d of docIds) await tx`DELETE FROM biaya_area_baris WHERE sumber = ${d.sumber} AND accurate_id = ${d.id}`;
+    for (const d of docIds) {
+      await tx`DELETE FROM biaya_area_baris WHERE sumber = ${d.sumber} AND accurate_id = ${d.id}`;
+      // Catat dokumen SUDAH diperiksa walau 0 baris biaya (migrasi 292) — kalau tidak, dokumen
+      // non-biaya ditarik ulang tiap run dan menghabiskan kuota detail_limit.
+      const n = baris.filter((b) => b.sumber === d.sumber && b.accurate_id === d.id).length;
+      await tx`
+        INSERT INTO biaya_area_dokumen (sumber, accurate_id, accurate_last_update, n_baris, diperiksa_at)
+        VALUES (${d.sumber}, ${d.id}, ${d.lastUpdate}, ${n}, now())
+        ON CONFLICT (sumber, accurate_id) DO UPDATE
+          SET accurate_last_update = EXCLUDED.accurate_last_update, n_baris = EXCLUDED.n_baris, diperiksa_at = now()`;
+    }
     for (const b of baris) {
       const h = tebakArea({ sumber: b.sumber, tanggal: b.tanggal, akun: b.akun, keterangan: b.keterangan, payee: b.payee, departemen: b.departemen }, ctx);
       await tx`
@@ -174,6 +184,17 @@ async function simpanBaris(docIds: { sumber: SumberBiaya; id: number }[], baris:
 interface ListRow {
   id: number;
   lastUpdate: string | null;
+}
+
+/**
+ * Dokumen yang perlu ditarik detailnya: belum pernah diperiksa, ATAU lastUpdate Accurate lebih baru
+ * dari yang tercatat di biaya_area_dokumen. `tercatat` = id → epoch ms lastUpdate (0 bila NULL).
+ */
+export function perluDitarik(rows: readonly ListRow[], tercatat: ReadonlyMap<number, number>): ListRow[] {
+  return rows.filter((r) => {
+    const t = tercatat.get(r.id);
+    return t === undefined || (r.lastUpdate != null && new Date(r.lastUpdate).getTime() > t);
+  });
 }
 
 async function listDokumen(creds: Creds, path: string, since: string, to: string, maxPages: number): Promise<{ rows: ListRow[]; capped: boolean }> {
@@ -250,19 +271,16 @@ async function jalankan(creds: Creds, since: string, opts: { detailLimit?: numbe
     const { rows, capped: c } = await listDokumen(creds, `${p.path}/list.do`, since, to, maxPages);
     capped ||= c;
     headers += rows.length;
-    // Dokumen yang belum ada / lastUpdate-nya lebih baru dari yang tersimpan. Dokumen tanpa
-    // baris biaya (mis. pembayaran bukan 6xxx) tak punya baris → ikut ditarik ulang tiap run;
-    // dibatasi detailLimit, jadi biayanya terkendali.
+    // Dokumen yang belum pernah diperiksa / lastUpdate-nya lebih baru dari yang tercatat. Dibaca dari
+    // biaya_area_dokumen (292), BUKAN biaya_area_baris: dokumen non-biaya tak punya baris dan dulu
+    // ditarik ulang tiap run sampai menghabiskan kuota (antrean tak pernah habis, terbukti 8 Nov 2026).
     const ids = rows.map((r) => r.id);
-    const tersimpan = new Map(
-      (await sql`SELECT accurate_id, max(accurate_last_update)::text AS lu FROM biaya_area_baris WHERE sumber = ${p.sumber} AND accurate_id = ANY(${ids}::bigint[]) GROUP BY 1`).map(
+    const tercatat = new Map(
+      (await sql`SELECT accurate_id, accurate_last_update::text AS lu FROM biaya_area_dokumen WHERE sumber = ${p.sumber} AND accurate_id = ANY(${ids}::bigint[])`).map(
         (r) => [Number(r.accurate_id), r.lu ? new Date(String(r.lu)).getTime() : 0] as const,
       ),
     );
-    const perlu = rows.filter((r) => {
-      const t = tersimpan.get(r.id);
-      return t === undefined || (r.lastUpdate != null && new Date(r.lastUpdate).getTime() > t);
-    });
+    const perlu = perluDitarik(rows, tercatat);
     const ambil = perlu.slice(0, Math.max(0, sisa));
     pending += perlu.length - ambil.length;
     sisa -= ambil.length;
@@ -271,11 +289,11 @@ async function jalankan(creds: Creds, since: string, opts: { detailLimit?: numbe
       const chunk = ambil.slice(i, i + 4);
       const docs = await Promise.all(chunk.map(async (r) => ({ r, d: await detailDenganRetry(creds, `${p.path}/detail.do`, r.id) })));
       const baris: BarisBiaya[] = [];
-      const selesai: { sumber: SumberBiaya; id: number }[] = [];
+      const selesai: { sumber: SumberBiaya; id: number; lastUpdate: string | null }[] = [];
       for (const { r, d } of docs) {
         if (!d) { failed++; continue; }
         details++;
-        selesai.push({ sumber: p.sumber, id: r.id });
+        selesai.push({ sumber: p.sumber, id: r.id, lastUpdate: r.lastUpdate });
         baris.push(...p.susun(d, akun, r.lastUpdate));
       }
       lines += baris.length;
