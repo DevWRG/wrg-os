@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 
 import { db, isDbEnabled } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
-import { PPN_PRICEBOOK, PERIODE_DEFAULT } from "./pricebook.js";
+import { PPN_PRICEBOOK, PERIODE_DEFAULT, hargaTerbit } from "./pricebook.js";
 import { effectivePermissions } from "./rbac.js";
 import {
   accountIdDariCustomer,
@@ -22,6 +22,27 @@ import {
   type IdentitasPelaku,
 } from "../lib/sales-doc-gate.js";
 import { aksiSph, polaCariSph, type AksiSph } from "../lib/sph-alur.js";
+import {
+  ATURAN_TIER_DEFAULT,
+  aturanTierDariDb,
+  aturanTierDariInput,
+  bacaDiskonTambahan,
+  blokTabelHarga,
+  bolehUbahDiskonTambahan,
+  diskonEfektif,
+  gantiBlokTabel,
+  hitungDiskonTambahan,
+  klasifikasiTier,
+  tierDiskonTotal,
+  tierSah,
+  tierTertinggi,
+  totalSph,
+  type AturanTier,
+  type BarisTeks,
+  type DiskonTambahan,
+  type TierDiskon,
+  type TotalSph,
+} from "../lib/sph-diskon.js";
 import {
   NOMOR_DRAF,
   SYARAT_DEFAULT,
@@ -40,6 +61,7 @@ import {
 } from "../lib/sph-cetak.js";
 
 const rnd = (v: number) => Math.round(v); // half-up, sama konvensi pricebook.ts
+const pctTeks = (f: number) => `${(Math.round(f * 10000) / 100).toLocaleString("id-ID")}%`;
 
 export interface SphItemInput {
   pricelist_item_id: number;
@@ -79,6 +101,13 @@ export interface CreateSphInput {
   // masih bisa diubah per SPH selama draft/hod_review (ubahSyaratSph).
   terms?: { paymentTerms?: string; shippingTerms?: string; validityDays?: number };
   syarat?: Partial<SyaratSph>;
+  // Diskon tambahan seluruh SPH {tipe: persen|nominal, nilai} (migrasi 301),
+  // dipotong dari subtotal nett sebelum PPN. Kosong = tanpa.
+  diskon_tambahan?: unknown;
+  // true = jalur WA #SPH: diskon di atas batas SKU efektif DITOLAK seperti
+  // sebelum ada jenjang (format 1-baris tak punya tempat menjelaskan
+  // pengecualian ke HoD/Direktur). Form web: false → jenjang berlaku.
+  ketat?: boolean;
 }
 
 export interface SphLineItemRow {
@@ -98,6 +127,13 @@ export interface SphLineItemRow {
   // Penawaran (variantConfirm) sebelum approve boleh jalan.
   variantConfirmed: boolean;
   variantConfirmedBy: string | null;
+  // Jenjang diskon baris saat dibuat (migrasi 301) + penjelasan untuk layar.
+  tier: TierDiskon;
+  tierAlasan: string;
+}
+
+export interface DiskonTambahanSph extends DiskonTambahan {
+  rp: number;
 }
 
 export interface SphDetail {
@@ -122,7 +158,18 @@ export interface SphDetail {
   customerAlamat: string | null;
   customerKota: string | null;
   items: SphLineItemRow[];
-  total: { priceList: number; nett: number; ppn: number };
+  total: TotalSph;
+  // ── Diskon berjenjang & diskon tambahan (migrasi 301) ──
+  tier: TierDiskon; // jenjang persetujuan dokumen (tertinggi)
+  aturanTier: AturanTier; // snapshot saat dibuat
+  diskonTambahan: DiskonTambahanSph | null;
+  diskonTambahanTier: TierDiskon;
+  diskonTambahanAlasan: string | null;
+  diskonEfektifTotal: number; // 1 − nett akhir sebelum PPN / Σ price list × qty
+  pengecualianDisetujuiBy: string | null;
+  pengecualianDisetujuiAt: string | null;
+  direkturApprovedBy: string | null;
+  direkturApprovedAt: string | null;
 }
 
 export interface CreateSphResult {
@@ -151,19 +198,10 @@ async function logHumanAction(
   `;
 }
 
-function priceTableBlock(items: SphLineItemRow[], total: SphDetail["total"]): string {
-  const rows = items
-    .map(
-      (it, i) =>
-        `| ${i + 1} | ${it.nama} | ${it.qty} | Rp${it.hargaNett.toLocaleString("id-ID")} | Rp${(it.hargaNett * it.qty).toLocaleString("id-ID")} |`,
-    )
-    .join("\n");
-  return (
-    `| No | Produk | Qty | Harga Nett/Unit | Jumlah |\n${rows}\n\n` +
-    `Subtotal Nett: Rp${total.nett.toLocaleString("id-ID")}\n` +
-    `PPN 11% (dari nett): Rp${(total.ppn - total.nett).toLocaleString("id-ID")}\n` +
-    `Total: Rp${total.ppn.toLocaleString("id-ID")}`
-  );
+// Tabel harga di teks surat — lib/sph-diskon.ts (memuat baris "Diskon
+// tambahan" bila ada, dan bisa diganti utuh saat HoD menurunkannya).
+function priceTableBlock(items: BarisTeks[], total: TotalSph): string {
+  return blokTabelHarga(items, total);
 }
 
 // Header/footer surat SELALU ditulis sistem (bukan AI) — nomor/tanggal/syarat
@@ -185,8 +223,8 @@ function letterFooter(syarat: SyaratSph): string {
 // Draft deterministik penuh (fallback kalau AI tak terjangkau/mati).
 function renderSphTextFallback(
   customerName: string,
-  items: SphLineItemRow[],
-  total: SphDetail["total"],
+  items: BarisTeks[],
+  total: TotalSph,
   terms: SyaratSph,
 ): string {
   return (
@@ -205,7 +243,7 @@ function renderSphTextFallback(
 async function draftSphText(
   customerName: string,
   items: SphLineItemRow[],
-  total: SphDetail["total"],
+  total: TotalSph,
   terms: SyaratSph,
 ): Promise<{ text: string; model: string | null }> {
   const table = priceTableBlock(items, total);
@@ -272,11 +310,20 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   }
 
   const ids = input.items.map((it) => it.pricelist_item_id);
+  // Harga & batas diskon EFEKTIF TERBIT (Setup Harga, migrasi 077): override
+  // hanya dari baris setup 'published' — sama dgn tab "Harga per Produk" AM.
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT id, nama, brand, kemasan, price_list, diskon_maks
-    FROM product_pricelist
-    WHERE periode = ${periode} AND id = ANY(${ids})
+    SELECT p.id, p.nama, p.brand, p.kemasan, p.price_list, p.diskon_maks, p.harga_nett, p.nett_ppn,
+           s.price_list_override, s.diskon_override
+    FROM product_pricelist p
+    LEFT JOIN product_pricelist_setup s
+      ON s.periode = p.periode AND s.row_no = p.row_no AND s.status = 'published'
+    WHERE p.periode = ${periode} AND p.id = ANY(${ids})
   `;
+  const aturan = await aturanTierSph();
+  const dt = bacaDiskonTambahan(input.diskon_tambahan);
+  if (!dt.ok) return { ok: false, error: dt.error };
+  if (dt.d && input.ketat) return { ok: false, error: "diskon tambahan hanya lewat form web /sph/new" };
   const byId = new Map(rows.map((r) => [Number(r.id), r]));
 
   // HANDOVER §6 — set (brand,nama) yg dipakai >1 SKU di SELURUH katalog
@@ -294,22 +341,25 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
     if (!(it.qty > 0) || !Number.isInteger(it.qty)) {
       return { ok: false, error: `qty item "${row.nama}" harus bilangan bulat > 0` };
     }
-    const diskonMaks = Number(row.diskon_maks);
-    if (it.diskon_requested < 0) {
+    const efektif = hargaTerbit(row);
+    const diskonMaks = efektif.diskon;
+    if (!(it.diskon_requested >= 0)) {
       return { ok: false, error: `diskon utk "${row.nama}" tidak boleh negatif (${(it.diskon_requested * 100).toFixed(0)}%)` };
     }
-    if (it.diskon_requested > diskonMaks) {
+    const t = klasifikasiTier(it.diskon_requested, diskonMaks, aturan);
+    if (t.tier === "tolak" || (input.ketat && t.tier !== "normal")) {
       return {
         ok: false,
-        error: `diskon utk "${row.nama}" (${(it.diskon_requested * 100).toFixed(0)}%) melebihi diskon maks SKU ini (${(diskonMaks * 100).toFixed(0)}%)`,
+        error: input.ketat
+          ? `diskon utk "${row.nama}" (${(it.diskon_requested * 100).toFixed(0)}%) melebihi diskon maks SKU ini (${(diskonMaks * 100).toFixed(0)}%)`
+          : `diskon utk "${row.nama}" (${pctTeks(it.diskon_requested)}) ditolak: ${t.alasan}`,
       };
     }
-    const priceList = Number(row.price_list);
+    const priceList = efektif.priceList;
     const hargaNett = rnd(priceList * (1 - it.diskon_requested));
     const nettPpn = rnd(hargaNett * (1 + PPN_PRICEBOOK));
-    // Matematis harusnya selalu false selama diskon_requested <= diskon_maks
-    // (harga_nett floor = hasil hitung PERSIS di diskon_maks) — flag tetap
-    // dihitung, bukan diasumsikan, buat jaga-jaga kalau asumsi ini pernah salah.
+    // false selama diskon ≤ batas SKU; true utk baris jenjang HoD/Direktur
+    // (di bawah lantai, disetujui lewat pengecualian) — tetap dihitung.
     const floor = rnd(priceList * (1 - diskonMaks));
     lineItems.push({
       id: 0,
@@ -326,17 +376,21 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
       belowFloor: hargaNett < floor,
       variantConfirmed: !ambiguousSet.has(`${row.brand}::${row.nama}`),
       variantConfirmedBy: null,
+      tier: t.tier,
+      tierAlasan: t.alasan,
     });
   }
 
-  const total = lineItems.reduce(
-    (acc, it) => ({
-      priceList: acc.priceList + it.priceList * it.qty,
-      nett: acc.nett + it.hargaNett * it.qty,
-      ppn: acc.ppn + it.nettPpn * it.qty,
-    }),
-    { priceList: 0, nett: 0, ppn: 0 },
-  );
+  const subtotal = totalSph(lineItems).nett;
+  const dRp = hitungDiskonTambahan(subtotal, dt.d);
+  if (!dRp.ok) return { ok: false, error: dRp.error };
+  const total = totalSph(lineItems, dRp.rp);
+  const tTotal = tierDiskonTotal(total, aturan);
+  if (tTotal?.tier === "tolak") {
+    return { ok: false, error: `diskon tambahan ditolak (diskon efektif ${pctTeks(tTotal.efektif)}): ${tTotal.alasan}` };
+  }
+  const diskonTotalTier: TierDiskon = tTotal ? tTotal.tier : "normal";
+  const tierDok = tierTertinggi(diskonTotalTier, ...lineItems.map((it) => it.tier));
   const terms = gabungSyarat(
     await syaratDefaultSph(),
     syaratDariInputLama(input.terms),
@@ -346,9 +400,12 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   const title = `SPH — ${customerName}`;
 
   const docRows = await sql`
-    INSERT INTO sales_doc (deal_id, customer_id, customer_name, doc_type, title, draft_text, status, generated_by, model_used, syarat)
+    INSERT INTO sales_doc (deal_id, customer_id, customer_name, doc_type, title, draft_text, status, generated_by, model_used, syarat,
+                           diskon_total_tipe, diskon_total_nilai, diskon_total_rp, diskon_total_tier, tier_persetujuan, aturan_tier)
     VALUES (${input.deal_id ?? null}, ${customerId}, ${customerName}, 'sph', ${title}, ${draftText}, 'draft', 'A6', ${model},
-            ${sql.json(terms as unknown as Parameters<typeof sql.json>[0])})
+            ${sql.json(terms as unknown as Parameters<typeof sql.json>[0])},
+            ${dt.d?.tipe ?? null}, ${dt.d?.nilai ?? null}, ${dRp.rp}, ${diskonTotalTier}, ${tierDok},
+            ${sql.json(aturan as unknown as Parameters<typeof sql.json>[0])})
     RETURNING id
   `;
   const docId = docRows[0].id as string;
@@ -356,9 +413,9 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
   for (const it of lineItems) {
     await sql`
       INSERT INTO sph_line_item
-        (sales_doc_id, pricelist_item_id, qty, diskon_requested, nama_snapshot, price_list, diskon_maks_snapshot, harga_nett, nett_ppn, variant_confirmed, kemasan_snapshot)
+        (sales_doc_id, pricelist_item_id, qty, diskon_requested, nama_snapshot, price_list, diskon_maks_snapshot, harga_nett, nett_ppn, variant_confirmed, kemasan_snapshot, tier)
       VALUES
-        (${docId}, ${it.pricelist_item_id}, ${it.qty}, ${it.diskonRequested}, ${it.nama}, ${it.priceListRaw}, ${it.diskonMaksSnapshot}, ${it.hargaNett}, ${it.nettPpn}, ${it.variantConfirmed}, ${it.kemasan})
+        (${docId}, ${it.pricelist_item_id}, ${it.qty}, ${it.diskonRequested}, ${it.nama}, ${it.priceListRaw}, ${it.diskonMaksSnapshot}, ${it.hargaNett}, ${it.nettPpn}, ${it.variantConfirmed}, ${it.kemasan}, ${it.tier})
     `;
   }
 
@@ -371,6 +428,9 @@ export async function createSphDraft(input: CreateSphInput): Promise<CreateSphRe
       customer_name: customerName,
       item_count: lineItems.length,
       total,
+      tier: tierDok,
+      tier_baris: lineItems.filter((it) => it.tier !== "normal").map((it) => ({ id: it.pricelist_item_id, tier: it.tier })),
+      diskon_tambahan: dt.d ? { ...dt.d, rp: dRp.rp, tier: diskonTotalTier } : null,
       model,
       created_by_user_id: input.created_by_user_id ?? null,
       created_by_am_id: input.created_by_am_id ?? null,
@@ -388,6 +448,10 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
            sd.hod_reviewed_by, sd.hod_reviewed_at::text, sd.created_at::text, sd.approved_at::text,
            sd.nomor_dokumen, sd.syarat, sd.penanda_tangan_nama, sd.penanda_tangan_jabatan,
            sd.penanda_tangan_user_id::text AS penanda_tangan_user_id,
+           sd.diskon_total_tipe, sd.diskon_total_nilai, sd.diskon_total_rp, sd.diskon_total_tier,
+           sd.tier_persetujuan, sd.aturan_tier, sd.pengecualian_disetujui_by,
+           sd.pengecualian_disetujui_at::text AS pengecualian_disetujui_at,
+           sd.direktur_approved_by, sd.direktur_approved_at::text AS direktur_approved_at,
            -- Alamat hanya bila mirror Accurate membawanya (raw saat ini belum
            -- selalu memuat billStreet/billCity) — kosong = tak dicetak.
            NULLIF(trim(ac.raw->>'billStreet'), '') AS alamat,
@@ -403,12 +467,13 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
 
   const itemRows = await sql`
     SELECT li.id, li.pricelist_item_id, li.nama_snapshot, li.qty, li.diskon_requested, li.diskon_maks_snapshot,
-           li.price_list, li.harga_nett, li.nett_ppn, li.variant_confirmed, li.variant_confirmed_by,
+           li.price_list, li.harga_nett, li.nett_ppn, li.variant_confirmed, li.variant_confirmed_by, li.tier,
            COALESCE(li.kemasan_snapshot, NULLIF(trim(pp.kemasan), '')) AS kemasan
     FROM sph_line_item li
     LEFT JOIN product_pricelist pp ON pp.id = li.pricelist_item_id
     WHERE li.sales_doc_id = ${id} ORDER BY li.id
   `;
+  const aturan = aturanTierDariDb(d.aturan_tier as Record<string, unknown> | null);
   const items: SphLineItemRow[] = itemRows.map((r) => {
     const diskonMaks = Number(r.diskon_maks_snapshot);
     const priceList = Number(r.price_list);
@@ -428,16 +493,15 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
       belowFloor: hargaNett < floor,
       variantConfirmed: r.variant_confirmed === true,
       variantConfirmedBy: r.variant_confirmed_by ? String(r.variant_confirmed_by) : null,
+      tier: tierSah(r.tier),
+      // Penjelasan dihitung ulang dari snapshot (batas & aturan saat dibuat);
+      // jenjang tersimpan yang berlaku.
+      tierAlasan: klasifikasiTier(Number(r.diskon_requested), diskonMaks, aturan).alasan,
     };
   });
-  const total = items.reduce(
-    (acc, it) => ({
-      priceList: acc.priceList + it.priceList * it.qty,
-      nett: acc.nett + it.hargaNett * it.qty,
-      ppn: acc.ppn + it.nettPpn * it.qty,
-    }),
-    { priceList: 0, nett: 0, ppn: 0 },
-  );
+  const diskonRp = Number(d.diskon_total_rp ?? 0) || 0;
+  const total = totalSph(items, diskonRp);
+  const tTotal = tierDiskonTotal(total, aturan);
 
   return {
     id: String(d.id),
@@ -462,6 +526,19 @@ export async function getSphDetail(id: string): Promise<SphDetail | null> {
     customerKota: d.kota ? String(d.kota) : null,
     items,
     total,
+    tier: tierSah(d.tier_persetujuan),
+    aturanTier: aturan,
+    diskonTambahan:
+      diskonRp > 0 && (d.diskon_total_tipe === "persen" || d.diskon_total_tipe === "nominal")
+        ? { tipe: d.diskon_total_tipe, nilai: Number(d.diskon_total_nilai ?? 0), rp: diskonRp }
+        : null,
+    diskonTambahanTier: tierSah(d.diskon_total_tier),
+    diskonTambahanAlasan: tTotal ? tTotal.alasan : null,
+    diskonEfektifTotal: diskonEfektif(total.priceList, total.dpp),
+    pengecualianDisetujuiBy: d.pengecualian_disetujui_by ? String(d.pengecualian_disetujui_by) : null,
+    pengecualianDisetujuiAt: d.pengecualian_disetujui_at ? String(d.pengecualian_disetujui_at) : null,
+    direkturApprovedBy: d.direktur_approved_by ? String(d.direktur_approved_by) : null,
+    direkturApprovedAt: d.direktur_approved_at ? String(d.direktur_approved_at) : null,
   };
 }
 
@@ -546,12 +623,27 @@ export async function cekFinalSph(docId: string, pelaku: IdentitasPelaku): Promi
 // (doc_type lain tetap 1 tahap via approveSalesDoc di salesdoc.ts).
 // Peninjau = pelaku sesi; boleh hanya HoD Business aktif (atau admin/superuser)
 // dan BUKAN pembuat SPH (lib/sales-doc-gate.ts bolehReviewSph).
-export async function hodReviewSph(id: string, reviewer: PelakuSesi): Promise<SphActionResult> {
+//
+// Diskon berjenjang (migrasi 301): bila SPH punya baris/diskon tambahan di atas
+// batas (tier hod/direktur), peninjau WAJIB menyetujui pengecualian secara
+// eksplisit (`setujuPengecualian: true`) — dicatat pengecualian_disetujui_*.
+// Peninjau boleh MENURUNKAN (tidak menaikkan) diskon tambahan lewat
+// `diskonTambahan` — total, jenjang & teks surat dihitung ulang.
+export interface OpsiReviewSph {
+  setujuPengecualian?: boolean;
+  diskonTambahan?: unknown; // undefined = tak diubah; null/0 = dihapus
+}
+
+export async function hodReviewSph(id: string, reviewer: PelakuSesi, opsi: OpsiReviewSph = {}): Promise<SphActionResult> {
   const sql = db();
-  const rows = await sql`SELECT id, status, doc_type FROM sales_doc WHERE id = ${id}`;
+  const rows = await sql`
+    SELECT id, status, doc_type, tier_persetujuan, aturan_tier, diskon_total_tipe, diskon_total_nilai,
+           diskon_total_rp, draft_text, customer_name, syarat
+    FROM sales_doc WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "dokumen tidak ditemukan" };
-  if (rows[0].doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
-  if (rows[0].status !== "draft") return { ok: false, error: `dokumen sudah ${rows[0].status}` };
+  const d = rows[0];
+  if (d.doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
+  if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}` };
   const p = bolehReviewSph({
     hodPeran: reviewer.hodPeran,
     role: reviewer.role,
@@ -559,8 +651,111 @@ export async function hodReviewSph(id: string, reviewer: PelakuSesi): Promise<Sp
     isCreator: await pelakuPembuat(id, reviewer),
   });
   if (!p.ok) return { ok: false, error: p.error, forbidden: true };
-  await sql`UPDATE sales_doc SET status = 'hod_review', hod_reviewed_by = ${reviewer.nama}, hod_reviewed_at = now() WHERE id = ${id}`;
-  await logHumanAction("sph.hod_review", reviewer.nama, { doc_id: id, reviewer_user_id: reviewer.userId }, "review");
+
+  let tierDok = tierSah(d.tier_persetujuan);
+  let ubahDiskon: { tipe: string | null; nilai: number | null; rp: number; tier: TierDiskon; teks: string } | null = null;
+  const rpLama = Number(d.diskon_total_rp ?? 0) || 0;
+  if (opsi.diskonTambahan !== undefined) {
+    const dt = bacaDiskonTambahan(opsi.diskonTambahan);
+    if (!dt.ok) return { ok: false, error: dt.error };
+    const li = await sql`
+      SELECT nama_snapshot AS nama, qty, price_list, harga_nett, nett_ppn, tier
+      FROM sph_line_item WHERE sales_doc_id = ${id} ORDER BY id`;
+    const baris = li.map((r) => ({
+      nama: String(r.nama),
+      qty: Number(r.qty),
+      priceList: Number(r.price_list),
+      hargaNett: Number(r.harga_nett),
+      nettPpn: Number(r.nett_ppn),
+    }));
+    const h = hitungDiskonTambahan(totalSph(baris).nett, dt.d);
+    if (!h.ok) return { ok: false, error: h.error };
+    if (!bolehUbahDiskonTambahan(rpLama, h.rp)) {
+      return { ok: false, error: "diskon tambahan hanya boleh diturunkan saat review, tidak dinaikkan" };
+    }
+    if (h.rp !== rpLama) {
+      const aturan = aturanTierDariDb(d.aturan_tier as Record<string, unknown> | null);
+      const total = totalSph(baris, h.rp);
+      const t = tierDiskonTotal(total, aturan);
+      const tTotal: TierDiskon = t && t.tier !== "tolak" ? t.tier : "normal";
+      tierDok = tierTertinggi(tTotal, ...li.map((r) => tierSah(r.tier)));
+      const blok = priceTableBlock(baris, total);
+      const teks =
+        gantiBlokTabel(String(d.draft_text ?? ""), blok) ??
+        renderSphTextFallback(
+          String(d.customer_name ?? ""),
+          baris,
+          total,
+          gabungSyarat(await syaratDefaultSph(), d.syarat as Record<string, unknown> | null),
+        );
+      ubahDiskon = { tipe: dt.d?.tipe ?? null, nilai: dt.d?.nilai ?? null, rp: h.rp, tier: tTotal, teks };
+    }
+  }
+  if (tierDok !== "normal" && opsi.setujuPengecualian !== true) {
+    return {
+      ok: false,
+      error:
+        tierDok === "direktur"
+          ? "SPH ini memuat diskon di atas batas (perlu persetujuan Direktur) — centang persetujuan pengecualian untuk melanjutkan"
+          : "SPH ini memuat diskon di atas batas — centang persetujuan pengecualian HoD untuk melanjutkan",
+    };
+  }
+  const ack = tierDok !== "normal";
+  const upd = ubahDiskon
+    ? await sql`
+        UPDATE sales_doc SET status = 'hod_review', hod_reviewed_by = ${reviewer.nama}, hod_reviewed_at = now(),
+          diskon_total_tipe = ${ubahDiskon.tipe}, diskon_total_nilai = ${ubahDiskon.nilai}, diskon_total_rp = ${ubahDiskon.rp},
+          diskon_total_tier = ${ubahDiskon.tier}, tier_persetujuan = ${tierDok}, draft_text = ${ubahDiskon.teks},
+          pengecualian_disetujui_by = ${ack ? reviewer.nama : null}, pengecualian_disetujui_at = ${ack ? new Date() : null}
+        WHERE id = ${id} AND status = 'draft' RETURNING id`
+    : await sql`
+        UPDATE sales_doc SET status = 'hod_review', hod_reviewed_by = ${reviewer.nama}, hod_reviewed_at = now(),
+          pengecualian_disetujui_by = ${ack ? reviewer.nama : null}, pengecualian_disetujui_at = ${ack ? new Date() : null}
+        WHERE id = ${id} AND status = 'draft' RETURNING id`;
+  if (upd.length === 0) return { ok: false, error: "status dokumen berubah — muat ulang" };
+  await logHumanAction(
+    "sph.hod_review",
+    reviewer.nama,
+    {
+      doc_id: id,
+      reviewer_user_id: reviewer.userId,
+      tier: tierDok,
+      pengecualian_disetujui: ack,
+      ...(ubahDiskon ? { diskon_tambahan: { sebelum_rp: rpLama, sesudah_rp: ubahDiskon.rp, tipe: ubahDiskon.tipe, nilai: ubahDiskon.nilai } } : {}),
+    },
+    "review",
+  );
+  return { ok: true, status: "hod_review" };
+}
+
+// Persetujuan Direktur atas diskon jenjang "direktur" (migrasi 301). Status
+// tetap hod_review; tanpa ini approve tahap 2 (finalisasiSph) ditolak.
+// Hanya app_user.role 'direktur' atau superuser, bukan pembuat SPH.
+export const bolehDirekturPeran = (p: Pick<PelakuSesi, "role" | "superuser"> | null) =>
+  !!p && (p.superuser || /^direktur$/i.test(String(p.role ?? "").trim()));
+
+export async function direkturSetujuiSph(id: string, pelaku: PelakuSesi): Promise<SphActionResult> {
+  const sql = db();
+  const [d] = await sql`SELECT status, doc_type, tier_persetujuan, direktur_approved_at FROM sales_doc WHERE id = ${id}`;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  if (d.doc_type !== "sph") return { ok: false, error: "bukan dokumen SPH" };
+  if (tierSah(d.tier_persetujuan) !== "direktur") return { ok: false, error: "SPH ini tidak memerlukan persetujuan Direktur" };
+  if (d.direktur_approved_at) return { ok: false, error: "SPH ini sudah disetujui Direktur" };
+  if (d.status !== "hod_review") {
+    return { ok: false, error: d.status === "draft" ? "tunggu review HoD Business dulu" : `dokumen sudah ${d.status}` };
+  }
+  if (!bolehDirekturPeran(pelaku)) {
+    return { ok: false, error: "persetujuan diskon jenjang Direktur hanya untuk Direktur", forbidden: true };
+  }
+  if (await pelakuPembuat(id, pelaku)) {
+    return { ok: false, error: "pembuat SPH tak boleh menyetujui SPH-nya sendiri", forbidden: true };
+  }
+  const upd = await sql`
+    UPDATE sales_doc SET direktur_approved_by = ${pelaku.nama}, direktur_approved_at = now(),
+      direktur_approved_user_id = ${pelaku.userId}
+    WHERE id = ${id} AND status = 'hod_review' AND direktur_approved_at IS NULL RETURNING id`;
+  if (upd.length === 0) return { ok: false, error: "status dokumen berubah — muat ulang" };
+  await logHumanAction("sph.direktur_approve", pelaku.nama, { doc_id: id, user_id: pelaku.userId }, "approve");
   return { ok: true, status: "hod_review" };
 }
 
@@ -607,11 +802,18 @@ export async function findPricelistByKode(
   periode = PERIODE_DEFAULT,
 ): Promise<{ id: number; nama: string; diskonMaks: number } | null> {
   const sql = db();
-  const rows = await sql`SELECT id, nama, diskon_maks FROM product_pricelist WHERE periode = ${periode} AND kode = ${kode}`;
+  // Batas diskon = nilai TERBIT Setup Harga (sama dgn form web & validasi
+  // createSphDraft). Jalur WA tetap ketat: di atas batas ditolak (ketat=true).
+  const rows = await sql`
+    SELECT p.id, p.nama, p.price_list, p.diskon_maks, p.harga_nett, p.nett_ppn, s.price_list_override, s.diskon_override
+    FROM product_pricelist p
+    LEFT JOIN product_pricelist_setup s
+      ON s.periode = p.periode AND s.row_no = p.row_no AND s.status = 'published'
+    WHERE p.periode = ${periode} AND p.kode = ${kode}`;
   // 0 (tak ketemu) atau >1 (seharusnya gak pernah, tapi jangan tebak) →
   // treat sbg "tak ketemu", arahkan AM pakai form web yg bisa cari+pilih.
   if (rows.length !== 1) return null;
-  return { id: Number(rows[0].id), nama: String(rows[0].nama), diskonMaks: Number(rows[0].diskon_maks) };
+  return { id: Number(rows[0].id), nama: String(rows[0].nama), diskonMaks: hargaTerbit(rows[0]).diskon };
 }
 
 // ── Dokumen cetak: pengaturan, syarat, penanda tangan, nomor (migrasi 300) ──
@@ -622,6 +824,10 @@ export interface PengaturanSph {
   resetTahunan: boolean;
   tahunBerjalan: number | null;
   syaratDefault: SyaratSph;
+  // Diskon berjenjang (migrasi 301) — poin persentase.
+  tambahanHodPp: number;
+  tambahanDirekturPp: number;
+  diskonTotalMaksPct: number;
   updatedBy: string | null;
   updatedAt: string | null;
   // Pratinjau nomor yg AKAN diberikan bila SPH difinalisasi sekarang.
@@ -632,13 +838,20 @@ export interface PengaturanSph {
 async function bacaPengaturanRow(): Promise<Record<string, unknown> | null> {
   const sql = db();
   try {
-    const [r] = await sql`
-      SELECT kode_tengah, nomor_berikutnya, reset_tahunan, tahun_berjalan, syarat_default, updated_by, updated_at::text
-      FROM sph_pengaturan WHERE id = 1`;
-    return r ?? null;
+    // to_jsonb(baris) supaya kolom migrasi 301 (aturan jenjang) opsional:
+    // DB yang belum dimigrasi tetap terbaca (aturanTierDariDb → default).
+    const [r] = await sql`SELECT to_jsonb(p) AS j FROM sph_pengaturan p WHERE id = 1`;
+    return (r?.j as Record<string, unknown> | undefined) ?? null;
   } catch {
     return null;
   }
+}
+
+// Aturan jenjang diskon yang berlaku sekarang. Kolom belum ada (migrasi 301
+// belum jalan) → default 5/10/0.
+export async function aturanTierSph(): Promise<AturanTier> {
+  const r = await bacaPengaturanRow();
+  return r ? aturanTierDariDb(r) : { ...ATURAN_TIER_DEFAULT };
 }
 
 export async function syaratDefaultSph(): Promise<SyaratSph> {
@@ -660,6 +873,7 @@ export async function getPengaturanSph(): Promise<PengaturanSph | null> {
     kodeTengah: String(r.kode_tengah),
     ...state,
     syaratDefault: gabungSyarat(SYARAT_DEFAULT, r.syarat_default as Record<string, unknown> | null),
+    ...aturanTierDariDb(r),
     updatedBy: r.updated_by ? String(r.updated_by) : null,
     updatedAt: r.updated_at ? String(r.updated_at) : null,
     contohNomor: formatNomorSph(dipakai, String(r.kode_tengah), t.bulan, t.tahun),
@@ -671,6 +885,9 @@ export interface UbahPengaturanInput {
   nomorBerikutnya?: unknown;
   resetTahunan?: unknown;
   syaratDefault?: unknown;
+  tambahanHodPp?: unknown;
+  tambahanDirekturPp?: unknown;
+  diskonTotalMaksPct?: unknown;
 }
 
 // Hanya admin/superuser (dicek di sini dari pelaku sesi, dan di BFF).
@@ -696,16 +913,27 @@ export async function ubahPengaturanSph(input: UbahPengaturanInput, pelaku: Pela
     input.syaratDefault && typeof input.syaratDefault === "object"
       ? gabungSyarat(now.syaratDefault, input.syaratDefault as Record<string, unknown>)
       : now.syaratDefault;
+  const at = aturanTierDariInput(aturanTierDariDb(now as unknown as Record<string, unknown>), {
+    tambahanHodPp: input.tambahanHodPp,
+    tambahanDirekturPp: input.tambahanDirekturPp,
+    diskonTotalMaksPct: input.diskonTotalMaksPct,
+  });
+  if (!at.ok) return { ok: false, error: at.error };
   const sql = db();
   await sql`
     UPDATE sph_pengaturan SET kode_tengah = ${kode}, nomor_berikutnya = ${nomor}, reset_tahunan = ${reset},
       syarat_default = ${sql.json(syarat as unknown as Parameters<typeof sql.json>[0])},
+      tambahan_hod_pp = ${at.aturan.tambahanHodPp}, tambahan_direktur_pp = ${at.aturan.tambahanDirekturPp},
+      diskon_total_maks_pct = ${at.aturan.diskonTotalMaksPct},
       updated_by = ${pelaku.nama}, updated_at = now()
     WHERE id = 1`;
   await logHumanAction(
     "sph.pengaturan.ubah",
     pelaku.nama,
-    { sebelum: { ...now, contohNomor: undefined }, sesudah: { kodeTengah: kode, nomorBerikutnya: nomor, resetTahunan: reset, syaratDefault: syarat } },
+    {
+      sebelum: { ...now, contohNomor: undefined },
+      sesudah: { kodeTengah: kode, nomorBerikutnya: nomor, resetTahunan: reset, syaratDefault: syarat, ...at.aturan },
+    },
     "update",
   );
   return { ok: true };
@@ -863,9 +1091,16 @@ export async function finalisasiSph(
   try {
     return await sqlRoot.begin(async (txRaw) => {
       const tx = txRaw as unknown as typeof sqlRoot;
-      const [d] = await tx`SELECT status, syarat, draft_text FROM sales_doc WHERE id = ${id} FOR UPDATE`;
+      const [d] = await tx`
+        SELECT status, syarat, draft_text, tier_persetujuan, direktur_approved_at
+        FROM sales_doc WHERE id = ${id} FOR UPDATE`;
       if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
       if (d.status !== "hod_review") return { ok: false, error: `dokumen sudah ${d.status} (butuh status "hod_review")` };
+      // Diskon jenjang Direktur (migrasi 301): nomor tak boleh terbit sebelum
+      // Direktur menyetujui. Dicek di dalam transaksi yg sama dgn pemberian nomor.
+      if (tierSah(d.tier_persetujuan) === "direktur" && !d.direktur_approved_at) {
+        return { ok: false, error: "SPH ini memuat diskon jenjang Direktur — tunggu persetujuan Direktur sebelum approve & penomoran" };
+      }
       const [p] = await tx`
         SELECT kode_tengah, nomor_berikutnya, reset_tahunan, tahun_berjalan FROM sph_pengaturan WHERE id = 1 FOR UPDATE`;
       if (!p) return { ok: false, error: "pengaturan penomoran SPH belum ada (migrasi 300)" };
@@ -921,7 +1156,9 @@ export interface SphListRow {
   pembuat: string | null;
   jumlahItem: number;
   variantPending: number;
-  total: number; // nett + PPN
+  total: number; // nett + PPN (setelah diskon tambahan)
+  tier: TierDiskon; // jenjang persetujuan diskon (migrasi 301)
+  direkturPending: boolean;
   aksi: AksiSph;
 }
 
@@ -942,6 +1179,10 @@ interface DocRingkas {
   n: number;
   pending: number;
   total: number;
+  nett: number;
+  diskon_rp: number;
+  tier: string;
+  dir_ok: boolean;
 }
 
 // Pembuat per dokumen (audit 'sph.draft.create' tertua) — satu query utk banyak id.
@@ -968,6 +1209,15 @@ async function pembuatBanyak(ids: string[]): Promise<Map<string, IdentitasPelaku
 const bolehReviewPeran = (p: PelakuSesi | null) =>
   !!p && (p.superuser || /^admin$/i.test(String(p.role ?? "")) || hodBusiness(p.hodPeran));
 
+// Total incl. PPN dari agregat SQL — rumus SAMA dgn lib totalSph(): tanpa
+// diskon tambahan = Σ nett+PPN baris; dengan = (nett − diskon) × 1,11 dibulatkan.
+function totalDariRingkas(d: Pick<DocRingkas, "total" | "nett" | "diskon_rp">): number {
+  const rp = Number(d.diskon_rp) || 0;
+  if (rp <= 0) return Math.round(Number(d.total));
+  const dpp = Math.round(Number(d.nett)) - rp;
+  return dpp + Math.round(dpp * 0.11);
+}
+
 export async function listSph(
   pelaku: PelakuSesi | null,
   bisaEdit: boolean,
@@ -990,11 +1240,13 @@ export async function listSph(
   const docs = (await sql`
     SELECT sd.id::text AS id, sd.customer_name, sd.customer_id, sd.status, sd.nomor_dokumen,
            sd.created_at::text AS created_at, sd.hod_reviewed_by, sd.approved_by,
-           COALESCE(t.n, 0)::int AS n, COALESCE(t.pending, 0)::int AS pending, COALESCE(t.total, 0)::float8 AS total
+           COALESCE(t.n, 0)::int AS n, COALESCE(t.pending, 0)::int AS pending, COALESCE(t.total, 0)::float8 AS total,
+           COALESCE(t.nett, 0)::float8 AS nett, COALESCE(sd.diskon_total_rp, 0)::float8 AS diskon_rp,
+           sd.tier_persetujuan AS tier, (sd.direktur_approved_at IS NOT NULL) AS dir_ok
     FROM sales_doc sd
     LEFT JOIN LATERAL (
       SELECT count(*) AS n, count(*) FILTER (WHERE NOT li.variant_confirmed) AS pending,
-             sum(li.nett_ppn * li.qty) AS total
+             sum(li.nett_ppn * li.qty) AS total, sum(li.harga_nett * li.qty) AS nett
       FROM sph_line_item li WHERE li.sales_doc_id = sd.id
     ) t ON true
     WHERE sd.doc_type = 'sph' ${filterStatus} ${cari}
@@ -1015,16 +1267,18 @@ export async function listSph(
   const terbuka = (st === "saya"
     ? docs
     : await sql`
-        SELECT sd.id::text AS id, sd.status, COALESCE(t.pending, 0)::int AS pending
+        SELECT sd.id::text AS id, sd.status, COALESCE(t.pending, 0)::int AS pending,
+               sd.tier_persetujuan AS tier, (sd.direktur_approved_at IS NOT NULL) AS dir_ok
         FROM sales_doc sd
         LEFT JOIN LATERAL (SELECT count(*) FILTER (WHERE NOT li.variant_confirmed) AS pending
                            FROM sph_line_item li WHERE li.sales_doc_id = sd.id) t ON true
         WHERE sd.doc_type = 'sph' AND sd.status IN ('draft', 'hod_review', 'approved') ${cari}
-        LIMIT 500`) as unknown as Pick<DocRingkas, "id" | "status" | "pending">[];
+        LIMIT 500`) as unknown as Pick<DocRingkas, "id" | "status" | "pending" | "tier" | "dir_ok">[];
 
   const pembuat = await pembuatBanyak([...new Set([...docs.map((d) => d.id), ...terbuka.map((d) => d.id)])]);
   const reviewPeran = bolehReviewPeran(pelaku);
-  const hitungAksi = (d: Pick<DocRingkas, "id" | "status" | "pending">) => {
+  const direkturPeran = bolehDirekturPeran(pelaku);
+  const hitungAksi = (d: Pick<DocRingkas, "id" | "status" | "pending" | "tier" | "dir_ok">) => {
     const p = pembuat.get(d.id);
     return aksiSph({
       status: d.status,
@@ -1032,6 +1286,9 @@ export async function listSph(
       bolehReviewPeran: reviewPeran,
       bisaEdit,
       variantPending: Number(d.pending),
+      tier: tierSah(d.tier),
+      direkturSudah: d.dir_ok === true,
+      bolehDirekturPeran: direkturPeran,
     });
   };
   counts.saya = terbuka.filter((d) => hitungAksi(d).perluAksiSaya).length;
@@ -1048,7 +1305,9 @@ export async function listSph(
     pembuat: pembuat.get(d.id)?.nama ?? null,
     jumlahItem: Number(d.n),
     variantPending: Number(d.pending),
-    total: Math.round(Number(d.total)),
+    total: totalDariRingkas(d),
+    tier: tierSah(d.tier),
+    direkturPending: tierSah(d.tier) === "direktur" && d.dir_ok !== true && (d.status === "draft" || d.status === "hod_review"),
     aksi: hitungAksi(d),
   }));
   if (st === "saya") rows = rows.filter((r) => r.aksi.perluAksiSaya);
@@ -1066,6 +1325,7 @@ export interface RiwayatSph {
 const LABEL_RIWAYAT: Record<string, string> = {
   "sph.draft.create": "SPH dibuat",
   "sph.hod_review": "Direview HoD Business",
+  "sph.direktur_approve": "Diskon disetujui Direktur",
   "sph.variant_confirm": "Varian item dikonfirmasi",
   "sph.syarat.ubah": "Syarat & ketentuan diubah",
   "sph.penanda_tangan": "Penanda tangan diganti",
@@ -1083,19 +1343,21 @@ const samarkan = (n: unknown) => {
 export interface KonteksSph {
   aksi: AksiSph;
   pembuat: string | null;
-  saya: { isCreator: boolean; bolehReviewPeran: boolean; bisaEdit: boolean };
+  saya: { isCreator: boolean; bolehReviewPeran: boolean; bisaEdit: boolean; bolehDirekturPeran: boolean };
   riwayat: RiwayatSph[];
 }
 
 export async function konteksSph(id: string, pelaku: PelakuSesi | null, bisaEdit: boolean): Promise<KonteksSph | null> {
   const sql = db();
   const [d] = await sql`
-    SELECT sd.status, (SELECT count(*)::int FROM sph_line_item li WHERE li.sales_doc_id = sd.id AND NOT li.variant_confirmed) AS pending
+    SELECT sd.status, (SELECT count(*)::int FROM sph_line_item li WHERE li.sales_doc_id = sd.id AND NOT li.variant_confirmed) AS pending,
+           sd.tier_persetujuan AS tier, (sd.direktur_approved_at IS NOT NULL) AS dir_ok
     FROM sales_doc sd WHERE sd.id = ${id} AND sd.doc_type = 'sph'`;
   if (!d) return null;
   const p = await pembuatSph(id);
   const isCreator = !!pelaku && !!p && samaOrang(pelaku, p);
   const reviewPeran = bolehReviewPeran(pelaku);
+  const direkturPeran = bolehDirekturPeran(pelaku);
   const ev = await sql`
     SELECT event_type, human_actor, occurred_at::text AS waktu, payload
     FROM audit_log
@@ -1109,6 +1371,12 @@ export async function konteksSph(id: string, pelaku: PelakuSesi | null, bisaEdit
     if (e.event_type === "sales.doc.approve" && pl.nomor) ket = `Nomor ${String(pl.nomor)}`;
     else if (e.event_type === "sales.doc.send" && pl.to) ket = `ke WA ${samarkan(pl.to)}`;
     else if (e.event_type === "sph.penanda_tangan" && pl.nama) ket = String(pl.nama);
+    else if (e.event_type === "sph.hod_review" && pl.pengecualian_disetujui === true) {
+      const dt = pl.diskon_tambahan as { sebelum_rp?: number; sesudah_rp?: number } | undefined;
+      ket = `Pengecualian diskon disetujui${
+        dt ? ` · diskon tambahan Rp${Number(dt.sebelum_rp ?? 0).toLocaleString("id-ID")} → Rp${Number(dt.sesudah_rp ?? 0).toLocaleString("id-ID")}` : ""
+      }`;
+    }
     return {
       jenis: String(e.event_type),
       oleh: e.human_actor ? String(e.human_actor) : null,
@@ -1118,9 +1386,18 @@ export async function konteksSph(id: string, pelaku: PelakuSesi | null, bisaEdit
     };
   });
   return {
-    aksi: aksiSph({ status: String(d.status), isCreator, bolehReviewPeran: reviewPeran, bisaEdit, variantPending: Number(d.pending) }),
+    aksi: aksiSph({
+      status: String(d.status),
+      isCreator,
+      bolehReviewPeran: reviewPeran,
+      bisaEdit,
+      variantPending: Number(d.pending),
+      tier: tierSah(d.tier),
+      direkturSudah: d.dir_ok === true,
+      bolehDirekturPeran: direkturPeran,
+    }),
     pembuat: p?.nama ?? null,
-    saya: { isCreator, bolehReviewPeran: reviewPeran, bisaEdit },
+    saya: { isCreator, bolehReviewPeran: reviewPeran, bisaEdit, bolehDirekturPeran: direkturPeran },
     riwayat,
   };
 }

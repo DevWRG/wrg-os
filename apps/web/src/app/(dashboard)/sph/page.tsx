@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { StatusSphBadge, ambilJson, pesanRamah, rupiah, tglPendek, type AksiSph } from "@/components/sph/sph-ui";
+import { StatusSphBadge, TierBadge, ambilJson, pesanRamah, rupiah, tglPendek, type AksiSph } from "@/components/sph/sph-ui";
 import { can } from "@/lib/perms";
 import { useSession } from "@/lib/use-session";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,8 @@ interface Baris {
   jumlahItem: number;
   variantPending: number;
   total: number;
+  tier?: "normal" | "hod" | "direktur";
+  direkturPending?: boolean;
   aksi: AksiSph;
 }
 
@@ -51,7 +53,7 @@ const TAB: { key: string; label: string }[] = [
 ];
 
 const KOSONG: Record<string, { judul: string; isi: string }> = {
-  saya: { judul: "Tidak ada yang menunggu Anda", isi: "SPH yang perlu Anda review, approve, atau kirim akan muncul di sini." },
+  saya: { judul: "Tidak ada yang menunggu Anda", isi: "SPH yang perlu Anda review, setujui (Direktur), approve, atau kirim akan muncul di sini." },
   semua: { judul: "Belum ada SPH", isi: "Buat SPH pertama: pilih customer, tambahkan produk dari Price Book, lalu ajukan ke HoD." },
   draft: { judul: "Tak ada SPH yang menunggu review", isi: "SPH baru otomatis masuk ke sini sampai direview HoD Business." },
   hod_review: { judul: "Tak ada SPH yang menunggu approve", isi: "Setelah direview HoD, SPH menunggu approve & nomor surat di sini." },
@@ -135,7 +137,7 @@ export default function SphListPage() {
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         <Sparkles className="text-primary size-3.5" />
         <span>Alur:</span>
-        {["AM buat SPH", "HoD Business review", "Approve & nomor surat", "Kirim ke customer"].map((s, i, a) => (
+        {["AM buat SPH", "HoD Business review", "Direktur (bila diskon di atas jatah HoD)", "Approve & nomor surat", "Kirim ke customer"].map((s, i, a) => (
           <span key={s} className="inline-flex items-center gap-2">
             <span className="text-foreground">{s}</span>
             {i < a.length - 1 && <ChevronRight className="size-3" />}
@@ -232,7 +234,10 @@ export default function SphListPage() {
                         </TableCell>
                         <TableCell className="text-right font-medium tabular-nums">{rupiah(r.total)}</TableCell>
                         <TableCell>
-                          <StatusSphBadge status={r.status} />
+                          <div className="flex flex-col items-start gap-1">
+                            <StatusSphBadge status={r.status} />
+                            <TierRingkas r={r} />
+                          </div>
                         </TableCell>
                         <TableCell>
                           <Petunjuk aksi={r.aksi} />
@@ -259,7 +264,10 @@ export default function SphListPage() {
                           <p className="truncate font-medium">{r.customerName ?? "—"}</p>
                           <p className="text-muted-foreground font-mono text-xs">{r.nomorDokumen ?? "DRAF"}</p>
                         </div>
-                        <StatusSphBadge status={r.status} />
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <StatusSphBadge status={r.status} />
+                          <TierRingkas r={r} />
+                        </div>
                       </div>
                       <div className="flex items-center justify-between gap-3 text-sm">
                         <span className="font-semibold tabular-nums">{rupiah(r.total)}</span>
@@ -293,4 +301,12 @@ function Petunjuk({ aksi }: { aksi: AksiSph }) {
     );
   }
   return <span className="text-muted-foreground text-xs">{aksi.petunjuk}</span>;
+}
+
+// Jenjang diskon di daftar: hanya untuk SPH yang masih berjalan & ber-pengecualian.
+function TierRingkas({ r }: { r: Baris }) {
+  // draft: pengecualian belum disetujui HoD; hod_review: tinggal menunggu Direktur.
+  if (r.status === "draft" && r.tier && r.tier !== "normal") return <TierBadge tier={r.tier} pendek />;
+  if (r.status === "hod_review" && r.direkturPending) return <TierBadge tier="direktur" pendek />;
+  return null;
 }

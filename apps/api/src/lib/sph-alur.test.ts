@@ -75,3 +75,44 @@ test("polaCariSph escape wildcard & rapikan spasi", () => {
   assert.equal(polaCariSph("50%_a\\b"), "%50\\%\\_a\\\\b%");
   assert.equal(polaCariSph("x".repeat(300))?.length, 102);
 });
+
+// ── Diskon berjenjang (migrasi 301) ──
+
+test("tier direktur: approve tertahan sampai Direktur menyetujui", () => {
+  const s: InputAksiSph = { ...dasar, status: "hod_review", bisaEdit: true, tier: "direktur" };
+  const admin = aksiSph(s);
+  assert.equal(admin.direkturPending, true);
+  assert.equal(admin.approve.boleh, false);
+  assert.match(admin.approve.alasan ?? "", /Direktur/);
+  assert.equal(admin.direktur.boleh, false);
+  assert.match(admin.direktur.alasan ?? "", /hanya untuk Direktur/);
+  assert.equal(admin.petunjuk, "Perlu persetujuan Direktur");
+  assert.equal(admin.perluAksiSaya, false);
+
+  const dir = aksiSph({ ...s, bisaEdit: false, bolehDirekturPeran: true });
+  assert.equal(dir.direktur.boleh, true);
+  assert.equal(dir.utama, "direktur");
+  assert.equal(dir.perluAksiSaya, true);
+
+  const sudah = aksiSph({ ...s, direkturSudah: true });
+  assert.equal(sudah.direkturPending, false);
+  assert.equal(sudah.approve.boleh, true);
+  assert.equal(sudah.utama, "approve");
+});
+
+test("tier direktur: pembuat tak boleh menyetujui walau Direktur; draft belum bisa", () => {
+  const s: InputAksiSph = { ...dasar, status: "hod_review", tier: "direktur", bolehDirekturPeran: true };
+  assert.match(aksiSph({ ...s, isCreator: true }).direktur.alasan ?? "", /pembuat/);
+  const d = aksiSph({ ...s, status: "draft" });
+  assert.equal(d.direktur.boleh, false);
+  assert.equal(d.petunjuk, "Menunggu review HoD · lalu persetujuan Direktur");
+});
+
+test("tier hod/normal: tak ada langkah Direktur; review ditandai diskon di atas batas", () => {
+  const h = aksiSph({ ...dasar, bolehReviewPeran: true, tier: "hod" });
+  assert.equal(h.direkturPending, false);
+  assert.equal(h.petunjuk, "Perlu review Anda · diskon di atas batas");
+  const n = aksiSph({ ...dasar, status: "hod_review", bisaEdit: true });
+  assert.equal(n.direktur.boleh, false);
+  assert.equal(n.approve.boleh, true);
+});

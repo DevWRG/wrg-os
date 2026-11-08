@@ -29,6 +29,8 @@ export interface PricebookItem {
   nettPpn: number;
   rentangHarga: string | null;
   catatan: string | null;
+  // Hanya bila diminta `efektif`: true = harga/diskon ditimpa Setup Harga terbit.
+  disetelSetupHarga?: boolean;
   // Berapa SKU lain di brand yang sama memakai nama produk PERSIS ini. >1 =
   // sales wajib konfirmasi varian ke admin sebelum keluarkan penawaran
   // (HANDOVER §6 — risiko mis-quote terbesar di dokumen ini).
@@ -42,6 +44,11 @@ export interface PricebookFilter {
   kategori?: string;
   q?: string;
   limit?: number;
+  // true → harga & batas diskon EFEKTIF TERBIT (Setup Harga, migrasi 077):
+  // baris setup 'published' menimpa price list/diskon handover (hargaEfektif).
+  // Dipakai pemilih produk form SPH supaya batas di layar = batas yang divalidasi
+  // server (repo/sph.ts). Tanpa flag → snapshot handover apa adanya (katalog).
+  efektif?: boolean;
 }
 
 const num = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
@@ -61,12 +68,16 @@ export async function listItems(f: PricebookFilter = {}): Promise<PricebookItem[
   const limit = Math.min(Math.max(f.limit ?? 5000, 1), 20000);
   const q = polaCari(f.q);
 
+  const efektif = f.efektif === true;
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.id, p.kode, p.lini, p.brand, p.nama, p.varian, p.kemasan, p.kategori,
            p.kategori_verified, p.price_list, p.diskon_maks, p.harga_nett, p.nett_ppn,
            p.rentang_harga, p.catatan,
+           s.price_list_override, s.diskon_override,
            COUNT(*) OVER (PARTITION BY p.brand, p.nama) AS jumlah_harga
       FROM product_pricelist p
+      LEFT JOIN product_pricelist_setup s
+        ON ${efektif} AND s.periode = p.periode AND s.row_no = p.row_no AND s.status = 'published'
      WHERE p.periode = ${periode}
        AND (${f.lini ?? null}::text IS NULL OR p.lini = ${f.lini ?? null})
        AND (${f.brand ?? null}::text IS NULL OR p.brand = ${f.brand ?? null})
@@ -75,24 +86,28 @@ export async function listItems(f: PricebookFilter = {}): Promise<PricebookItem[
      ORDER BY p.lini, p.brand, p.nama, p.price_list DESC
      LIMIT ${limit}
   `;
-  return rows.map((r) => ({
-    id: Number(r.id),
-    kode: (r.kode as string) ?? null,
-    lini: r.lini as string,
-    brand: r.brand as string,
-    nama: r.nama as string,
-    varian: (r.varian as string) ?? null,
-    kemasan: (r.kemasan as string) ?? null,
-    kategori: (r.kategori as string) ?? null,
-    kategoriVerified: r.kategori_verified === true,
-    priceList: num(r.price_list),
-    diskonMaks: num(r.diskon_maks),
-    hargaNett: num(r.harga_nett),
-    nettPpn: num(r.nett_ppn),
-    rentangHarga: (r.rentang_harga as string) ?? null,
-    catatan: (r.catatan as string) ?? null,
-    jumlahHarga: num(r.jumlah_harga),
-  }));
+  return rows.map((r) => {
+    const e = hargaTerbit(r);
+    return {
+      id: Number(r.id),
+      kode: (r.kode as string) ?? null,
+      lini: r.lini as string,
+      brand: r.brand as string,
+      nama: r.nama as string,
+      varian: (r.varian as string) ?? null,
+      kemasan: (r.kemasan as string) ?? null,
+      kategori: (r.kategori as string) ?? null,
+      kategoriVerified: r.kategori_verified === true,
+      priceList: e.priceList,
+      diskonMaks: e.diskon,
+      hargaNett: e.nett,
+      nettPpn: e.ppn,
+      rentangHarga: (r.rentang_harga as string) ?? null,
+      catatan: (r.catatan as string) ?? null,
+      jumlahHarga: num(r.jumlah_harga),
+      ...(efektif ? { disetelSetupHarga: e.adaOverride } : {}),
+    };
+  });
 }
 
 // ── Ringkasan (infografis) ─────────────────────────────────────────────────
@@ -357,6 +372,7 @@ export interface PricebookSetupRow {
   status: string; // draft | published
   publishedAt: string | null;
   kategori: string | null;
+  kategoriPricebook: string | null; // product_pricelist.kategori — pengelompok aksi massal
   productLine: string | null;
   klas: string | null;
   subClass: string | null;
@@ -411,6 +427,21 @@ export function hargaEfektif(r: {
   return { priceList, diskon, nett, ppn: rnd(nett * (1 + PPN_PRICEBOOK)), adaOverride };
 }
 
+/** Harga efektif TERBIT: kolom override hanya dibaca dari baris setup yang
+ *  di-JOIN dengan syarat status = 'published' (LEFT JOIN → NULL bila draft /
+ *  tak ada baris setup) — jadi draft Setup Harga tak pernah bocor ke AM/SPH.
+ *  Ini angka yang sama dengan tab "Harga per Produk" (listPublishedKeagenan). */
+export function hargaTerbit(r: Record<string, unknown>): ReturnType<typeof hargaEfektif> {
+  return hargaEfektif({
+    price_list: r.price_list,
+    diskon_maks: r.diskon_maks,
+    harga_nett: r.harga_nett,
+    nett_ppn: r.nett_ppn,
+    price_list_override: r.price_list_override ?? null,
+    diskon_override: r.diskon_override ?? null,
+  });
+}
+
 export async function listSetup(
   opts: { periode?: string; q?: string; lini?: string; limit?: number } = {},
 ): Promise<PricebookSetupRow[]> {
@@ -422,7 +453,7 @@ export async function listSetup(
 
   const rows = await sql<Record<string, unknown>[]>`
     SELECT p.row_no, p.kode, p.lini, p.brand, p.nama, p.price_list, p.diskon_maks,
-           p.harga_nett, p.nett_ppn,
+           p.harga_nett, p.nett_ppn, p.kategori AS kategori_pricebook,
            s.nama_final, s.varian, s.kemasan, s.satuan, s.hpp, s.product_kode,
            s.price_list_override, s.diskon_override, s.status, s.published_at::text,
            kat.nama AS kategori_nama, ln.nama AS line_nama,
@@ -472,6 +503,7 @@ export async function listSetup(
     status: String(r.status ?? "draft"),
     publishedAt: (r.published_at as string) ?? null,
     kategori: (r.kategori_nama as string) ?? null,
+    kategoriPricebook: (r.kategori_pricebook as string) ?? null,
     productLine: (r.line_nama as string) ?? null,
     klas: (r.class_nama as string) ?? null,
     subClass: (r.sub_nama as string) ?? null,
@@ -575,6 +607,130 @@ export async function updateSetupRow(
     all.filter((x) => x.rowNo === patch.rowNo),
   );
   return row ? { ok: true, row } : { ok: false, error: "baris tersimpan tapi gagal dibaca ulang" };
+}
+
+// ── Atur batas diskon massal per brand / kategori (Setup Harga) ────────────
+// Jalur tulis SAMA dengan setelan satu baris (updateSetupRow): hanya kolom
+// override di product_pricelist_setup yang berubah, status draft/published TIDAK
+// disentuh (persis seperti menyimpan dialog Setel Harga), jejak updated_by dari
+// sesi + updated_at. Baris berstatus Published langsung berlaku ke AM & SPH;
+// baris Draft baru berlaku setelah di-Publish — pratinjau menyebut keduanya.
+// Nilai = angka handover → override di-NULL-kan (aturan "hanya selisih" dialog).
+
+export interface MassalDiskonInput {
+  periode?: string;
+  brand?: string | null;
+  kategori?: string | null;
+  lini?: string | null;
+  /** fraksi 0 ≤ x < 1; null = kembalikan ke diskon maks Price Book (hapus override). */
+  diskon: number | null;
+  updatedBy?: string | null;
+}
+
+export interface MassalDiskonBaris {
+  rowNo: number;
+  nama: string;
+  brand: string;
+  kategori: string | null;
+  status: string;
+  diskonAsli: number;
+  diskonSekarang: number;
+  diskonBaru: number;
+}
+
+export interface MassalDiskonPratinjau {
+  jumlah: number;
+  berubah: number;
+  published: number;
+  draft: number;
+  rows: MassalDiskonBaris[]; // maks 300 untuk tampilan
+}
+
+function cekMassal(i: MassalDiskonInput): string | null {
+  const brand = i.brand?.trim() || null;
+  const kategori = i.kategori?.trim() || null;
+  if (!brand && !kategori) return "pilih brand dan/atau kategori dulu";
+  if (i.diskon !== null && (!Number.isFinite(i.diskon) || i.diskon < 0 || i.diskon >= 1)) {
+    return "Diskon harus antara 0% dan 100% (tidak termasuk 100%)";
+  }
+  return null;
+}
+
+async function barisMassal(i: MassalDiskonInput): Promise<MassalDiskonBaris[]> {
+  const sql = db();
+  const periode = i.periode || PERIODE_DEFAULT;
+  const brand = i.brand?.trim() || null;
+  const kategori = i.kategori?.trim() || null;
+  const lini = i.lini?.trim() || null;
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT p.row_no, COALESCE(s.nama_final, p.nama) AS nama, p.brand, p.kategori, s.status,
+           p.diskon_maks, COALESCE(s.diskon_override, p.diskon_maks) AS diskon_sekarang
+      FROM product_pricelist p
+      JOIN product_pricelist_setup s ON s.periode = p.periode AND s.row_no = p.row_no
+     WHERE p.periode = ${periode}
+       AND (${brand}::text IS NULL OR p.brand = ${brand})
+       AND (${kategori}::text IS NULL OR p.kategori = ${kategori})
+       AND (${lini}::text IS NULL OR p.lini = ${lini})
+     ORDER BY p.brand, COALESCE(s.nama_final, p.nama)`;
+  return rows.map((r) => {
+    const asli = num(r.diskon_maks);
+    return {
+      rowNo: Number(r.row_no),
+      nama: String(r.nama ?? ""),
+      brand: String(r.brand ?? ""),
+      kategori: (r.kategori as string) ?? null,
+      status: String(r.status ?? "draft"),
+      diskonAsli: asli,
+      diskonSekarang: num(r.diskon_sekarang),
+      diskonBaru: i.diskon === null ? asli : i.diskon,
+    };
+  });
+}
+
+export async function pratinjauMassalDiskon(
+  i: MassalDiskonInput,
+): Promise<{ ok: true; hasil: MassalDiskonPratinjau } | { ok: false; error: string }> {
+  if (!isDbEnabled()) return { ok: false, error: "DATABASE_URL off" };
+  const salah = cekMassal(i);
+  if (salah) return { ok: false, error: salah };
+  const rows = await barisMassal(i);
+  return {
+    ok: true,
+    hasil: {
+      jumlah: rows.length,
+      berubah: rows.filter((r) => Math.abs(r.diskonBaru - r.diskonSekarang) > 1e-9).length,
+      published: rows.filter((r) => r.status === "published").length,
+      draft: rows.filter((r) => r.status !== "published").length,
+      rows: rows.slice(0, 300),
+    },
+  };
+}
+
+export async function terapkanMassalDiskon(
+  i: MassalDiskonInput,
+): Promise<{ ok: true; diubah: number; jumlah: number } | { ok: false; error: string }> {
+  if (!isDbEnabled()) return { ok: false, error: "DATABASE_URL off" };
+  const salah = cekMassal(i);
+  if (salah) return { ok: false, error: salah };
+  const periode = i.periode || PERIODE_DEFAULT;
+  const rows = await barisMassal(i);
+  const ubah = rows.filter((r) => Math.abs(r.diskonBaru - r.diskonSekarang) > 1e-9).map((r) => r.rowNo);
+  if (ubah.length === 0) return { ok: true, diubah: 0, jumlah: rows.length };
+  const diskon = i.diskon === null ? null : +i.diskon.toFixed(4);
+  const sql = db();
+  // Override NULL bila sama dengan angka handover baris itu (aturan dialog).
+  const upd = await sql`
+    UPDATE product_pricelist_setup s SET
+      diskon_override = CASE
+        WHEN ${diskon}::numeric IS NULL OR abs(${diskon}::numeric - p.diskon_maks) < 0.00005 THEN NULL
+        ELSE ${diskon}::numeric END,
+      updated_by = ${i.updatedBy ?? null},
+      updated_at = now()
+      FROM product_pricelist p
+     WHERE p.periode = s.periode AND p.row_no = s.row_no
+       AND s.periode = ${periode} AND s.row_no = ANY(${ubah}::int[])
+    RETURNING s.row_no`;
+  return { ok: true, diubah: upd.length, jumlah: rows.length };
 }
 
 /** rowNos kosong/undefined → SEMUA draft periode itu. */
