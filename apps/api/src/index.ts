@@ -46,6 +46,7 @@ import {
 } from "./repo/permintaan-produk.js";
 import { DoFakturError, listDoBelumFaktur, runRekapDoBelumFaktur, ubahAmbang as doFakturUbahAmbang } from "./repo/do-belum-faktur.js";
 import { FakturisError, runCekFakturisDiam, runRekapFakturis, simpanLabelAkun, statusFakturis } from "./repo/fakturis-diam.js";
+import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
@@ -6574,6 +6575,19 @@ const fakturisErr = (c: Context, e: unknown) => {
   console.error("[fakturis-diam]", e);
   return c.json({ error: "gagal memproses data penerbitan faktur" }, 500);
 };
+// F10 bagian 2 — Faktur Revisi (tab di menu Penerbitan Faktur, gerbang di BFF).
+const revisiErr = (c: Context, e: unknown) => {
+  if (e instanceof RevisiError) return c.json({ error: e.message }, e.status as 400);
+  console.error("[faktur-revisi]", e);
+  return c.json({ error: "gagal memproses faktur revisi" }, 500);
+};
+app.get("/faktur-revisi", async (c) => {
+  try { return c.json(await daftarRevisi({ hari: c.req.query("hari") })); } catch (e) { return revisiErr(c, e); }
+});
+app.post("/faktur-revisi/:id/tutup", async (c) => {
+  const b = ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+  try { return c.json(await tutupManual(c.req.param("id"), b)); } catch (e) { return revisiErr(c, e); }
+});
 app.get("/fakturis-diam", async (c) => {
   try { return c.json(await statusFakturis()); } catch (e) { return fakturisErr(c, e); }
 });

@@ -7,6 +7,8 @@ import { StatCard } from "@/components/dashboard/stat-card";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { FakturRevisiTab } from "@/components/penerbitan-faktur/faktur-revisi-tab";
 import { cn } from "@/lib/utils";
 
 // F10 Penerbitan Faktur — bentuk data = statusFakturis() di apps/api/src/repo/fakturis-diam.ts.
@@ -39,6 +41,21 @@ async function kirim<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function PenerbitanFakturView({ bolehUbah }: { bolehUbah: boolean }) {
+  const [tab, setTab] = useState<"fakturis" | "revisi">("fakturis");
+  return (
+    <div className="space-y-4">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "fakturis" | "revisi")}>
+        <TabsList>
+          <TabsTrigger value="fakturis">Fakturis</TabsTrigger>
+          <TabsTrigger value="revisi">Faktur Revisi</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {tab === "fakturis" ? <FakturisTab bolehUbah={bolehUbah} /> : <FakturRevisiTab bolehUbah={bolehUbah} />}
+    </div>
+  );
+}
+
+function FakturisTab({ bolehUbah }: { bolehUbah: boolean }) {
   const [d, setD] = useState<Status | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [pratinjau, setPratinjau] = useState<string | null>(null);

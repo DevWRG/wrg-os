@@ -22,7 +22,7 @@ export default async function PenerbitanFakturPage() {
     <>
       <PageHeader
         title="Penerbitan Faktur"
-        description="Memantau apakah faktur penjualan masih terbit di Accurate. Kalau di jam kerja lama tidak ada faktur baru (komputer atau akun fakturis bermasalah), grup Finance diberi tahu."
+        description="Memantau apakah faktur penjualan masih terbit di Accurate (alarm ke grup Finance kalau lama tidak ada faktur baru di jam kerja), dan melacak permintaan revisi faktur beserta SLA-nya."
       />
       <PenerbitanFakturView bolehUbah={featureAllowed(me, "/penerbitan-faktur", "edit")} />
     </>
