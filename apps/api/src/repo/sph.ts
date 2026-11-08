@@ -1059,7 +1059,8 @@ export interface RiwayatSph {
   jenis: string; // event_type audit_log
   oleh: string | null;
   waktu: string;
-  keterangan: string | null;
+  judul: string; // label peristiwa ("Disetujui & diberi nomor", …)
+  keterangan: string | null; // rincian (nomor, tujuan tersamar, nama penanda tangan)
 }
 
 const LABEL_RIWAYAT: Record<string, string> = {
@@ -1112,7 +1113,8 @@ export async function konteksSph(id: string, pelaku: PelakuSesi | null, bisaEdit
       jenis: String(e.event_type),
       oleh: e.human_actor ? String(e.human_actor) : null,
       waktu: String(e.waktu),
-      keterangan: ket ?? LABEL_RIWAYAT[String(e.event_type)] ?? null,
+      judul: LABEL_RIWAYAT[String(e.event_type)] ?? String(e.event_type),
+      keterangan: ket,
     };
   });
   return {

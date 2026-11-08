@@ -92,6 +92,7 @@ interface Riwayat {
   jenis: string;
   oleh: string | null;
   waktu: string;
+  judul: string;
   keterangan: string | null;
 }
 
@@ -460,7 +461,8 @@ export default function SphDetailPage() {
                   {[...k.riwayat].reverse().map((r, i) => (
                     <li key={`${r.jenis}-${r.waktu}-${i}`} className="relative text-sm">
                       <span className="bg-primary ring-card absolute top-1.5 -left-[1.3rem] size-2 rounded-full ring-4" aria-hidden />
-                      <p className="font-medium">{r.keterangan}</p>
+                      <p className="font-medium">{r.judul}</p>
+                      {r.keterangan && <p className="font-mono text-xs break-all">{r.keterangan}</p>}
                       <p className="text-muted-foreground text-xs">
                         {r.oleh ?? "sistem"} · {tglWaktu(r.waktu)}
                       </p>
@@ -486,15 +488,15 @@ export default function SphDetailPage() {
                   {aksi && !aksi.konfirmasiVarian.boleh && aksi.konfirmasiVarian.alasan ? ` (${aksi.konfirmasiVarian.alasan.toLowerCase()})` : ""}.
                 </p>
               )}
-              <div className="-mx-4 overflow-x-auto px-4">
-                <table className="w-full min-w-[34rem] text-sm">
+              <div>
+                <table className="w-full text-sm">
                   <thead>
                     <tr className="text-muted-foreground border-b text-left text-xs">
                       <th className="py-2 pr-2 font-medium">Produk</th>
                       <th className="py-2 pr-2 text-right font-medium">Qty</th>
-                      <th className="py-2 pr-2 text-right font-medium">Harga list</th>
-                      {adaDiskon && <th className="py-2 pr-2 text-right font-medium">Diskon</th>}
-                      <th className="py-2 pr-2 text-right font-medium">Nett/unit</th>
+                      <th className="hidden py-2 pr-2 text-right font-medium sm:table-cell">Harga list</th>
+                      {adaDiskon && <th className="hidden py-2 pr-2 text-right font-medium sm:table-cell">Diskon</th>}
+                      <th className="hidden py-2 pr-2 text-right font-medium sm:table-cell">Nett/unit</th>
                       <th className="py-2 text-right font-medium">Jumlah</th>
                     </tr>
                   </thead>
@@ -504,6 +506,11 @@ export default function SphDetailPage() {
                         <td className="py-2 pr-2">
                           <p className="font-medium">{it.nama}</p>
                           <p className="text-muted-foreground text-xs">{it.kemasan ?? "—"}</p>
+                          {/* ponsel: kolom harga disembunyikan → ringkas di bawah nama */}
+                          <p className="text-muted-foreground text-xs tabular-nums sm:hidden">
+                            {rupiah(it.hargaNett)}/unit
+                            {it.diskonRequested > 0 ? ` · diskon ${Math.round(it.diskonRequested * 10000) / 100}%` : ""}
+                          </p>
                           {!it.variantConfirmed ? (
                             <div className="mt-1 flex flex-wrap items-center gap-2">
                               <span className="text-xs font-medium text-amber-700 dark:text-amber-400">Varian belum dikonfirmasi</span>
@@ -531,13 +538,13 @@ export default function SphDetailPage() {
                           ) : null}
                         </td>
                         <td className="py-2 pr-2 text-right tabular-nums">{it.qty.toLocaleString("id-ID")}</td>
-                        <td className="py-2 pr-2 text-right tabular-nums">{rupiah(it.priceList)}</td>
+                        <td className="hidden py-2 pr-2 text-right tabular-nums sm:table-cell">{rupiah(it.priceList)}</td>
                         {adaDiskon && (
-                          <td className="py-2 pr-2 text-right tabular-nums">
+                          <td className="hidden py-2 pr-2 text-right tabular-nums sm:table-cell">
                             {it.diskonRequested > 0 ? `${Math.round(it.diskonRequested * 10000) / 100}%` : "–"}
                           </td>
                         )}
-                        <td className="py-2 pr-2 text-right tabular-nums">{rupiah(it.hargaNett)}</td>
+                        <td className="hidden py-2 pr-2 text-right tabular-nums sm:table-cell">{rupiah(it.hargaNett)}</td>
                         <td className="py-2 text-right font-medium tabular-nums">{rupiah(it.hargaNett * it.qty)}</td>
                       </tr>
                     ))}
@@ -644,7 +651,7 @@ export default function SphDetailPage() {
               <iframe
                 title="Pratinjau PDF SPH"
                 src={`${pdfUrl(d.id)}#view=FitH`}
-                className="bg-card hidden h-[44rem] w-full rounded-lg border md:block"
+                className="bg-card hidden h-[40rem] w-full rounded-lg border md:block"
               />
               <p className="text-muted-foreground text-sm md:hidden">Pratinjau tersedia di layar lebar. Ketuk &quot;Buka di tab baru&quot; untuk melihat PDF.</p>
             </CardContent>
