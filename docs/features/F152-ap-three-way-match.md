@@ -73,20 +73,27 @@ Status faktur: `SELISIH` (ada baris selisih) · `BELUM_LENGKAP` (tautan hilang/b
   Accurate mencurigakan/terpotong). Sinkron inkremental TIDAK prune — jalankan `?full=1` berkala (mis. mingguan) atau setelah koreksi besar.
 - Kumulatif dihitung SEKALI per baris PO/penerimaan (CTE group-by + window), linear: 5.000 faktur ±1 dtk, juga bila 3.000 faktur
   menumpuk di satu baris (versi LATERAL awal 67 dtk). Draft ikut menghitung baris saudara di faktur yang sama.
-- `scheduler.ts` — ikut job `accurate-po-sync` (`ACCURATE_PO_SYNC_ENABLED`), SESUDAH PO & penerimaan. Tidak ada job/env baru.
+- `scheduler.ts` — ikut job `accurate-po-sync` (`ACCURATE_PO_SYNC_ENABLED`), SESUDAH PO & penerimaan. Tidak ada job baru, tapi
+  faktur punya **saklar sendiri** `AP_PURCHASE_INVOICE_SYNC_ENABLED` (default MATI): selama mati, job hanya menarik PO &
+  penerimaan, faktur cuma masuk lewat sinkron manual.
 - API: `GET /ap/three-way` (filter `status,q,vendor_id,dari,sampai,limit,offset`), `GET /ap/three-way/:id`,
   `POST /accurate/sync/purchase-invoices[?full=1]` (202, latar).
 - Web: `/ap-three-way` (kartu hasil; chip disaring di SERVER krn halaman awal hanya 500 faktur terbaru; tabel, rincian per baris, ekspor CSV mengikuti chip hasil, sel teks berawalan `= + - @` dinetralkan agar bukan rumus Excel), BFF
   `/api/ap-three-way[/:id]` (gerbang `requireFeature("/ap-three-way")`), `lib/ap-three-way-access.ts`.
-- Env: `AP_ACCURATE_SINCE` (kosong = ikut `INBOUND_ACCURATE_SINCE`, default 2026-10-01).
+- Env: `AP_PURCHASE_INVOICE_SYNC_ENABLED` (`true` = faktur ikut job `accurate-po-sync`; default mati) ·
+  `AP_ACCURATE_SINCE` (kosong = ikut `INBOUND_ACCURATE_SINCE`, default 2026-10-01).
 
 ## 5. Deploy (setelah merge dev → main; Direktur yang apply)
 
 1. Terapkan migrasi **240** (backup dulu). Migrasi juga mengosongkan `items_last_update` PO Accurate supaya detail PO
    ditarik ulang (mengisi `disc_raw`); ±1.100 PO, 300 per siklus 30 menit.
 2. Build api + web, restart pm2 (bentuk ecosystem).
-3. Jalankan sinkron manual `POST /accurate/sync/purchase-invoices` (atau tunggu job), cek `GET /ap/three-way` → `sinkron`.
-4. **Sync Fitur**, lalu centang `ap-three-way` untuk grup Finance & Purchasing. Sebelum itu hanya admin/superuser.
+3. Jalankan sinkron manual `POST /accurate/sync/purchase-invoices`, cek `GET /ap/three-way` → `sinkron` (job TIDAK menarik
+   faktur selama saklar mati). Sinkron manual jalan di latar: deploy/restart api di tengah jalan memutusnya diam-diam
+   (`accurate_sync_state` tak tertulis) — jangan merge ke main sampai `sinkron.last_run_ok` terisi; aman diulang.
+4. Hasil wajar → tambahkan `AP_PURCHASE_INVOICE_SYNC_ENABLED=true` di `.env.prod`, restart
+   `pm2 restart ecosystem.config.cjs --only wrg-prod-api --update-env` (restart biasa tak membaca `.env.prod`); cek `pm2 env`.
+5. **Sync Fitur**, lalu centang `ap-three-way` untuk grup Finance & Purchasing. Sebelum itu hanya admin/superuser.
 
 ## 6. Di luar scope / catatan
 
