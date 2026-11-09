@@ -33,6 +33,7 @@ import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
+import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
@@ -253,6 +254,15 @@ export const NAV: NavGroup[] = [
         title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
         feature: "pricelist-setup", show: canEditPricelistSetup,
       },
+    ],
+  },
+  {
+    // Domain BUSINESS per board Roadmap (arahan user 15 Okt 2026) — dipisah dari "Sales".
+    label: "Business",
+    items: [
+      // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
+      // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
     ],
   },
   {

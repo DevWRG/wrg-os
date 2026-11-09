@@ -306,6 +306,7 @@ import {
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
+import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
@@ -2535,6 +2536,15 @@ app.get("/bukti-pembayaran/:id/file", async (c) => {
       "x-content-type-options": "nosniff",
     });
   } catch (e) { return buktiErr(c, e); }
+});
+
+// F48 — PMF Scorecard fase 1: win-rate deal per brand x region per kuartal. Read-only (SELECT),
+// tanpa LLM/WA/snapshot. ?tahun=YYYY&kuartal=1-4 opsional (default kuartal WIB berjalan).
+app.get("/pmf-scorecard", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const p = bacaParamKuartal(c.req.query("tahun"), c.req.query("kuartal"));
+  if (typeof p === "string") return c.json({ error: p }, 400);
+  return c.json(await getPmfScorecard(p.tahun, p.kuartal));
 });
 
 // F21 — pacing sales bulan berjalan per region (faktur netto + SO terbuka vs
