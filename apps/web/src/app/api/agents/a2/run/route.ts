@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /agents/a2/run (A2 AR Aging Watch).
 export async function POST() {
+  // Menjalankan agen = panggilan LLM berbayar → admin/superuser saja.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   try {
     const res = await gatewayFetch("/agents/a2/run", { method: "POST" });
     const data = await res.json();

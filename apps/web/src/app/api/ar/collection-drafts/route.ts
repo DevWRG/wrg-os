@@ -1,9 +1,12 @@
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /ar/collection-drafts?status= (draft penagihan A3).
 export async function GET(req: Request) {
+  const g = await requireFeature("/collection-drafts", "view");
+  if (!g.ok) return g.res;
   const status = new URL(req.url).searchParams.get("status");
   const qs = status ? `?status=${encodeURIComponent(status)}` : "";
   try {
