@@ -79,7 +79,9 @@ export const samaDesimal = (a: unknown, b: unknown): boolean => {
 const normSatuan = (u: string | null | undefined): string => (u ?? "").trim().toLowerCase();
 
 /**
- * Bentuk baku diskon Accurate ('', '0', '35', '10+5', '12,5'?). Tak ada diskon → "0".
+ * Bentuk baku diskon Accurate ('', '0', '35', '10+5', '47,5'). Tak ada diskon → "0".
+ * Koma desimal gaya Indonesia ('47,5') = '47.5' — bagian diskon berupa persen, jadi koma
+ * tak mungkin pemisah ribuan.
  * Bagian tak terbaca membuat hasil null (tak bisa dibandingkan, jangan dianggap sama).
  */
 export function bakukanDiskon(raw: string | null | undefined): string | null {
@@ -87,7 +89,7 @@ export function bakukanDiskon(raw: string | null | undefined): string | null {
   const bagian = raw.trim().split("+").map((p) => p.trim()).filter((p) => p !== "");
   const out: string[] = [];
   for (const p of bagian) {
-    const d = keDesimal(p);
+    const d = keDesimal(/^\d+,\d+$/.test(p) ? p.replace(",", ".") : p);
     if (d === null) return null;
     if (d !== 0n) out.push(d.toString());
   }
