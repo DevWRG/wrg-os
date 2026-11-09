@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api /parse/plan (parser #PLAN domain).
 export async function POST(req: Request) {
+  // Alat uji parser, tak dipakai UI — admin saja.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

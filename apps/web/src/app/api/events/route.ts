@@ -1,4 +1,5 @@
 import type { EventEnvelope } from "@wrg/types";
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -6,6 +7,9 @@ export const dynamic = "force-dynamic";
 // Teruskan EventEnvelope ke backend domain (apps/api) yang memvalidasi & memproses.
 // Validasi penuh ada di backend (isEventEnvelope); gateway hanya meneruskan.
 export async function POST(req: Request) {
+  // Jalur masuk event mentah, tak dipakai UI — admin saja (cegah suntik data).
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

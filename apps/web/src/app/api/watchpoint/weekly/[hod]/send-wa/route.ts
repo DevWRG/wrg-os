@@ -1,3 +1,4 @@
+import { requireHodOrAdmin } from "@/lib/admin-guard";
 import { gatewayFetch, relay } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -5,6 +6,9 @@ export const dynamic = "force-dynamic";
 // Gateway → apps/api POST /watchpoint/weekly/:hod/send-wa
 // (ringkasan WatchPoint MINGGUAN 1 HoD via WA; patuh WA_DRY_RUN di backend).
 export async function POST(req: Request, ctx: { params: Promise<{ hod: string }> }) {
+  // Kirim ringkasan WatchPoint lewat WA — sama dengan gerbang snapshot mingguan.
+  const g = await requireHodOrAdmin();
+  if (!g.ok) return g.res;
   const { hod } = await ctx.params;
   let body: unknown;
   try {

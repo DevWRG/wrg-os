@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /wa/messages (feeder raw WhatsApp → wa_message).
 export async function POST(req: Request) {
+  // Feeder pesan WA mentah, tak dipakai UI — admin saja (cegah suntik pesan palsu).
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

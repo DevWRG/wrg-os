@@ -1,9 +1,12 @@
+import { requireDirekturOrAdmin, requireHodOrAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET/POST /watchpoint/territory (CRUD mapping HoD→cabang).
 export async function GET() {
+  const g = await requireHodOrAdmin();
+  if (!g.ok) return g.res;
   try {
     const res = await gatewayFetch("/watchpoint/territory");
     const data = await res.json();
@@ -14,6 +17,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  // Peta HoD→cabang menentukan angka WatchPoint per HoD — ubah = Direktur/admin (sama dgn target).
+  const g = await requireDirekturOrAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try { body = await req.json(); } catch { return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
   try {
