@@ -12,6 +12,7 @@ import {
   Loader2,
   Minus,
   PackageSearch,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
@@ -125,6 +126,22 @@ export default function SphNewPage() {
   // Diskon tambahan seluruh SPH (opsional).
   const [dtTipe, setDtTipe] = useState<TipeDiskonTambahan>("persen");
   const [dtNilai, setDtNilai] = useState<number>(0);
+  // Lompat dari Tinjau ke kolom diskon di langkah Produk: id elemen yang difokus setelah pindah langkah.
+  const [fokusDiskon, setFokusDiskon] = useState<string | null>(null);
+  const keDiskon = (id: string) => {
+    setFokusDiskon(id);
+    setStep(2);
+  };
+  useEffect(() => {
+    if (step !== 2 || !fokusDiskon) return;
+    const raf = requestAnimationFrame(() => {
+      const el = document.getElementById(fokusDiskon);
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      (el as HTMLInputElement | null)?.focus({ preventScroll: true });
+      setFokusDiskon(null);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [step, fokusDiskon]);
 
   useEffect(() => {
     let aktif = true;
@@ -421,7 +438,10 @@ export default function SphNewPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Produk di SPH ({cart.length})</CardTitle>
-                  <CardDescription>Atur jumlah dan diskon. Diskon tidak boleh melebihi batas tiap produk.</CardDescription>
+                  <CardDescription>
+                    Atur jumlah dan diskon per produk di kolom <span className="text-foreground font-medium">Diskon</span>. Diskon untuk
+                    seluruh SPH ada di kartu <span className="text-foreground font-medium">Diskon tambahan</span> di bawah.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {cart.length === 0 ? (
@@ -644,9 +664,14 @@ export default function SphNewPage() {
 
           {step === 4 && customer && (
             <Card>
-              <CardHeader>
-                <CardTitle>Tinjau sebelum disimpan</CardTitle>
-                <CardDescription>Periksa sekali lagi. Produk & harga tidak bisa diubah setelah disimpan.</CardDescription>
+              <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+                <div className="min-w-0 space-y-1.5">
+                  <CardTitle>Tinjau sebelum disimpan</CardTitle>
+                  <CardDescription>Periksa sekali lagi. Produk & harga tidak bisa diubah setelah disimpan.</CardDescription>
+                </div>
+                <Button variant="soft" size="sm" onClick={() => keDiskon(baris[0] ? `disk-${baris[0].item.id}` : "sph-dt")}>
+                  <Pencil /> Ubah diskon
+                </Button>
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="rounded-lg border p-4 text-sm">
@@ -674,13 +699,27 @@ export default function SphNewPage() {
                               {r.item.kemasan && <span className="text-muted-foreground"> · {r.item.kemasan}</span>}
                               <span className="text-muted-foreground block text-xs tabular-nums sm:hidden">
                                 {rupiah(r.hasil.hargaNett)}/unit{r.diskonPersen > 0 ? ` · diskon ${r.diskonPersen}%` : ""}
+                                <button type="button" onClick={() => keDiskon(`disk-${r.item.id}`)} className="text-primary-dark ml-1.5 underline">
+                                  ubah
+                                </button>
                               </span>
                               {(r.hasil.tier === "hod" || r.hasil.tier === "direktur") && (
                                 <TierBadge tier={r.hasil.tier} className="mt-1" />
                               )}
                             </td>
                             <td className="py-1.5 pr-2 text-right tabular-nums">{r.qty}</td>
-                            <td className="hidden py-1.5 pr-2 text-right tabular-nums sm:table-cell">{r.diskonPersen > 0 ? `${r.diskonPersen}%` : "–"}</td>
+                            <td className="hidden py-1.5 pr-2 text-right tabular-nums sm:table-cell">
+                              <button
+                                type="button"
+                                onClick={() => keDiskon(`disk-${r.item.id}`)}
+                                className="text-primary-dark inline-flex items-center gap-1 rounded px-1 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+                                aria-label={`Ubah diskon ${r.item.nama}`}
+                                title="Ubah diskon"
+                              >
+                                {r.diskonPersen > 0 ? `${r.diskonPersen}%` : "–"}
+                                <Pencil className="size-3" />
+                              </button>
+                            </td>
                             <td className="hidden py-1.5 pr-2 text-right tabular-nums sm:table-cell">{rupiah(r.hasil.hargaNett)}</td>
                             <td className="py-1.5 text-right tabular-nums">{rupiah(r.hasil.jumlah)}</td>
                           </tr>
@@ -698,6 +737,13 @@ export default function SphNewPage() {
                       <BarisAngka label="PPN 11%" nilai={rupiah(ringkas.ppn)} />
                       <BarisAngka label="Total" nilai={rupiah(ringkas.total)} tebal />
                     </dl>
+                    {ringkas.diskonTambahan === 0 && (
+                      <p className="mt-1 text-right text-xs">
+                        <button type="button" onClick={() => keDiskon("sph-dt")} className="text-primary-dark hover:underline">
+                          + Tambah diskon untuk seluruh SPH
+                        </button>
+                      </p>
+                    )}
                   </div>
                   <dl className="mt-4 grid gap-x-4 gap-y-1.5 border-t pt-3 sm:grid-cols-[11rem_1fr]">
                     {KUNCI.map((k) => (
