@@ -1,9 +1,12 @@
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /hitl/resolve (approve/reject match ambiguous).
 export async function POST(req: Request) {
+  const g = await requireFeature("/hitl", "edit");
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

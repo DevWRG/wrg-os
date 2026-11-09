@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api (domain) → services/ai /resume (resume eksekutif 8-section).
 export async function POST(req: Request) {
+  // Memicu LLM berbayar dan tak dipakai UI — admin saja.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

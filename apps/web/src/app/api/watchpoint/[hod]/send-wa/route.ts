@@ -1,9 +1,13 @@
+import { requireHodOrAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /watchpoint/:hod/send-wa (kirim ringkasan WatchPoint HoD via WA).
 export async function POST(req: Request, ctx: { params: Promise<{ hod: string }> }) {
+  // Kirim ringkasan WatchPoint lewat WA — sama dengan gerbang snapshot mingguan.
+  const g = await requireHodOrAdmin();
+  if (!g.ok) return g.res;
   const { hod } = await ctx.params;
   let body: unknown;
   try {
