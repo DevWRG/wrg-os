@@ -56,6 +56,11 @@ import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 // menang (lihat navVisible di bawah + canOrLegacy di lib/perms).
 export interface NavItem {
   title: string; url: string; icon: LucideIcon; badge?: string; exact?: boolean;
+  // Prefix URL LAIN yang juga dianggap "sedang di menu ini" — dipakai saat sub-halaman
+  // sebuah fitur hidup di route sendiri, bukan di bawah `url` (mis. "/sph/new" dibuat
+  // dari menu "Sales Docs" tapi beda prefix — /sph tak startsWith /sales-docs).
+  // Ikut dipakai findNavItem → rute-rute ini ikut gerbang izin menu tsb.
+  matchPrefix?: string[];
   show?: (me: AccessUser | null) => boolean;
   // Menu KHUSUS admin/superuser: data/utilitas internal yang server-nya hanya melayani
   // admin. Matriks Akses Grup TIDAK bisa membukanya untuk grup lain dan menu ini tak
@@ -159,7 +164,7 @@ export const NAV: NavGroup[] = [
       { title: "Customers", url: "/customers", icon: Building2 },
       { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
       { title: "AR Aging", url: "/ar", icon: Receipt },
-      { title: "Sales Docs", url: "/sales-docs", icon: FileText },
+      { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
       // Simulator KSO — running cost alat lab per test, hasil penggabungan
       // aplikasi terpisah `runningcost-zybio` jadi satu menu di sini. Beda dari
@@ -521,10 +526,21 @@ export function homePath(me: AccessUser | null): string {
 export function findNavItem(pathname: string): NavItem | null {
   const path = pathname.replace(/\/+$/, "") || "/";
   let best: NavItem | null = null;
+  let bestLen = -1;
   for (const g of NAV) {
     for (const it of g.items) {
-      if (path !== it.url && !path.startsWith(`${it.url}/`)) continue;
-      if (!best || it.url.length > best.url.length) best = it;
+      // `matchPrefix` WAJIB ikut dipertimbangkan, bukan cuma `url`: gate rute di
+      // (dashboard)/layout.tsx memakai fungsi ini, jadi prefiks yang tak ikut
+      // dihitung = rute yang TIDAK di-gate sama sekali (findNavItem → null).
+      // Mis. "/sph/new" (form SPH) milik menu Sales Docs lewat matchPrefix.
+      for (const p of [it.url, ...(it.matchPrefix ?? [])]) {
+        if (path !== p && !path.startsWith(`${p}/`)) continue;
+        // prefiks terpanjang menang (mis. "/insentif/tim" mengalahkan "/insentif")
+        if (p.length > bestLen) {
+          best = it;
+          bestLen = p.length;
+        }
+      }
     }
   }
   return best;

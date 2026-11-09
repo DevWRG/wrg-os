@@ -128,6 +128,23 @@ import {
   sendSalesDoc,
   cancelSalesDoc,
 } from "./repo/salesdoc.js";
+import {
+  createSphDraft,
+  getSphDetail,
+  hodReviewSph,
+  direkturSetujuiSph,
+  confirmSphVariant,
+  pelakuDariUser,
+  getPengaturanSph,
+  ubahPengaturanSph,
+  ubahSyaratSph,
+  kandidatPenandaTangan,
+  setPenandaTanganSph,
+  listSph,
+  konteksSph,
+  kontakWaSph,
+} from "./repo/sph.js";
+import { namaFileSph, sphPdf } from "./repo/sph-pdf.js";
 import { getProductIntelligence } from "./repo/product.js";
 import { listAnnotations } from "./repo/sentiment.js";
 import { getNetworkInput, computeNetwork } from "./repo/network.js";
@@ -155,6 +172,7 @@ import {
   listSetup as listPricebookSetup, setupSummary as pricebookSetupSummary,
   updateSetupRow as updatePricebookSetupRow, publishSetup as publishPricebookSetup,
   unpublishSetup as unpublishPricebookSetup, listPublishedKeagenan,
+  pratinjauMassalDiskon, terapkanMassalDiskon,
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
 import { pricelistPdf } from "./repo/pricelist-pdf.js";
@@ -1825,17 +1843,23 @@ app.get("/sales/docs", async (c) => {
 
 // Siklus kirim A6 (aksi manusia, Layer 5): approve → send → (atau cancel).
 // Gerbang izin (edit /sales-docs) di BFF; BFF menimpa approver_id dgn pelaku
-// sesi + meneruskan x-user-id. Tujuan send dibatasi kontak WA customer (repo).
+// sesi + meneruskan x-user-id. Pelaku dari x-user-id menang atas body.
 app.post("/sales/docs/:id/approve", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { approver_id?: string } = {};
+  let body: { approver_id?: string; penanda_tangan_user_id?: string; penanda_tangan_jabatan?: string } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await approveSalesDoc(c.req.param("id"), body.approver_id);
-  return c.json(r, r.ok ? 200 : 400);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  // SPH: pilihan penanda tangan (opsional, default approver) — divalidasi
+  // terhadap daftar kandidat di finalisasiSph, bukan dipercaya mentah.
+  const r = await approveSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id, pelaku, {
+    userId: body.penanda_tangan_user_id,
+    jabatan: body.penanda_tangan_jabatan,
+  });
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 app.post("/sales/docs/:id/send", async (c) => {
@@ -1847,7 +1871,8 @@ app.post("/sales/docs/:id/send", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.to) return c.json({ error: "body.to (tujuan) wajib" }, 400);
-  const r = await sendSalesDoc(c.req.param("id"), body.to, body.approver_id);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await sendSalesDoc(c.req.param("id"), body.to, pelaku?.nama ?? body.approver_id);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -1859,8 +1884,226 @@ app.post("/sales/docs/:id/cancel", async (c) => {
   } catch {
     /* body opsional */
   }
-  const r = await cancelSalesDoc(c.req.param("id"), body.approver_id);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await cancelSalesDoc(c.req.param("id"), pelaku?.nama ?? body.approver_id);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+// F15 SPH Generator — form intake AM: customer & item dipilih PERSIS dari
+// katalog (accurate_customer + product_pricelist), bukan ketik nama. Body:
+// { deal_id?, customer_id (WAJIB, id accurate_customer), am_id?, periode?,
+//   items: [{pricelist_item_id, qty, diskon_requested}], created_by? }.
+// customer_name tidak dikirim/diabaikan — di-derive dari mirror.
+app.post("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Parameters<typeof createSphDraft>[0] | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  // `customer_id` WAJIB di jalur ini. Endpoint ini cuma dipakai form web
+  // /sph/new (lewat BFF /api/sph), dan sejak "link data existing" form itu
+  // memaksa memilih dari katalog Accurate. Jalur WA `#SPH` TIDAK lewat sini —
+  // ia memanggil createSphDraft langsung dgn nama teks dari pesan, jadi
+  // kewajiban di sini tidak mematikannya.
+  //
+  // customer_name TIDAK lagi diwajibkan: nama di-derive server-side dari
+  // mirror di createSphDraft, jadi nama kiriman klien tak dipercaya.
+  // Pengecualian: calon customer yang BELUM ada di Accurate (`customer_baru: true`)
+  // — nama ketikan dipakai (dirapikan, 3–120 huruf), customer_id dikosongkan.
+  // SPH semacam ini tak punya kontak di Accounts, jadi tak bisa dikirim lewat WA.
+  const calonBaru = (body as { customer_baru?: unknown } | undefined)?.customer_baru === true;
+  if (body && calonBaru) {
+    const nama = String(body.customer_name ?? "").trim().replace(/\s+/g, " ");
+    if (nama.length < 3 || nama.length > 120) {
+      return c.json({ error: "nama calon customer wajib 3–120 huruf" }, 400);
+    }
+    body = { ...body, customer_id: null, customer_name: nama };
+  } else if (!body?.customer_id) {
+    return c.json({ error: "customer_id wajib — pilih customer dari katalog Accurate" }, 400);
+  }
+  // Pembuat = pelaku sesi (x-user-id dari BFF), bukan created_by kiriman klien.
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await createSphDraft({
+    ...body,
+    created_by: pelaku?.nama ?? body.created_by ?? null,
+    created_by_user_id: pelaku?.userId ?? null,
+    created_by_am_id: pelaku?.amId ?? null,
+  });
+  return c.json(r, r.ok ? 201 : 400);
+});
+
+// F15 — daftar SPH utk halaman /sph: total, pembuat, hitungan per status, dan
+// aksi yang boleh dilakukan PENONTON (lib/sph-alur.ts) supaya layar tak menebak
+// izin. Penonton = x-user-id (sesi, dari BFF); x-bisa-edit = izin edit menu
+// Sales Docs yang dihitung BFF dari matriks akses. Keduanya hanya mengubah
+// PETUNJUK di layar — gerbang aksi tetap di route aksi masing-masing.
+// Query: status (draft|hod_review|approved|sent|canceled|semua|saya), q, limit.
+app.get("/sph", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const r = await listSph(pelaku, c.req.header("x-bisa-edit") === "1", {
+    status: c.req.query("status") ?? null,
+    q: c.req.query("q") ?? null,
+    limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+  });
+  return c.json(r);
+});
+
+// F15 dokumen cetak — pengaturan penomoran + syarat default (migrasi 300).
+// Didaftarkan SEBELUM /sph/:id supaya "pengaturan" tak dibaca sbg id.
+// Ubah: hanya admin/superuser (dicek BFF + ubahPengaturanSph dari x-user-id).
+app.get("/sph/pengaturan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const p = await getPengaturanSph();
+  if (!p) return c.json({ error: "pengaturan SPH belum ada (migrasi 300 belum dijalankan)" }, 404);
+  return c.json(p);
+});
+
+app.put("/sph/pengaturan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: Record<string, unknown> = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await ubahPengaturanSph(body, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+app.get("/sph/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(detail);
+});
+
+// PDF resmi SPH (A4, kop surat). Draft tetap bisa dicetak, bertanda DRAF &
+// tanpa nomor. `oleh` (nama pencetak) diisi BFF dari sesi. inline → dibuka di
+// tab browser, tetap bisa diunduh dari viewer.
+app.get("/sph/:id/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const detail = await getSphDetail(c.req.param("id"));
+  if (!detail) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  const pdf = await sphPdf(detail, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `inline; filename="${namaFileSph(detail)}"`,
+  });
+});
+
+// Syarat per SPH (draft/hod_review saja). Body: { pembayaran?, pengiriman?,
+// masaBerlaku?, harga? }. Izin edit Sales Docs dicek BFF.
+app.put("/sph/:id/syarat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await ubahSyaratSph(c.req.param("id"), body, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// F15 — konteks penonton utk halaman detail: aksi yang boleh + alasannya,
+// nama pembuat, riwayat (audit_log). Sama dgn GET /sph: hanya penjelas layar.
+app.get("/sph/:id/konteks", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  const k = await konteksSph(c.req.param("id"), pelaku, c.req.header("x-bisa-edit") === "1");
+  if (!k) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json(k);
+});
+
+// F15 — pilihan tujuan kirim SPH: kontak WA customer di Accounts (sumber sama
+// dgn pemeriksaan tujuan di POST /sales/docs/:id/send). Gerbang edit di BFF.
+app.get("/sph/:id/kontak", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const k = await kontakWaSph(c.req.param("id"));
+  if (!k) return c.json({ error: "dokumen tidak ditemukan" }, 404);
+  return c.json({ kontak: k });
+});
+
+// Daftar pilihan penanda tangan (approver sesi ditandai 'approver' = default).
+app.get("/sph/:id/penanda-tangan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  return c.json({ kandidat: await kandidatPenandaTangan(c.req.param("id"), pelaku) });
+});
+
+// Ganti penanda tangan (hod_review/approved). Body: { user_id, jabatan? }.
+app.put("/sph/:id/penanda-tangan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { user_id?: string; jabatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await setPenandaTanganSph(c.req.param("id"), { userId: body.user_id, jabatan: body.jabatan }, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// Tahap 1/2 approval SPH (HOD Business). draft → hod_review. Tahap 2 pakai
+// endpoint sama dgn doc_type lain: POST /sales/docs/:id/approve.
+// Peninjau = pelaku sesi (x-user-id); syarat HoD Business aktif / admin /
+// superuser + bukan pembuat ditegakkan di hodReviewSph. Body (migrasi 301):
+// { setuju_pengecualian?: boolean — wajib true bila ada diskon di atas batas,
+//   diskon_tambahan?: {tipe, nilai} | null — hanya boleh MENURUNKAN }.
+app.post("/sph/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  let body: Record<string, unknown> = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  const r = await hodReviewSph(c.req.param("id"), pelaku, {
+    setujuPengecualian: body.setuju_pengecualian === true,
+    diskonTambahan: "diskon_tambahan" in body ? body.diskon_tambahan : undefined,
+  });
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// Persetujuan Direktur atas diskon jenjang "direktur" (migrasi 301), di antara
+// review HoD dan approve tahap 2. Pelaku = sesi; role direktur / superuser,
+// bukan pembuat — ditegakkan di direkturSetujuiSph. Body diabaikan.
+app.post("/sph/:id/direktur", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await direkturSetujuiSph(c.req.param("id"), pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
+});
+
+// HANDOVER §6 — Admin Penawaran konfirmasi 1 baris item nama-varian-kembar.
+// Body: { line_item_id }. Wajib dilakukan tiap baris unconfirmed sebelum
+// POST /sales/docs/:id/approve bisa lolos utk SPH. Pelaku = sesi (x-user-id),
+// pembuat SPH tak boleh mengonfirmasi SPH-nya sendiri.
+app.post("/sph/:id/confirm-variant", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { line_item_id?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.line_item_id) return c.json({ error: "line_item_id wajib" }, 400);
+  const pelaku = await pelakuDariUser(c.req.header("x-user-id"));
+  if (!pelaku) return c.json({ error: "identitas pengguna (sesi) wajib" }, 401);
+  const r = await confirmSphVariant(c.req.param("id"), body.line_item_id, pelaku);
+  return c.json(r, r.ok ? 200 : r.forbidden ? 403 : 400);
 });
 
 // A7 Product Intelligence — agregasi intelijen produk dari pipeline (D1).
@@ -4091,6 +4334,7 @@ app.get("/pricebook/items", async (c) => {
   const rows = await listPricebookItems({
     periode: q.periode, lini: q.lini, brand: q.brand, kategori: q.kategori,
     q: q.q, limit: q.limit ? Number(q.limit) : undefined,
+    efektif: q.efektif === "1",
   });
   return c.json({ count: rows.length, rows });
 });
@@ -4313,6 +4557,34 @@ app.patch("/pricebook/setup", async (c) => {
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid JSON body" }, 400); }
   const res = await updatePricebookSetupRow(body);
   return res.ok ? c.json(res.row) : c.json({ error: res.error }, 400);
+});
+
+// Atur batas diskon massal per brand/kategori. Gate SAMA dgn PATCH satu baris
+// (BFF canEditPricelistSetup); updatedBy diisi BFF dari sesi. GET = pratinjau.
+// Query/body: brand?, kategori?, lini?, periode?, diskon (fraksi) | null = kembali ke Price Book.
+const diskonMassal = (v: unknown): number | null =>
+  v === null || v === undefined || v === "" || v === "null" ? null : Number(v);
+app.get("/pricebook/setup/massal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const r = await pratinjauMassalDiskon({
+    periode: q.periode || undefined, brand: q.brand, kategori: q.kategori, lini: q.lini, diskon: diskonMassal(q.diskon),
+  });
+  return r.ok ? c.json(r.hasil) : c.json({ error: r.error }, 400);
+});
+
+app.patch("/pricebook/setup/massal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => ({}) as Record<string, unknown>);
+  const r = await terapkanMassalDiskon({
+    periode: (b.periode as string) || undefined,
+    brand: typeof b.brand === "string" ? b.brand : null,
+    kategori: typeof b.kategori === "string" ? b.kategori : null,
+    lini: typeof b.lini === "string" ? b.lini : null,
+    diskon: diskonMassal(b.diskon),
+    updatedBy: (b.updatedBy as string) ?? null,
+  });
+  return r.ok ? c.json(r) : c.json({ error: r.error }, 400);
 });
 
 app.post("/pricebook/setup/publish", async (c) => {
@@ -4539,7 +4811,9 @@ app.get("/accurate/:entity", async (c) => {
     return c.json({ error: "entity harus customers|items|branches|vendors" }, 400);
   }
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
-  const rows = await listMirror(entity, limit);
+  // ?q= → cari by no/nama DI DB (sumber dropdown pilih-dari-katalog, mis. form SPH).
+  // Tanpa q, perilaku lama dipertahankan: potongan terbaru by last_synced_at.
+  const rows = await listMirror(entity, limit, c.req.query("q") || undefined);
   return c.json({ entity, count: rows.length, rows });
 });
 

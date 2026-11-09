@@ -1,7 +1,7 @@
-// Sales Docs (A6) — body yang diteruskan BFF ke apps/api.
-// Identitas pelaku (approver_id; field identitas lain ikut dibuang)
+// Sales Docs (A6) + SPH (F15) — body yang diteruskan BFF ke apps/api.
+// Identitas pelaku (approver_id / reviewer_id / confirmed_by / created_by)
 // SELALU dari sesi: field kiriman klien dibuang lalu diisi actorName(me).
-// x-user-id juga diteruskan ke apps/api (jejak pelaku sesi).
+// apps/api juga meresolusi pelaku dari x-user-id; ini lapisan kedua.
 
 export const FIELD_IDENTITAS = ["approver_id", "reviewer_id", "confirmed_by", "created_by"] as const;
 export type FieldIdentitas = (typeof FIELD_IDENTITAS)[number];

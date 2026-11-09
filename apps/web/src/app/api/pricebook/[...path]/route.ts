@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // Tiga tingkat gate, sama dengan yang dipakai halaman:
 //   items / published / periode → semua user berizin fitur 'pricebook'
 //   summary                     → Direktur/admin/superuser
-//   setup*                      → HoD Business / Purchasing / admin
+//   setup* (termasuk setup/massal) → HoD Business / Purchasing / admin
 //
 // `setup` WAJIB dipisah karena isinya HPP & margin. Sebelumnya seluruh sub-path
 // lolos dengan canViewPricebook saja, jadi siapa pun yang boleh membuka Price Book
@@ -40,7 +40,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   }
 }
 
-// Setel harga satu baris price book (HPP · Price List · Diskon).
+// Setel harga satu baris price book (HPP · Price List · Diskon), atau batas
+// diskon MASSAL per brand/kategori (setup/massal). Keduanya gerbang & jejak
+// penyetel yang sama — massal hanyalah setelan Diskon Maks untuk banyak baris
+// sekaligus (status draft/published tak disentuh, sama dgn simpan satu baris).
 export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
@@ -49,12 +52,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ path: string[
   }
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
-  if (sub !== "setup") return Response.json({ error: "route tak ada" }, { status: 404 });
+  if (sub !== "setup" && sub !== "setup/massal") return Response.json({ error: "route tak ada" }, { status: 404 });
 
   let body: Record<string, unknown>;
   try { body = await req.json(); } catch { return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
   try {
-    return relay(await gatewayFetch("/pricebook/setup", {
+    return relay(await gatewayFetch(`/pricebook/${sub}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       // Jejak penyetel diambil dari SESI, bukan dari body — kalau dari body, siapa

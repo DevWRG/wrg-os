@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /sales/docs/:id/send (A6 cycle) — send — tujuan dibatasi kontak WA customer di Accounts (dicek apps/api).
 // Gerbang: edit menu Sales Docs. approver_id = pelaku sesi (body diabaikan),
-// x-user-id ikut diteruskan ke apps/api.
+// x-user-id diteruskan agar apps/api meresolusi pelaku sendiri.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
