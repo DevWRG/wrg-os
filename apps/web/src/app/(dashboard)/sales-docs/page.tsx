@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { StatusSphBadge } from "@/components/sph/sph-ui";
 
 interface SalesDoc {
   id: string;
@@ -17,14 +19,35 @@ interface SalesDoc {
   status: string;
   model_used: string | null;
   approved_by: string | null;
+  hod_reviewed_by: string | null;
+  nomor_dokumen?: string | null;
   created_at: string;
 }
 
-const STATUSES = ["all", "draft", "approved", "sent", "canceled"] as const;
+const STATUSES = ["all", "draft", "hod_review", "approved", "sent", "canceled"] as const;
 type StatusFilter = (typeof STATUSES)[number];
+
+// Label tombol saring. SPH punya alur 2 tahap sendiri (draft = menunggu review
+// HoD, hod_review = menunggu approve) dan dikerjakan di halaman /sph/[id];
+// doc_type lain tetap 1 tahap di halaman ini.
+const LABEL_FILTER: Record<StatusFilter, string> = {
+  all: "Semua",
+  draft: "Draf / Review",
+  hod_review: "Menunggu Approve",
+  approved: "Disetujui",
+  sent: "Terkirim",
+  canceled: "Dibatalkan",
+};
+const LABEL_STATUS: Record<string, string> = {
+  draft: "Draf",
+  approved: "Disetujui",
+  sent: "Terkirim",
+  canceled: "Dibatalkan",
+};
 
 const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   draft: "secondary",
+  hod_review: "secondary",
   approved: "default",
   sent: "outline",
   canceled: "destructive",
@@ -82,18 +105,22 @@ export default function SalesDocsPage() {
     };
   }, []);
 
+  // Aksi untuk doc_type NON-SPH (offering/presentation/MOU). SPH dikerjakan di
+  // halaman detail /sph/[id] (review HoD, konfirmasi varian, approve + nomor +
+  // penanda tangan, kirim ke kontak WA customer, batal).
   async function act(id: string, action: "approve" | "send" | "cancel") {
     setBusy(id);
     setError(null);
     try {
-      // Pelaku (approver) diisi server dari sesi — tak dikirim dari sini.
+      const path = `/api/sales/docs/${id}/${action}`;
+      // Pelaku (approver/reviewer) diisi server dari sesi — tak dikirim dari sini.
       const body: Record<string, string> = {};
       if (action === "send") {
         const to = (toInputs[id] ?? "").trim();
         if (!to) throw new Error("isi nomor WA kontak customer dulu");
         body.to = to;
       }
-      const res = await fetch(`/api/sales/docs/${id}/${action}`, {
+      const res = await fetch(path, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -114,10 +141,10 @@ export default function SalesDocsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sales Docs</h1>
           <p className="text-muted-foreground">
-            Dokumen penjualan A6 (SPH / offering / presentation / MOU) — review, approve, kirim.
+            Dokumen penjualan A6 (SPH / offering / presentation / MOU). SPH diproses di halaman SPH.
           </p>
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {STATUSES.map((s) => (
             <Button
               key={s}
@@ -128,9 +155,15 @@ export default function SalesDocsPage() {
                 void load(s);
               }}
             >
-              {s === "all" ? "Semua" : s}
+              {LABEL_FILTER[s]}
             </Button>
           ))}
+          <Button size="sm" variant="soft" className="ml-2" render={<Link href="/sph" />}>
+            Daftar SPH
+          </Button>
+          <Button size="sm" render={<Link href="/sph/new" />}>
+            + Buat SPH
+          </Button>
         </div>
       </div>
 
@@ -150,13 +183,55 @@ export default function SalesDocsPage() {
                     {d.customer_name ?? "—"} · {d.doc_type ?? "doc"}
                   </p>
                 </div>
-                <Badge variant={STATUS_BADGE[d.status] ?? "secondary"}>{d.status}</Badge>
+                {d.doc_type === "sph" ? (
+                  <StatusSphBadge status={d.status} />
+                ) : (
+                  <Badge variant={STATUS_BADGE[d.status] ?? "secondary"}>{LABEL_STATUS[d.status] ?? d.status}</Badge>
+                )}
               </CardHeader>
               <CardContent className="space-y-3">
-                <pre className="bg-muted/50 max-h-48 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap">
-                  {d.draft_text}
-                </pre>
-                {d.status === "draft" && (
+                {d.doc_type === "sph" ? (
+                  // F15: semua aksi SPH (review HoD, konfirmasi varian, approve +
+                  // nomor + penanda tangan, kirim, batal) ada di halaman detail.
+                  <div className="space-y-3">
+                    <p className="text-muted-foreground text-xs">
+                      {d.nomor_dokumen ? (
+                        <span className="text-foreground font-mono">{d.nomor_dokumen}</span>
+                      ) : (
+                        "DRAF — belum bernomor"
+                      )}
+                      {d.hod_reviewed_by ? ` · review HoD: ${d.hod_reviewed_by}` : ""}
+                      {d.approved_by && d.status !== "canceled" ? ` · disetujui: ${d.approved_by}` : ""}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" className="flex-1" render={<Link href={`/sph/${d.id}`} />}>
+                        Buka SPH
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="soft"
+                        render={<a href={`/api/sph/${d.id}/pdf`} target="_blank" rel="noopener noreferrer" />}
+                      >
+                        Lihat PDF
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                  <pre className="bg-background max-h-48 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
+                    {d.draft_text}
+                  </pre>
+                  <a
+                    href={`/api/export/sales-doc/${d.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary text-xs underline"
+                  >
+                    🖨️ Export / Print PDF
+                  </a>
+                  </>
+                )}
+                {d.doc_type !== "sph" && d.status === "draft" && (
                   <div className="flex gap-2">
                     <Button
                       size="sm"
@@ -176,7 +251,7 @@ export default function SalesDocsPage() {
                     </Button>
                   </div>
                 )}
-                {d.status === "approved" && (
+                {d.doc_type !== "sph" && d.status === "approved" && (
                   <div className="space-y-2">
                     <Input
                       placeholder="No. WA kontak customer di Accounts (mis. 0812xxxx)"
@@ -205,7 +280,7 @@ export default function SalesDocsPage() {
                     </div>
                   </div>
                 )}
-                {(d.status === "sent" || d.status === "canceled") && (
+                {d.doc_type !== "sph" && (d.status === "sent" || d.status === "canceled") && (
                   <p className="text-muted-foreground text-xs">
                     {d.status === "sent" ? "Terkirim" : "Dibatalkan"}
                     {d.approved_by ? ` · oleh ${d.approved_by}` : ""}

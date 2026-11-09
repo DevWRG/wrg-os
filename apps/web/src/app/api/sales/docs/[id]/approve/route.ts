@@ -4,9 +4,9 @@ import { bodyDenganPelaku } from "@/lib/sales-docs-access";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api POST /sales/docs/:id/approve (A6 cycle) — approve.
+// Gateway → apps/api POST /sales/docs/:id/approve (A6 cycle) — approve (SPH: tahap 2 finalisasi).
 // Gerbang: edit menu Sales Docs. approver_id = pelaku sesi (body diabaikan),
-// x-user-id ikut diteruskan ke apps/api.
+// x-user-id diteruskan agar apps/api meresolusi pelaku sendiri.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },

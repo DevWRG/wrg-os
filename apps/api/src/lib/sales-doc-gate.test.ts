@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { accountIdDariCustomer, nomorTujuan, tujuanDiizinkan } from "./sales-doc-gate.js";
+import {
+  accountIdDariCustomer,
+  bolehFinalSph,
+  bolehReviewSph,
+  hodBusiness,
+  nomorTujuan,
+  samaOrang,
+  tujuanDiizinkan,
+} from "./sales-doc-gate.js";
 
 test("nomorTujuan menormalkan format umum ke 62…", () => {
   assert.equal(nomorTujuan("0812-3456-7890"), "6281234567890");
@@ -41,4 +49,40 @@ test("accountIdDariCustomer: hanya id numerik (crm_contact.account_id bigint)", 
   assert.equal(accountIdDariCustomer("12a"), null);
   assert.equal(accountIdDariCustomer(null), null);
   assert.equal(accountIdDariCustomer("1".repeat(19)), null); // lewat batas bigint
+});
+
+test("samaOrang: cocok via user id, am_id, atau nama (tanpa beda huruf/spasi)", () => {
+  assert.equal(samaOrang({ userId: "u1" }, { userId: "u1" }), true);
+  assert.equal(samaOrang({ amId: "AM01" }, { amId: "am01" }), true);
+  assert.equal(samaOrang({ nama: "  Budi  Fixture " }, { nama: "budi fixture" }), true);
+  assert.equal(samaOrang({ userId: "u1", nama: "A" }, { userId: "u2", nama: "B" }), false);
+  assert.equal(samaOrang({ nama: "" }, { nama: "" }), false);
+  assert.equal(samaOrang({}, {}), false);
+});
+
+test("hodBusiness: peran diawali 'business' (case-insensitive)", () => {
+  assert.equal(hodBusiness("Business IVD"), true);
+  assert.equal(hodBusiness("business medical & HD"), true);
+  assert.equal(hodBusiness("Sales East"), false);
+  assert.equal(hodBusiness("Aftersales"), false);
+  assert.equal(hodBusiness(null), false);
+});
+
+test("bolehReviewSph: HoD Business aktif boleh, HoD lain/AM tidak", () => {
+  assert.equal(bolehReviewSph({ hodPeran: "Business IVD", role: "user", superuser: false, isCreator: false }).ok, true);
+  assert.equal(bolehReviewSph({ hodPeran: "Sales West", role: "user", superuser: false, isCreator: false }).ok, false);
+  assert.equal(bolehReviewSph({ hodPeran: null, role: "user", superuser: false, isCreator: false }).ok, false);
+});
+
+test("bolehReviewSph: admin/superuser anti-terkunci, tapi pembuat tetap ditolak", () => {
+  assert.equal(bolehReviewSph({ hodPeran: null, role: "admin", superuser: false, isCreator: false }).ok, true);
+  assert.equal(bolehReviewSph({ hodPeran: null, role: "user", superuser: true, isCreator: false }).ok, true);
+  const r = bolehReviewSph({ hodPeran: "Business IVD", role: "admin", superuser: true, isCreator: true });
+  assert.equal(r.ok, false);
+  assert.match(!r.ok ? r.error : "", /pembuat/);
+});
+
+test("bolehFinalSph: pembuat ditolak, orang lain boleh", () => {
+  assert.equal(bolehFinalSph({ isCreator: true }).ok, false);
+  assert.equal(bolehFinalSph({ isCreator: false }).ok, true);
 });

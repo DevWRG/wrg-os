@@ -275,10 +275,24 @@ export async function listDeliveryOrders(limit = 500) {
   return rows.map((r) => ({ ...r }));
 }
 
-export async function listMirror(entity: "customers" | "items" | "branches" | "vendors", limit = 100) {
+// `q` = pencarian by nomor/nama DI DB, dipakai dropdown pilih-dari-katalog
+// (form SPH: pilih customer). Tanpa `q` perilaku lama: potongan terbaru by
+// last_synced_at — arbitrer untuk dropdown, jadi pencarian harus di DB.
+// Diurutkan `name` saat mencari supaya hasilnya stabil.
+export async function listMirror(
+  entity: "customers" | "items" | "branches" | "vendors",
+  limit = 100,
+  q?: string,
+) {
   const sql = db();
   const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : entity === "vendors" ? sql`accurate_vendor` : sql`accurate_branch`;
-  const rows = await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
+  const cari = q?.trim() ? `%${q.trim()}%` : null;
+  const rows = cari
+    ? await sql`
+        SELECT * FROM ${table}
+        WHERE (no ILIKE ${cari} OR name ILIKE ${cari})
+        ORDER BY name LIMIT ${limit}`
+    : await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
   return rows.map((r) => {
     const { raw, ...rest } = r as Record<string, unknown>;
     void raw;

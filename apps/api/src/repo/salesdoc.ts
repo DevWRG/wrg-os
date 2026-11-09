@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { db } from "../db.js";
 import { sendViaWaGateway, type WaSendResult } from "../wasend.js";
+import { cekFinalSph, finalisasiSph, unconfirmedVariantItems, type PelakuSesi, type PilihanTtd } from "./sph.js";
 import { PESAN_TUJUAN_DITOLAK, accountIdDariCustomer, nomorTujuan, tujuanDiizinkan } from "../lib/sales-doc-gate.js";
 
 // D1 — sales_doc. Sumber: deal yang berada di stage ber-dokumen. A6 (Sales Doc
@@ -128,13 +129,56 @@ export interface DocActionResult {
   error?: string;
   status?: string;
   gateway?: WaSendResult;
+  forbidden?: boolean; // ditolak krn izin/identitas → route balas 403
 }
 
-export async function approveSalesDoc(id: string, approverId?: string): Promise<DocActionResult> {
+// approverId = nama pelaku dari SESI (BFF menimpa body). `pelaku` wajib utk SPH:
+// tahap 2 tak boleh dilakukan pembuat SPH-nya sendiri. `ttd` = pilihan penanda
+// tangan SPH (kosong → approver sendiri), lihat finalisasiSph.
+export async function approveSalesDoc(
+  id: string,
+  approverId?: string,
+  pelaku?: PelakuSesi | null,
+  ttd?: PilihanTtd | null,
+): Promise<DocActionResult & { nomor?: string }> {
   const sql = db();
   const rows = await sql`SELECT id, status, doc_type, customer_id FROM sales_doc WHERE id = ${id}`;
   if (rows.length === 0) return { ok: false, error: "dokumen tidak ditemukan" };
-  if (rows[0].status !== "draft") return { ok: false, error: `dokumen sudah ${rows[0].status}` };
+  // F15: SPH wajib lewat review HOD Business dulu (hodReviewSph, repo/sph.ts)
+  // sebelum finalisasi Admin Penawaran di sini — 2 tahap, 2 approver beda
+  // (arahan Direktur 2026-08-12). Doc type lain (offering/presentation/mou)
+  // tetap 1 tahap dari 'draft' spt semula.
+  const requiredStatus = rows[0].doc_type === "sph" ? "hod_review" : "draft";
+  if (rows[0].status !== requiredStatus) {
+    return { ok: false, error: `dokumen sudah ${rows[0].status} (butuh status "${requiredStatus}")` };
+  }
+  // HANDOVER §6 — baris nama-kembar yg belum dikonfirmasi Admin Penawaran
+  // menahan finalize (POST /sph/:id/confirm-variant dulu).
+  if (rows[0].doc_type === "sph") {
+    if (!pelaku) return { ok: false, error: "identitas pengguna (sesi) wajib utk finalisasi SPH", forbidden: true };
+    const tolak = await cekFinalSph(id, pelaku);
+    if (tolak) return { ok: false, error: tolak, forbidden: true };
+    const pending = await unconfirmedVariantItems(id);
+    if (pending.length > 0) {
+      return {
+        ok: false,
+        // Sertakan id baris (bukan cuma nama) — 2 baris nama-kembar bisa punya
+        // nama snapshot yang PERSIS sama, jadi nama saja tak cukup buat Admin
+        // Penawaran tahu baris mana yg perlu di-confirm (ditemukan QA 2026-09-07).
+        error: `${pending.length} item nama-varian-kembar belum dikonfirmasi: ${pending.map((p) => `#${p.id} ${p.nama}`).join(", ")}`,
+      };
+    }
+    // Nomor surat + kunci syarat + penanda tangan + status, satu transaksi.
+    const f = await finalisasiSph(id, pelaku, ttd);
+    if (!f.ok) return { ok: false, error: f.error };
+    await logHumanAction(
+      "sales.doc.approve",
+      pelaku.nama,
+      { doc_id: id, doc_type: rows[0].doc_type, customer_id: rows[0].customer_id, nomor: f.nomor },
+      "approve",
+    );
+    return { ok: true, status: "approved", nomor: f.nomor };
+  }
   await sql`UPDATE sales_doc SET status = 'approved', approved_by = ${approverId ?? null} WHERE id = ${id}`;
   await logHumanAction(
     "sales.doc.approve",
@@ -208,13 +252,16 @@ export interface SalesDocRow {
   status: string;
   model_used: string | null;
   approved_by: string | null;
+  hod_reviewed_by: string | null;
+  nomor_dokumen: string | null; // F15 SPH — nomor surat (null = draft/belum bernomor)
   created_at: string;
 }
 
 export async function listSalesDocs(status?: string, limit = 50): Promise<SalesDocRow[]> {
   const sql = db();
   const rows = await sql`
-    SELECT id, deal_id, customer_name, doc_type, title, draft_text, status, model_used, approved_by, created_at::text
+    SELECT id, deal_id, customer_name, doc_type, title, draft_text, status, model_used,
+           approved_by, hod_reviewed_by, nomor_dokumen, created_at::text
     FROM sales_doc
     WHERE ${status ? sql`status = ${status}` : sql`true`}
     ORDER BY created_at DESC
@@ -230,6 +277,8 @@ export async function listSalesDocs(status?: string, limit = 50): Promise<SalesD
     status: String(r.status),
     model_used: r.model_used ? String(r.model_used) : null,
     approved_by: r.approved_by ? String(r.approved_by) : null,
+    hod_reviewed_by: r.hod_reviewed_by ? String(r.hod_reviewed_by) : null,
+    nomor_dokumen: r.nomor_dokumen ? String(r.nomor_dokumen) : null,
     created_at: String(r.created_at),
   }));
 }
