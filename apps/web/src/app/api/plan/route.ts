@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api /plan (parse #PLAN + persist ke deal/D1).
 export async function POST(req: Request) {
+  // Tak dipakai UI (#PLAN masuk lewat WA) — dari dashboard hanya admin.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();
