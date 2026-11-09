@@ -88,7 +88,7 @@ export function CatatHarianDialog({ cabang, rows, batas, tanggalAwal, onClose, o
           <DialogDescription>
             {pertama
               ? "Catatan pertama station: isi saldo awal (uang kas yang ada sekarang). Hari berikutnya saldo awal terisi otomatis."
-              : "Tanggal boleh mundur untuk mencatat hari yang terlewat (rapel). Saldo awal otomatis dari catatan sebelum tanggal itu."}
+              : "Tanggal boleh mundur untuk mencatat hari yang terlewat. Saldo awal otomatis dari catatan sebelum tanggal itu."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
