@@ -28,6 +28,8 @@ Pusat **tidak** input atau merekap ulang — hanya meninjau dan memutuskan.
 - `saldo_akhir = saldo_awal + Σmasuk − Σkeluar` — dihitung, tidak disimpan.
 - `saldo_awal` diisi manual **hanya pada catatan pertama station**; setelahnya diset sistem = saldo akhir
   catatan sebelumnya (input manual yang berbeda ditolak). Hari tanpa catatan tidak memutus rantai.
+  Catatan yang disisipkan mundur (rapel) atau diubah di tengah membuat saldo awal hari-hari sesudahnya
+  dihitung ulang dalam transaksi yang sama.
 - `saldo_fisik` (opsional) dibandingkan dengan saldo hitungan → `selisih = fisik − sistem`. Hanya
   ditampilkan; **tidak ada toleransi dan tidak ada pemblokiran**.
 - Bukti = teks referensi (`bukti_ref`: nomor nota/tautan), bukan unggahan berkas.
@@ -47,9 +49,10 @@ Pusat **tidak** input atau merekap ulang — hanya meninjau dan memutuskan.
 |---|---|
 | Satu catatan per `(cabang, tanggal)` | 409 |
 | Tanggal tidak boleh di masa depan (WIB) / format salah / tanggal mustahil | 400 |
-| Catatan harus berurutan: tanggal ≤ catatan terakhir station ditolak (tanpa catatan mundur) | 409 |
+| **Rapel diizinkan (9 Nov 2026):** tanggal boleh di antara catatan yang ada; ditolak bila sebelum catatan pertama station atau ≤ akhir minggu terakhir yang rekapnya diajukan/disetujui | 409 |
 | Saldo akhir tidak boleh negatif (kas keluar > saldo tersedia) | 422 |
-| Hanya **catatan terakhir** station yang boleh diubah/dihapus (saldo awal hari berikutnya bergantung padanya) | 409 |
+| Catatan boleh diubah/dihapus bila sesudah minggu terakhir yang diajukan/disetujui; setelah setiap perubahan **rantai saldo dihitung ulang** (`hitungUlangRantai`: saldo awal tiap hari = saldo akhir hari sebelumnya) | 409 |
+| Perubahan (sisip/ubah/hapus) yang membuat saldo hari mana pun negatif — seluruh perubahan dibatalkan | 422 |
 | Catatan di minggu yang rekapnya `submitted`/`approved` **terkunci** | 409 |
 | Minggu rekap harus diawali hari Senin dan sudah dimulai; minggu tanpa catatan tidak bisa direkap | 400 / 422 |
 | Tolak rekap wajib menyertakan alasan (agar station tahu apa yang diperbaiki) | 400 |
