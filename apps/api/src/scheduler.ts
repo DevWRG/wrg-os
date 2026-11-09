@@ -322,6 +322,7 @@ export function startScheduler(): ScheduleStatus {
   // Flag sendiri: sinkron pertama ±1.100 panggilan detail, dinyalakan
   // eksplisit sesudah sinkron manual pertama dicek.
   const poSyncEnabled = (process.env.ACCURATE_PO_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const apInvoiceSyncEnabled = (process.env.AP_PURCHASE_INVOICE_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   // cashin-resume (F-CASHIN) — jaring pengaman gerbang konfirmasi Finance.
   // Flag SENDIRI (default off) karena mengirim WA ke grup Finance.
   //
@@ -1087,8 +1088,12 @@ export function startScheduler(): ScheduleStatus {
           const ri = await syncReceiveItems();
           console.log(`[scheduler] accurate-po-sync receive-item @ ${startedAt} ${JSON.stringify(ri)}`);
           // F152 — faktur pembelian SESUDAH PO & penerimaan: barisnya menaut ke keduanya.
-          const pi = await syncPurchaseInvoices();
-          console.log(`[scheduler] accurate-po-sync purchase-invoice @ ${startedAt} ${JSON.stringify(pi)}`);
+          // Saklar sendiri, default MATI: rilis bertahap (tarik manual dulu lewat
+          // POST /accurate/sync/purchase-invoices, cek bersama, baru nyalakan).
+          if (apInvoiceSyncEnabled) {
+            const pi = await syncPurchaseInvoices();
+            console.log(`[scheduler] accurate-po-sync purchase-invoice @ ${startedAt} ${JSON.stringify(pi)}`);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-po-sync gagal @ ${startedAt}:`, e);
         }
