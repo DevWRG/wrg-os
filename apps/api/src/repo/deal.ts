@@ -150,6 +150,7 @@ export interface PipelineDeal {
   pic_hod: string | null;
   cabang: string | null;
   coop_model: string | null;
+  sumber_lead: string | null;          // asal lead (F96); null = Lainnya
   city: string | null;
   province: string | null;
   purchase_month: number | null;       // estimasi bulan beli (1–12)
@@ -198,7 +199,7 @@ export async function getPipeline(
     prospect_category, stage, probability, forecast_category,
     COALESCE(estimated_value, estimate_amount) AS estimate_amount,
     qty_num, unit_price,
-    pic_hod, cabang, coop_model, city, province, purchase_month, purchase_year, notes, updated_at,
+    pic_hod, cabang, coop_model, sumber_lead, city, province, purchase_month, purchase_year, notes, updated_at,
     GREATEST(0, EXTRACT(DAY FROM (now() - stage_entered_at))::int) AS days_in_stage,
     dormant_at, COALESCE(on_hold, false) AS on_hold, ${lastActivitySql(sql)} AS last_activity_at,
     opsi_grup, opsi_no, opsi_utama,
@@ -269,6 +270,7 @@ export async function getPipeline(
       pic_hod: r.pic_hod ? String(r.pic_hod) : null,
       cabang: r.cabang ? String(r.cabang) : null,
       coop_model: r.coop_model ? String(r.coop_model) : null,
+      sumber_lead: r.sumber_lead ? String(r.sumber_lead) : null,
       city: r.city ? String(r.city) : null,
       province: r.province ? String(r.province) : null,
       purchase_month: r.purchase_month != null ? Number(r.purchase_month) : null,
@@ -891,7 +893,7 @@ export async function getDealTimeline(dealId: string, scope: DataScope): Promise
 // nyetel stage/loss/am_id/probability langsung; itu lewat jalur khusus).
 const DEAL_EDITABLE = [
   "customer_name", "facility_name", "brand", "product", "product_category",
-  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "city", "province",
+  "estimate_amount", "qty_num", "unit_price", "cabang", "coop_model", "sumber_lead", "city", "province",
   "purchase_month", "purchase_year",
   "pic_hod", "notes",
 ] as const;
@@ -900,6 +902,16 @@ const DEAL_EDITABLE = [
 const DEAL_NUMERIC = new Set(["estimate_amount", "purchase_month", "purchase_year", "qty_num", "unit_price"]);
 
 const PRODUCT_CATEGORIES = ["IVD", "Medical"];
+
+// Asal lead (migrasi 252). Kosong = Lainnya; WA/web bukan sumber.
+export const SUMBER_LEAD = ["tender", "referensi", "vendor", "pameran", "cold_call"] as const;
+
+function cekSumberLead(fields: Record<string, unknown>): void {
+  const v = fields.sumber_lead;
+  if (v != null && !(SUMBER_LEAD as readonly string[]).includes(String(v))) {
+    throw new DealError(400, `sumber_lead harus salah satu: ${SUMBER_LEAD.join(", ")}`);
+  }
+}
 
 // Ambil hanya field whitelist dari input; "" → null; angka di-cast.
 function pickEditable(input: Record<string, unknown>): Record<string, unknown> {
@@ -981,6 +993,7 @@ export async function createDeal(scope: DataScope, input: Record<string, unknown
   if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
     throw new DealError(400, "product_category harus IVD atau Medical");
   }
+  cekSumberLead(fields);
   fields.customer_name = String(name).trim();
   fields.customer_id = custId(String(name));
   applyEstimate(fields);
@@ -1039,6 +1052,7 @@ export async function updateDeal(dealId: string, scope: DataScope, input: Record
   if (fields.product_category && !PRODUCT_CATEGORIES.includes(String(fields.product_category))) {
     throw new DealError(400, "product_category harus IVD atau Medical");
   }
+  cekSumberLead(fields);
   if (fields.customer_name != null) fields.customer_id = custId(String(fields.customer_name));
   applyEstimate(fields);
   if (["unit_price", "product", "brand", "coop_model"].some((k) => k in fields)) {
