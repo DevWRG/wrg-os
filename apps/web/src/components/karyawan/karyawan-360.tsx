@@ -36,7 +36,7 @@ export function Karyawan360({
     { v: "raport", label: "Raport (penilaian)" },
     { v: "okr", label: "OKR" },
     { v: "kpi", label: "KPI" },
-    { v: "improvement", label: "Improvement & PIP" },
+    { v: "improvement", label: "Perkembangan & PIP" },
     ...(canManage ? [{ v: "kelola" as Tab, label: "Kelola Profil" }] : []),
   ];
   // Tab "kelola" hanya ada untuk admin; kalau state terlanjur ke sana tanpa izin,
