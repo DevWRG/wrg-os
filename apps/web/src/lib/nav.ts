@@ -34,6 +34,7 @@ import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewCn } from "@/lib/cn-access";
+import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewRaportList } from "@/lib/raport-access";
 import { canViewReportLibrary } from "@/lib/report-library";
@@ -457,6 +458,12 @@ export const NAV: NavGroup[] = [
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
       { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
+      // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
+      // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
+      // centang grup; sebelum itu fallback direktur/admin/superuser.
+      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+        features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
       // F32 Bukti Pembayaran — foto bukti bayar + kode pengajuan, diunggah admin di dashboard
       // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
       // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
