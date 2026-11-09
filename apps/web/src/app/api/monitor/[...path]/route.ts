@@ -1,5 +1,14 @@
+import { requireAdmin } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
+import { monitorGate } from "@/lib/monitor-access";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
+
+// Izin per sub-path (lihat lib/monitor-access); segmen di luar peta = admin saja.
+async function gerbang(sub: string, method: "GET" | "POST") {
+  const m = monitorGate(sub, method);
+  return m ? requireFeature(m.menus, m.action) : requireAdmin();
+}
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +17,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   const { path } = await ctx.params;
   const sub = safeSubpath(path);
   if (sub === null) return badSubpath();
+  const g = await gerbang(sub, "GET");
+  if (!g.ok) return g.res;
   const search = new URL(req.url).search;
   try {
     const res = await gatewayFetch(`/monitor/${sub}${search}`);
@@ -23,6 +34,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ path: string[]
   const { path } = await ctx.params;
   const sub = safeSubpath(path);
   if (sub === null) return badSubpath();
+  const g = await gerbang(sub, "POST");
+  if (!g.ok) return g.res;
   let body: unknown = {};
   try {
     body = await req.json();

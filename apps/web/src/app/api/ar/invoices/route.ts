@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /ar/invoices (feeder ingest invoice → ar_aging_mv).
 export async function POST(req: Request) {
+  // Feeder faktur mentah, tak dipakai UI — admin saja (cegah suntik faktur palsu).
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();

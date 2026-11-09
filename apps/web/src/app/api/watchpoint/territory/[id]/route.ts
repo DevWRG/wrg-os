@@ -1,9 +1,13 @@
+import { requireDirekturOrAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api PUT/DELETE /watchpoint/territory/:id.
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  // Peta HoD→cabang menentukan angka WatchPoint per HoD — ubah = Direktur/admin (sama dgn target).
+  const g = await requireDirekturOrAdmin();
+  if (!g.ok) return g.res;
   const { id } = await ctx.params;
   let body: unknown;
   try { body = await req.json(); } catch { return Response.json({ error: "invalid JSON body" }, { status: 400 }); }
@@ -21,6 +25,9 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
 }
 
 export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  // Peta HoD→cabang menentukan angka WatchPoint per HoD — ubah = Direktur/admin (sama dgn target).
+  const g = await requireDirekturOrAdmin();
+  if (!g.ok) return g.res;
   const { id } = await ctx.params;
   try {
     const res = await gatewayFetch(`/watchpoint/territory/${encodeURIComponent(id)}`, { method: "DELETE" });

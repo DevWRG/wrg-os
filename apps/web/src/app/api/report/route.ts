@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api /report (parse #REPORT + fuzzy-match deal + spt_state_log).
 export async function POST(req: Request) {
+  // Tak dipakai UI (#REPORT masuk lewat WA) — dari dashboard hanya admin.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown;
   try {
     body = await req.json();
