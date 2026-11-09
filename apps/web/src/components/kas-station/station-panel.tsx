@@ -253,7 +253,7 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
       )}
 
       {catat && <CatatHarianDialog cabang={cabang} terakhir={terakhir} onClose={() => setCatat(false)} onSimpan={() => { setCatat(false); muatUlang(); }} />}
-      {detailHarian && <DetailHarianDialog id={detailHarian} izin={izin} onClose={() => setDetailHarian(null)} onUbah={muatUlang} />}
+      {detailHarian && <DetailHarianDialog key={detailHarian} id={detailHarian} izin={izin} onClose={() => setDetailHarian(null)} onUbah={muatUlang} onBuka={setDetailHarian} />}
       {detailRekap && <DetailRekapDialog id={detailRekap} izin={izin} onClose={() => setDetailRekap(null)} onUbah={muatUlang} />}
       {dialog}
     </div>

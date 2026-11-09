@@ -8,12 +8,13 @@ import { Button } from "@/components/ui/button";
 import { CurrencyInput } from "@/components/ui/currency-input";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 import { TrxInput, trxKosong, type BarisTrx } from "./trx-input";
 import { useKasData } from "./use-kas-data";
-import { kasApi, rp, rpSelisih, tgl, type Harian, type HarianDetail, type IzinKasStation } from "./types";
+import { hariIniWib, kasApi, rp, rpSelisih, tgl, type Harian, type HarianDetail, type IzinKasStation } from "./types";
 
 // F33 — riwayat kas harian satu station (tabel) + dialog detail/ubah satu hari.
 
@@ -45,10 +46,15 @@ export function RiwayatHarian({ rows, onBuka }: { rows: Harian[]; onBuka: (id: s
 
 // ── Detail & ubah ───────────────────────────────────────────────────────────
 
-export function DetailHarianDialog({ id, izin, onClose, onUbah }: { id: string; izin: IzinKasStation; onClose: () => void; onUbah: () => void }) {
+export function DetailHarianDialog({ id, izin, onClose, onUbah, onBuka }: {
+  id: string; izin: IzinKasStation; onClose: () => void; onUbah: () => void;
+  /** Pindah ke catatan lain (dipakai saat transaksi ditambahkan ke tanggal sesudahnya → catatan baru). */
+  onBuka?: (id: string) => void;
+}) {
   const { data: h, galat, loading, muatUlang } = useKasData<HarianDetail>(`harian/${encodeURIComponent(id)}`);
   const { confirm, dialog } = useConfirm();
   const [baru, setBaru] = useState<BarisTrx>(trxKosong());
+  const [tglBaru, setTglBaru] = useState<string | null>(null);
   const [fisik, setFisik] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -65,7 +71,7 @@ export function DetailHarianDialog({ id, izin, onClose, onUbah }: { id: string; 
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>{h ? `${h.cabang} — ${tgl(h.tanggal)}` : "Detail kas harian"}</DialogTitle>
           <DialogDescription>Saldo akhir dihitung sistem: saldo awal + masuk − keluar.</DialogDescription>
@@ -108,17 +114,43 @@ export function DetailHarianDialog({ id, izin, onClose, onUbah }: { id: string; 
                 )}
               </div>
 
-              {ubahBolehTulis && izin.stationCreate && (
-                <div className="space-y-2 rounded-md border p-3">
-                  <Label>Tambah transaksi ke hari ini</Label>
-                  <TrxInput b={baru} onChange={(p) => setBaru({ ...baru, ...p })} />
-                  <Button size="sm" disabled={busy || !baru.nominal || Number(baru.nominal) <= 0 || !baru.uraian.trim()}
-                    onClick={() => void jalankan(
-                      () => kasApi(`harian/${id}/transaksi`, { method: "POST", body: { jenis: baru.jenis, nominal: Number(baru.nominal), uraian: baru.uraian.trim(), bukti_ref: baru.bukti_ref.trim() || undefined } }),
-                      () => setBaru(trxKosong()),
-                    )}><Plus /> Tambah</Button>
-                </div>
-              )}
+              {ubahBolehTulis && izin.stationCreate && (() => {
+                // Tanggal transaksi: catatan ini atau hari sesudahnya s/d hari ini. Rantai saldo
+                // melarang tanggal sebelum catatan terakhir, jadi tanggal lebih awal tak ditawarkan.
+                // Tanggal sesudahnya = catatan baru (saldo awal otomatis dari catatan ini).
+                const tanggalTrx = tglBaru ?? h.tanggal;
+                const hariBaru = tanggalTrx !== h.tanggal;
+                const siap = !!baru.nominal && Number(baru.nominal) > 0 && !!baru.uraian.trim();
+                const trxBody = { jenis: baru.jenis, nominal: Number(baru.nominal), uraian: baru.uraian.trim(), bukti_ref: baru.bukti_ref.trim() || undefined };
+                return (
+                  <div className="space-y-2 rounded-md border p-3">
+                    <div className="flex flex-wrap items-end justify-between gap-2">
+                      <Label>Tambah transaksi</Label>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="kd-tgl" className="text-muted-foreground text-xs font-normal">Tanggal</Label>
+                        <Input id="kd-tgl" type="date" className="h-8 w-40" min={h.tanggal} max={hariIniWib()} value={tanggalTrx}
+                          onChange={(e) => setTglBaru(e.target.value && e.target.value >= h.tanggal ? e.target.value : h.tanggal)} />
+                      </div>
+                    </div>
+                    <TrxInput b={baru} onChange={(p) => setBaru({ ...baru, ...p })} />
+                    {hariBaru && (
+                      <p className="text-muted-foreground text-xs">
+                        Akan dibuat catatan baru {tgl(tanggalTrx)} dengan saldo awal {rp(h.saldo_akhir)} (saldo akhir catatan ini).
+                      </p>
+                    )}
+                    <Button size="sm" disabled={busy || !siap}
+                      onClick={() => void jalankan(
+                        async () => {
+                          if (!hariBaru) return kasApi(`harian/${id}/transaksi`, { method: "POST", body: trxBody });
+                          const r = await kasApi<{ id: string }>("harian", { method: "POST", body: { cabang: h.cabang, tanggal: tanggalTrx, transaksi: [trxBody] } });
+                          onBuka?.(r.id);
+                          return r;
+                        },
+                        () => { setBaru(trxKosong()); setTglBaru(null); },
+                      )}><Plus /> {hariBaru ? `Tambah ke ${tgl(tanggalTrx)}` : "Tambah"}</Button>
+                  </div>
+                );
+              })()}
 
               {ubahBolehTulis && izin.stationEdit && (
                 <div className="flex flex-wrap items-end gap-2 rounded-md border p-3">
