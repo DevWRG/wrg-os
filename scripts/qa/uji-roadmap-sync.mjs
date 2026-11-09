@@ -216,7 +216,7 @@ r = await harness({
   cards: [{ title: "[FINANCE] F152 3-Way Match", status: "Done" }],
 });
 cek("merge ke dev: kartu Done tidak turun ke Checking", r.updates, []);
-cek("merge ke dev: alasan lewati tercatat di log", r.log.some((l) => /sudah Done/.test(l)), true);
+cek("merge ke dev: alasan lewati tercatat di log", r.log.some((l) => /sudah Done — merge ke "dev"/.test(l)), true);
 
 r = await harness({
   action: "opened", baseRef: "dev", headRef: "docs/f152-saklar",
@@ -237,6 +237,23 @@ r = await harness({
 });
 cek("merge ke dev: kartu belum Done tetap jadi Checking, yang Done dilewati", r.updates, [
   { item: "[AFTERSALES] F175 Teknisi", status: "Checking" },
+]);
+
+// Kejadian nyata 9 Nov: #2177 (port susulan F152 ke main) dibuka → kartu Done
+// jadi In Progress, lalu merge #2176 ke dev menurunkannya ke Checking.
+r = await harness({
+  action: "opened", baseRef: "main", headRef: "port/f152-pesan-diskon-main",
+  title: "fix(F152): pesan selisih diskon tampil sebagai persen (port #2176)",
+  cards: [{ title: "[FINANCE] F152 3-Way Match", status: "Done" }],
+});
+cek("PR susulan dibuka ke main: kartu Done tidak jadi In Progress", r.updates, []);
+
+r = await harness({
+  action: "opened", baseRef: "main", headRef: "port/f175-main", title: "feat(F175): port ke main",
+  cards: [{ title: "[AFTERSALES] F175 Teknisi", status: "Checking" }],
+});
+cek("PR port dibuka ke main: kartu belum Done tetap jadi In Progress", r.updates, [
+  { item: "[AFTERSALES] F175 Teknisi", status: "In Progress" },
 ]);
 
 r = await harness({
