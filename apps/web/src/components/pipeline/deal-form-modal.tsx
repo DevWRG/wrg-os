@@ -313,6 +313,16 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
               <option value="BELI">BELI</option>
             </select>
           </label>
+          <label className="text-sm"><Lbl>Sumber Lead</Lbl>
+            <select value={form.sumber_lead} onChange={(e) => set("sumber_lead", e.target.value)} className={inputCls}>
+              <option value="">— (Lainnya)</option>
+              <option value="tender">Tender</option>
+              <option value="referensi">Referensi customer</option>
+              <option value="vendor">Vendor (principal merekomendasikan faskes)</option>
+              <option value="pameran">Trade show</option>
+              <option value="cold_call">Cold call</option>
+            </select>
+          </label>
           {!opsi && (<>
           <label className="text-sm"><Lbl>Sumber Lead</Lbl>
             <select value={form.sumber_lead} onChange={(e) => set("sumber_lead", e.target.value)} className={inputCls}>
