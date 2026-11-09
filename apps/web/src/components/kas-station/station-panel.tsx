@@ -38,7 +38,7 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
   const rekap = useKasData<{ rows: Rekap[] }>(cabang ? `rekap?cabang=${qsCabang}&limit=200` : null);
   const muatUlang = () => { harian.muatUlang(); rekap.muatUlang(); };
   const { confirm, dialog } = useConfirm();
-  const [catat, setCatat] = useState(false);
+  const [catat, setCatat] = useState<string | null>(null); // tanggal yang dicatat
   const [detailHarian, setDetailHarian] = useState<string | null>(null);
   const [detailRekap, setDetailRekap] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -60,6 +60,11 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
     .filter((t) => !t.rekap || t.rekap.status === "draft" || t.rekap.status === "rejected");
   const ditolak = tindakan.filter((t) => t.rekap?.status === "rejected").length;
   const rekapTerakhir = rekaps.find((r) => r.status !== "draft") ?? null;
+  // Akhir minggu terakhir yang diajukan/disetujui: tanggal ≤ ini terkunci (sama dengan API).
+  const batas = rekaps.filter((r) => r.status === "submitted" || r.status === "approved")
+    .map((r) => r.periode_akhir).sort().pop() ?? null;
+  const tertua = rows.length ? rows[rows.length - 1].tanggal : null;
+  const bisaCatat = (t: string) => izin.stationCreate && t <= hariIni && (!batas || t > batas) && (!tertua || t > tertua);
 
   const jumlah = (hs: Harian[]) => ({
     masuk: hs.reduce((a, h) => a + h.total_masuk, 0),
@@ -141,10 +146,13 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
                   ? <Button onClick={() => setDetailHarian(catatanHariIni.id)}><Plus /> Tambah transaksi hari ini</Button>
                   : <Button onClick={() => setDetailHarian(catatanHariIni.id)}>Lihat catatan hari ini</Button>
               ) : (
-                <Button onClick={() => setCatat(true)}><Plus /> Catat kas hari ini</Button>
+                <Button onClick={() => setCatat(hariIni)}><Plus /> Catat kas hari ini</Button>
+              )}
+              {rows.length > 0 && (
+                <Button variant="soft" onClick={() => setCatat(tambahHari(hariIni, -1))}>Catat hari sebelumnya (rapel)</Button>
               )}
               {terakhir && catatanHariIni === null && terakhir.tanggal < tambahHari(hariIni, -1) && (
-                <span className="text-muted-foreground text-sm">Catatan terakhir {tgl(terakhir.tanggal)} — hari yang terlewat bisa dicatat lewat tanggal di form.</span>
+                <span className="text-muted-foreground text-sm">Catatan terakhir {tgl(terakhir.tanggal)} — klik hari yang kosong di kalender untuk mencatatnya.</span>
               )}
             </div>
           )}
@@ -164,10 +172,10 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
                   const t = tambahHari(senin, i);
                   const h = rows.find((r) => r.tanggal === t) ?? null;
                   const lalu = t < hariIni; const kini = t === hariIni;
-                  const bisaKlik = !!h || (kini && izin.stationCreate);
+                  const bisaKlik = !!h || bisaCatat(t);
                   return (
                     <button key={t} type="button" disabled={!bisaKlik}
-                      onClick={() => (h ? setDetailHarian(h.id) : setCatat(true))}
+                      onClick={() => (h ? setDetailHarian(h.id) : setCatat(t))}
                       className={cn("flex flex-col items-center gap-1 rounded-lg border bg-card px-1 py-2 text-xs transition-colors",
                         kini && "border-primary ring-1 ring-primary",
                         h && "hover:border-primary/60",
@@ -180,7 +188,7 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
                       <span className={cn("size-2.5 rounded-full",
                         h ? "bg-emerald-500" : lalu ? "border border-muted-foreground/50" : kini ? "bg-amber-500" : "bg-transparent")} />
                       <span className="hidden text-[10px] tabular-nums sm:block">
-                        {h ? (h.total_keluar ? `−${(h.total_keluar / 1000).toLocaleString("id-ID")} rb` : "tanpa keluar") : kini ? "belum" : " "}
+                        {h ? (h.total_keluar ? `−${(h.total_keluar / 1000).toLocaleString("id-ID")} rb` : "tanpa keluar") : kini ? "belum" : bisaCatat(t) ? "+ catat" : " "}
                       </span>
                     </button>
                   );
@@ -252,8 +260,12 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
         </>
       )}
 
-      {catat && <CatatHarianDialog cabang={cabang} terakhir={terakhir} onClose={() => setCatat(false)} onSimpan={() => { setCatat(false); muatUlang(); }} />}
-      {detailHarian && <DetailHarianDialog key={detailHarian} id={detailHarian} izin={izin} onClose={() => setDetailHarian(null)} onUbah={muatUlang} onBuka={setDetailHarian} />}
+      {catat && (
+        <CatatHarianDialog key={catat} cabang={cabang} rows={rows} batas={batas} tanggalAwal={catat}
+          onClose={() => setCatat(null)} onSimpan={() => { setCatat(null); muatUlang(); }}
+          onBuka={(id) => { setCatat(null); setDetailHarian(id); }} />
+      )}
+      {detailHarian && <DetailHarianDialog key={detailHarian} id={detailHarian} izin={izin} rows={rows} batas={batas} onClose={() => setDetailHarian(null)} onUbah={muatUlang} onBuka={setDetailHarian} />}
       {detailRekap && <DetailRekapDialog id={detailRekap} izin={izin} onClose={() => setDetailRekap(null)} onUbah={muatUlang} />}
       {dialog}
     </div>
