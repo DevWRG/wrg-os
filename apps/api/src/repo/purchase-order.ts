@@ -1043,6 +1043,8 @@ export interface AccuratePoItem {
   qty_shipped: number;
   unit: string | null;
   unit_price: number | null;
+  // itemDiscPercent Accurate apa adanya; null = field tak ada di respons (F152, 240).
+  disc_raw?: string | null;
   warehouse_name: string | null;
   notes: string | null;
 }
@@ -1065,17 +1067,17 @@ export async function replaceAccuratePoItems(poId: string, lastUpdate: string | 
     for (const it of items) {
       await tx`
         INSERT INTO purchase_order_item (
-          purchase_order_id, accurate_detail_id, item_no, item_desc, qty_ordered, qty_shipped, unit, unit_price, warehouse_name, notes
+          purchase_order_id, accurate_detail_id, item_no, item_desc, qty_ordered, qty_shipped, unit, unit_price, disc_raw, warehouse_name, notes
         )
         VALUES (
           ${poId}, ${it.accurate_detail_id}, ${it.item_no}, ${it.item_desc}, ${it.qty_ordered}, ${it.qty_shipped},
-          ${it.unit}, ${it.unit_price}, ${it.warehouse_name}, ${it.notes}
+          ${it.unit}, ${it.unit_price}, ${it.disc_raw ?? null}, ${it.warehouse_name}, ${it.notes}
         )
         ON CONFLICT (accurate_detail_id) WHERE accurate_detail_id IS NOT NULL DO UPDATE SET
           purchase_order_id = EXCLUDED.purchase_order_id,
           item_no = EXCLUDED.item_no, item_desc = EXCLUDED.item_desc,
           qty_ordered = EXCLUDED.qty_ordered, qty_shipped = EXCLUDED.qty_shipped,
-          unit = EXCLUDED.unit, unit_price = EXCLUDED.unit_price,
+          unit = EXCLUDED.unit, unit_price = EXCLUDED.unit_price, disc_raw = EXCLUDED.disc_raw,
           warehouse_name = EXCLUDED.warehouse_name, notes = EXCLUDED.notes,
           updated_at = now()
       `;

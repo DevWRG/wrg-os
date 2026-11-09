@@ -34,6 +34,7 @@ import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
 import { canViewPenerbitanFaktur } from "@/lib/penerbitan-faktur-access";
 import { canViewRegisterCek } from "@/lib/register-cek-access";
 import { canViewCn } from "@/lib/cn-access";
+import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewRaportList } from "@/lib/raport-access";
@@ -458,6 +459,9 @@ export const NAV: NavGroup[] = [
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
       { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      // F152 3-Way Match Faktur Pembelian (AP) — faktur vendor Accurate vs PO vs penerimaan, toleransi 0%.
+      // Read-only. Kunci izin sendiri ("ap-three-way", featureKey dari url), default tertutup: Sync Fitur + centang.
+      { title: "3-Way Match AP", url: "/ap-three-way", icon: ClipboardCheck, badge: "NEW", show: canViewApThreeWay },
       // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
       // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
       // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +

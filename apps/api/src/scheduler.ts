@@ -24,6 +24,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems, syncFixedAssets, refreshOpenInvoices, syncPurchaseOrders, syncReceiveItems, syncItemStockBranch,
+  syncPurchaseInvoices,
 } from "./repo/accurateSync.js";
 import { syncBiayaArea } from "./repo/biaya-area-sync.js";
 import { runEdWatch } from "./repo/stock-batch.js";
@@ -271,6 +272,7 @@ export function startScheduler(): ScheduleStatus {
   // Flag sendiri: sinkron pertama ±1.100 panggilan detail, dinyalakan
   // eksplisit sesudah sinkron manual pertama dicek.
   const poSyncEnabled = (process.env.ACCURATE_PO_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const apInvoiceSyncEnabled = (process.env.AP_PURCHASE_INVOICE_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   // F65 — pengingat lead belum dihubungi (AM ≥3 hari kerja, HoD ≥7). DM per orang;
   // MATI sampai user menentukan penerimanya (keputusan 13 Okt 2026).
   const leadAgingEnabled = (process.env.LEAD_AGING_ENABLED ?? "false").toLowerCase() === "true";
@@ -1159,7 +1161,7 @@ export function startScheduler(): ScheduleStatus {
   // accurate-po-sync (F13) — tiap 30 menit jam kerja-ish. Inkremental per
   // lastUpdate Accurate, jadi siklus tanpa perubahan cuma 1 halaman list.
   // Penerimaan Barang (F36, migrasi 206) ikut di job yang sama, SESUDAH PO:
-  // baris penerimaan menaut ke PO lewat accurate_po_id.
+  // baris penerimaan menaut ke PO lewat accurate_po_id. Faktur Pembelian (F152, 240) terakhir.
   const poSyncExpr = process.env.ACCURATE_PO_SYNC_CRON ?? "*/30 7-21 * * *";
   if (poSyncEnabled && cron.validate(poSyncExpr)) {
     cron.schedule(
@@ -1171,6 +1173,13 @@ export function startScheduler(): ScheduleStatus {
           console.log(`[scheduler] accurate-po-sync @ ${startedAt} ${JSON.stringify(r)}`);
           const ri = await syncReceiveItems();
           console.log(`[scheduler] accurate-po-sync receive-item @ ${startedAt} ${JSON.stringify(ri)}`);
+          // F152 — faktur pembelian SESUDAH PO & penerimaan: barisnya menaut ke keduanya.
+          // Saklar sendiri, default MATI: rilis bertahap (tarik manual dulu lewat
+          // POST /accurate/sync/purchase-invoices, cek bersama, baru nyalakan).
+          if (apInvoiceSyncEnabled) {
+            const pi = await syncPurchaseInvoices();
+            console.log(`[scheduler] accurate-po-sync purchase-invoice @ ${startedAt} ${JSON.stringify(pi)}`);
+          }
         } catch (e) {
           console.error(`[scheduler] accurate-po-sync gagal @ ${startedAt}:`, e);
         }
