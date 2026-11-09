@@ -44,6 +44,9 @@ test("bakukanDiskon: kosong/0 sama, kaskade, tak terbaca = null", () => {
   assert.equal(bakukanDiskon("35"), bakukanDiskon("35.0"));
   assert.equal(bakukanDiskon("10+5"), "10000000000+5000000000");
   assert.notEqual(bakukanDiskon("10+5"), bakukanDiskon("15"));
+  assert.equal(bakukanDiskon("47,5"), bakukanDiskon("47.5")); // koma desimal dari Accurate
+  assert.equal(bakukanDiskon("10+2,5"), bakukanDiskon("10+2.5"));
+  assert.equal(bakukanDiskon("1,2,5"), null); // bukan desimal → tetap tak terbaca
   assert.equal(bakukanDiskon("abc"), null);
   assert.equal(bakukanDiskon(null), null);
 });
