@@ -1,9 +1,12 @@
+import { requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /leave/pending/:id/decide (approve/reject pending detect-leave).
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const g = await requireFeature("/leave", "edit");
+  if (!g.ok) return g.res;
   const { id } = await ctx.params;
   let body: unknown;
   try {
