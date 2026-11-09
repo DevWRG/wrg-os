@@ -7,9 +7,13 @@ name: Roadmap Project Sync
 # - PR merged ke base lain / closed tanpa merge -> diabaikan
 # Status akhir mengikuti BASE BRANCH, bukan sekadar "merged". Sebelumnya semua merge
 # jadi Done, jadi 43 fitur yang cuma nangkring di `dev` tampil seolah sudah live.
-# Konsekuensi yang disengaja: item Done bisa turun ke Checking kalau ada PR lanjutan
-# masuk `dev` — itu memang berarti ada bagian menggantung yang belum dipromosikan;
-# merge promosi ke `main` akan mengembalikannya ke Done.
+# Kartu yang sudah Done atau closed HANYA boleh diubah oleh PR ke `main`. PR ke base
+# lain (dibuka maupun merged ke `dev`) melewatinya. Dulu Done sengaja dibiarkan turun
+# ke Checking saat ada PR lanjutan ke `dev`, tapi 9 Nov 2026 itu melempar kartu yang
+# sudah tuntas di prod berulang kali: F152 tiga kali (fix dev #2166, PR sinkron
+# main→dev #2168 yang judulnya menyebut F152, docs #2174) dan F48 lewat sinkron #2173.
+# PR sinkron & susulan dev memang hampir selalu menyebut F-number fitur yang baru
+# di-port, jadi "turun ke Checking" lebih sering salah daripada benar.
 # F-number diambil dari nama branch + judul PR (mis. feat/f127-... / feat(F127): ...).
 # Jika F-number belum ada di board, item draft baru DIBUAT otomatis lalu di-set status.
 # Butuh secret PROJECTS_TOKEN (PAT dgn izin project) karena GITHUB_TOKEN default
@@ -243,7 +247,10 @@ jobs:
                 `query($id:ID!,$c:String){ node(id:$id){ ... on ProjectV2 {
                    items(first:100, after:$c){
                      pageInfo{ hasNextPage endCursor }
-                     nodes{ id content{
+                     nodes{ id
+                       fieldValueByName(name:"Status"){
+                         ... on ProjectV2ItemFieldSingleSelectValue{ name } }
+                       content{
                        ... on DraftIssue{ title }
                        ... on Issue{ title }
                        ... on PullRequest{ title } } } } } } }`,
@@ -282,6 +289,14 @@ jobs:
                 core.info(`${f}: item baru dibuat → "${newTitle}"`);
               }
               for (const m of matches) {
+                // Done/closed itu final dari sisi `main`: kartu tuntas di prod atau
+                // sengaja ditutup. Hanya PR ke `main` yang boleh menyentuhnya —
+                // lihat catatan di kepala berkas.
+                const sekarang = m.fieldValueByName?.name;
+                if (pr.base.ref !== 'main' && (sekarang === 'Done' || sekarang === 'closed')) {
+                  core.info(`${f}: "${m.content?.title}" sudah ${sekarang} — PR ke "${pr.base.ref}" tak mengubahnya`);
+                  continue;
+                }
                 await github.graphql(
                   `mutation($p:ID!,$i:ID!,$fld:ID!,$o:String!){
                      updateProjectV2ItemFieldValue(input:{
