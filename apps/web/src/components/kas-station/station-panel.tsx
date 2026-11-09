@@ -149,7 +149,7 @@ export function StationPanel({ izin, cabangOpsi }: { izin: IzinKasStation; caban
                 <Button onClick={() => setCatat(hariIni)}><Plus /> Catat kas hari ini</Button>
               )}
               {rows.length > 0 && (
-                <Button variant="soft" onClick={() => setCatat(tambahHari(hariIni, -1))}>Catat hari sebelumnya (rapel)</Button>
+                <Button variant="soft" onClick={() => setCatat(tambahHari(hariIni, -1))}>Catat hari sebelumnya</Button>
               )}
               {terakhir && catatanHariIni === null && terakhir.tanggal < tambahHari(hariIni, -1) && (
                 <span className="text-muted-foreground text-sm">Catatan terakhir {tgl(terakhir.tanggal)} — klik hari yang kosong di kalender untuk mencatatnya.</span>
