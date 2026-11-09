@@ -4,8 +4,7 @@ import { test } from "node:test";
 import {
   KasStationError, awalMinggu, bolehCabang, cekCabangTulis, pemutusSamaPengaju, putuskanCakupan, mengandungNul, hariTanpaCatatan, hitungSaldoAkhir, hitungSelisih, isSenin, normCabang,
   parseNominal, parseTanggal, rollupMinggu, round2, statusSesudah, tambahHari, wibHariIni,
-  type BarisHarian, type IdentitasKas, type StatusRekap,
-} from "./kas-station.js";
+  type BarisHarian, type IdentitasKas, type StatusRekap, rantaiSaldo } from "./kas-station.js";
 
 const h = (over: Partial<BarisHarian> = {}): BarisHarian => ({
   tanggal: "2026-10-12", saldo_awal: 1_000_000, total_masuk: 0, total_keluar: 0, saldo_fisik: null, ...over,
@@ -225,4 +224,22 @@ test("cekCabangTulis: 403 untuk cabang lain / akun tanpa cabang", () => {
     assert.throws(fn, (e: unknown) => e instanceof KasStationError && e.status === 403 && pesan.test(e.message));
   status403(() => cekCabangTulis({ semua: false, cabang: "SBY 2" }, "MADIUN"), /cabang Anda \(SBY 2\)/);
   status403(() => cekCabangTulis({ semua: false, cabang: null }, "MADIUN"), /belum punya cabang/);
+});
+
+test("rantaiSaldo: saldo awal tiap catatan = saldo akhir sebelumnya; sisipan mundur menggeser hari sesudahnya", () => {
+  const rows = [
+    { id: "a", tanggal: "2026-11-02", saldo_awal: 1_000_000, masuk: 0, keluar: 100_000 },
+    // rapel: 3 Nov disisipkan belakangan (keluar 50 rb) — 4 Nov masih menyimpan saldo awal lama 900 rb
+    { id: "b", tanggal: "2026-11-03", saldo_awal: 900_000, masuk: 0, keluar: 50_000 },
+    { id: "c", tanggal: "2026-11-04", saldo_awal: 900_000, masuk: 20_000, keluar: 0 },
+  ];
+  assert.deepEqual(rantaiSaldo(rows), { berubah: [{ id: "c", saldo_awal: 850_000 }], negatif: null });
+  // sudah konsisten → tak ada perubahan
+  assert.deepEqual(rantaiSaldo([rows[0], rows[1], { ...rows[2], saldo_awal: 850_000 }]), { berubah: [], negatif: null });
+  // sisipan yang membuat hari sesudahnya negatif → tanggal itu dilaporkan
+  const minus = rantaiSaldo([rows[0], { ...rows[1], keluar: 880_000 }, { ...rows[2], keluar: 100_000 }]);
+  assert.equal(minus.negatif, "2026-11-04");
+  assert.deepEqual(rantaiSaldo([]), { berubah: [], negatif: null });
+  // pembulatan sen tidak dianggap berubah
+  assert.deepEqual(rantaiSaldo([{ id: "x", tanggal: "2026-11-01", saldo_awal: 100.1, masuk: 0.2, keluar: 0 }, { id: "y", tanggal: "2026-11-02", saldo_awal: 100.3, masuk: 0, keluar: 0 }]).berubah, []);
 });

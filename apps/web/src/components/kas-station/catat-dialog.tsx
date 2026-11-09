@@ -12,17 +12,27 @@ import { cn } from "@/lib/utils";
 import { TrxInput, barisKosong, nominalAngka, trxKosong, type BarisTrx } from "./trx-input";
 import { hariIniWib, kasApi, rp, rpSelisih, tambahHari, tgl, type Harian } from "./types";
 
-// F33 — catat kas satu hari. Saldo awal diambil dari catatan terakhir (kecuali catatan pertama),
-// dan ringkasan "saldo awal + masuk − keluar = saldo akhir" dihitung langsung di layar supaya
-// station tahu hasilnya sebelum menyimpan. Aturan sebenarnya tetap di API (urutan tanggal,
-// saldo tak boleh negatif, dll.); di sini hanya pencegahan dini.
-export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
-  cabang: string; terakhir: Harian | null; onClose: () => void; onSimpan: () => void;
+// F33 — catat kas satu hari. Tanggal boleh mundur (rapel) asal sesudah catatan pertama station
+// dan sesudah minggu yang rekapnya sudah diajukan/disetujui (`batas`). Saldo awal = saldo akhir
+// catatan tepat sebelum tanggal itu; hari sesudahnya dihitung ulang oleh API. Ringkasan "saldo awal
+// + masuk − keluar = saldo akhir" dihitung langsung di layar. Aturan sebenarnya tetap di API.
+export function CatatHarianDialog({ cabang, rows, batas, tanggalAwal, onClose, onSimpan, onBuka }: {
+  cabang: string;
+  /** Catatan station, urut tanggal turun (sama dengan API). */
+  rows: Harian[];
+  /** Akhir minggu terakhir yang diajukan/disetujui — tanggal ≤ ini terkunci. */
+  batas: string | null;
+  tanggalAwal?: string;
+  onClose: () => void; onSimpan: () => void; onBuka: (id: string) => void;
 }) {
-  const pertama = terakhir === null;
+  const pertama = rows.length === 0;
   const hariIni = hariIniWib();
-  const tglMin = terakhir ? tambahHari(terakhir.tanggal, 1) : undefined;
-  const [tanggal, setTanggal] = useState(hariIni);
+  const tertua = rows.length ? rows[rows.length - 1].tanggal : null;
+  const tglMin = [batas ? tambahHari(batas, 1) : null, tertua].filter((x): x is string => !!x).sort().pop();
+  const [tanggal, setTanggal] = useState(tanggalAwal ?? hariIni);
+  const sebelum = rows.find((r) => r.tanggal < tanggal) ?? null;
+  const sudahAda = rows.find((r) => r.tanggal === tanggal) ?? null;
+  const adaSesudah = rows.some((r) => r.tanggal > tanggal);
   const [saldoAwalInput, setSaldoAwalInput] = useState("");
   const [saldoFisik, setSaldoFisik] = useState("");
   const [keterangan, setKeterangan] = useState("");
@@ -32,7 +42,7 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
 
   const ubah = (i: number, p: Partial<BarisTrx>) => setTrx((l) => l.map((b, j) => (j === i ? { ...b, ...p } : b)));
   const terisi = trx.filter((b) => !barisKosong(b));
-  const saldoAwal = pertama ? (saldoAwalInput === "" ? null : Number(saldoAwalInput)) : terakhir.saldo_akhir;
+  const saldoAwal = pertama ? (saldoAwalInput === "" ? null : Number(saldoAwalInput)) : sebelum ? sebelum.saldo_akhir : null;
   const masuk = terisi.filter((b) => b.jenis === "masuk").reduce((a, b) => a + nominalAngka(b), 0);
   const keluar = terisi.filter((b) => b.jenis === "keluar").reduce((a, b) => a + nominalAngka(b), 0);
   const saldoAkhir = saldoAwal === null ? null : saldoAwal + masuk - keluar;
@@ -42,7 +52,9 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
   async function simpan() {
     setErr(null);
     if (pertama && saldoAwalInput === "") return setErr("Isi saldo awal kas station (uang kas saat mulai mencatat).");
-    if (tglMin && tanggal < tglMin) return setErr(`Tanggal harus setelah catatan terakhir (${tgl(terakhir!.tanggal)}).`);
+    if (sudahAda) return setErr(`Tanggal ${tgl(tanggal)} sudah punya catatan — buka catatan itu untuk menambah transaksi.`);
+    if (!pertama && !sebelum) return setErr(`Tanggal tidak boleh sebelum catatan pertama station (${tgl(tertua!)}).`);
+    if (batas && tanggal <= batas) return setErr(`Tanggal sampai ${tgl(batas)} terkunci — minggu itu sudah diajukan ke pusat.`);
     for (const [i, b] of terisi.entries()) {
       if (nominalAngka(b) <= 0) return setErr(`Transaksi ${i + 1}: isi nominalnya.`);
       if (!b.uraian.trim()) return setErr(`Transaksi ${i + 1}: isi uraian (untuk apa uangnya).`);
@@ -76,7 +88,7 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
           <DialogDescription>
             {pertama
               ? "Catatan pertama station: isi saldo awal (uang kas yang ada sekarang). Hari berikutnya saldo awal terisi otomatis."
-              : `Saldo awal otomatis dari catatan terakhir (${tgl(terakhir.tanggal)}).`}
+              : "Tanggal boleh mundur untuk mencatat hari yang terlewat (rapel). Saldo awal otomatis dari catatan sebelum tanggal itu."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
@@ -95,7 +107,7 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
             ) : (
               <div className="space-y-1">
                 <Label>Saldo awal</Label>
-                <p className="flex h-9 items-center rounded-md border bg-card px-3 text-sm font-medium tabular-nums">{rp(terakhir.saldo_akhir)}</p>
+                <p className="flex h-9 items-center rounded-md border bg-card px-3 text-sm font-medium tabular-nums">{saldoAwal === null ? "—" : rp(saldoAwal)}</p>
               </div>
             )}
             <div className="space-y-1">
@@ -103,6 +115,17 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
               <Input id="kc-ket" maxLength={500} placeholder="opsional" value={keterangan} onChange={(e) => setKeterangan(e.target.value)} />
             </div>
           </div>
+
+          {sudahAda ? (
+            <p className="flex flex-wrap items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+              {tgl(tanggal)} sudah punya catatan.
+              <Button type="button" size="sm" variant="soft" onClick={() => onBuka(sudahAda.id)}>Buka catatan itu</Button>
+            </p>
+          ) : !pertama && adaSesudah && sebelum ? (
+            <p className="text-muted-foreground rounded-md border bg-card px-3 py-2 text-sm">
+              Mencatat mundur: saldo awal diambil dari {tgl(sebelum.tanggal)}, dan saldo hari-hari sesudahnya ikut dihitung ulang otomatis.
+            </p>
+          ) : null}
 
           <div className="space-y-2">
             <Label>Transaksi</Label>
@@ -144,7 +167,7 @@ export function CatatHarianDialog({ cabang, terakhir, onClose, onSimpan }: {
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Batal</Button>
-          <Button onClick={simpan} disabled={busy || minus}>{busy ? "Menyimpan…" : "Simpan catatan"}</Button>
+          <Button onClick={simpan} disabled={busy || minus || !!sudahAda}>{busy ? "Menyimpan…" : "Simpan catatan"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

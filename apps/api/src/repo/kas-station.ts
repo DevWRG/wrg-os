@@ -103,6 +103,26 @@ export function parseNominal(v: unknown, label: string, opts: { min: "nol" | "po
 export const hitungSaldoAkhir = (saldoAwal: number, masuk: number, keluar: number): number =>
   round2(saldoAwal + masuk - keluar);
 
+/**
+ * Rantai saldo satu station (murni, dites). `rows` urut tanggal naik. Catatan pertama memegang
+ * saldo awal manual; tiap catatan sesudahnya saldo_awal = saldo akhir catatan sebelumnya.
+ * Mengembalikan saldo awal yang berubah, atau tanggal pertama yang saldo akhirnya negatif.
+ * Dipakai setelah catatan disisipkan/diubah/dihapus di tengah (rapel) supaya hari sesudahnya ikut benar.
+ */
+export function rantaiSaldo(
+  rows: ReadonlyArray<{ id: string; tanggal: string; saldo_awal: number; masuk: number; keluar: number }>,
+): { berubah: { id: string; saldo_awal: number }[]; negatif: string | null } {
+  const berubah: { id: string; saldo_awal: number }[] = [];
+  let awal = rows.length ? rows[0].saldo_awal : 0;
+  for (const [i, r] of rows.entries()) {
+    if (i > 0 && round2(r.saldo_awal) !== awal) berubah.push({ id: r.id, saldo_awal: awal });
+    const akhir = hitungSaldoAkhir(awal, r.masuk, r.keluar);
+    if (akhir < 0) return { berubah, negatif: r.tanggal };
+    awal = akhir;
+  }
+  return { berubah, negatif: null };
+}
+
 // Selisih = fisik − hitungan sistem. null bila saldo fisik belum diisi.
 export const hitungSelisih = (saldoFisik: number | null, saldoAkhir: number): number | null =>
   saldoFisik == null ? null : round2(saldoFisik - saldoAkhir);
@@ -249,7 +269,7 @@ export interface HarianRow {
   updated_at: string;
   /** Sudah masuk rekap submitted/approved → tidak boleh diubah. */
   terkunci: boolean;
-  /** Hanya entri terakhir station yang boleh diubah (rantai saldo awal), dan tidak terkunci. */
+  /** Boleh diubah: tidak terkunci dan sesudah minggu terakhir yang rekapnya diajukan/disetujui. */
   bisa_diubah: boolean;
 }
 
@@ -318,7 +338,7 @@ function mapHarian(r: Record<string, unknown>): HarianRow {
     created_at: String(r.created_at),
     updated_at: String(r.updated_at),
     terkunci,
-    bisa_diubah: r.terakhir === true && !terkunci,
+    bisa_diubah: r.bisa_ubah === true && !terkunci,
   };
 }
 
@@ -363,7 +383,10 @@ const HARIAN_SELECT = `
   COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'masuk'), 0) AS total_masuk,
   COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'keluar'), 0) AS total_keluar,
   COUNT(t.id) AS jumlah_transaksi,
-  (h.tanggal = (SELECT MAX(x.tanggal) FROM kas_station_harian x WHERE x.cabang = h.cabang)) AS terakhir,
+  (h.tanggal > COALESCE((
+    SELECT MAX(r.periode_akhir) FROM kas_station_rekap r
+    WHERE r.cabang = h.cabang AND r.status IN ('submitted','approved')
+  ), '-infinity'::date)) AS bisa_ubah,
   EXISTS (
     SELECT 1 FROM kas_station_rekap r
     WHERE r.cabang = h.cabang AND r.status IN ('submitted','approved')
@@ -724,18 +747,55 @@ async function tanggalTerkunci(tx: Tx, cabang: string, tanggal: string): Promise
   return rows.length > 0;
 }
 
-// Entri harian hanya boleh diubah bila: terakhir milik stationnya (saldo awal hari
-// berikutnya diturunkan dari sini) dan belum terkunci oleh rekap diajukan/approved.
-async function pastikanBisaDiubah(tx: Tx, h: { id: string; cabang: string; tanggal: string }): Promise<void> {
-  const [lebihBaru] = await tx`
-    SELECT 1 FROM kas_station_harian WHERE cabang = ${h.cabang} AND tanggal > ${h.tanggal}::date LIMIT 1
+// Entri harian boleh diubah bila belum terkunci rekap (lihat pastikanBisaDiubah); hari
+// sesudahnya dihitung ulang (hitungUlangRantai).
+/** Akhir minggu terakhir yang rekapnya diajukan/disetujui; tanggal ≤ ini tak boleh disentuh. */
+async function batasKunci(tx: Tx, cabang: string): Promise<string | null> {
+  const [r] = await tx`
+    SELECT MAX(periode_akhir)::text AS batas FROM kas_station_rekap
+    WHERE cabang = ${cabang} AND status IN ('submitted','approved')
   `;
-  if (lebihBaru) {
-    throw new KasStationError(409, "hanya catatan kas terakhir station yang boleh diubah (saldo awal hari berikutnya bergantung padanya)");
+  return r?.batas ? String(r.batas) : null;
+}
+
+async function pastikanTanggalBisaDiubah(tx: Tx, cabang: string, tanggal: string): Promise<void> {
+  const batas = await batasKunci(tx, cabang);
+  if (batas && tanggal <= batas) {
+    throw new KasStationError(409, `tanggal sampai ${batas} terkunci — minggu itu sudah diajukan/disetujui pusat`);
   }
-  if (await tanggalTerkunci(tx, h.cabang, h.tanggal)) {
+  if (await tanggalTerkunci(tx, cabang, tanggal)) {
     throw new KasStationError(409, "catatan ini sudah masuk rekap yang diajukan/disetujui dan terkunci");
   }
+}
+
+// Catatan boleh diubah bila belum terkunci rekap: sesudah minggu terakhir yang diajukan/disetujui.
+// Hari sesudahnya ikut dihitung ulang lewat hitungUlangRantai (rapel diizinkan sejak 9 Nov 2026).
+async function pastikanBisaDiubah(tx: Tx, h: { id: string; cabang: string; tanggal: string }): Promise<void> {
+  await pastikanTanggalBisaDiubah(tx, h.cabang, h.tanggal);
+}
+
+/**
+ * Hitung ulang saldo_awal semua catatan station (dalam transaksi yang sama, sesudah lock cabang).
+ * Saldo negatif di hari mana pun → 422 dan seluruh perubahan dibatalkan (rollback transaksi).
+ */
+async function hitungUlangRantai(tx: Tx, cabang: string): Promise<number> {
+  const rows = await tx`
+    SELECT h.id, h.tanggal::text AS tanggal, h.saldo_awal,
+           COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'masuk'), 0) AS masuk,
+           COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'keluar'), 0) AS keluar
+    FROM kas_station_harian h LEFT JOIN kas_station_transaksi t ON t.harian_id = h.id
+    WHERE h.cabang = ${cabang} GROUP BY h.id ORDER BY h.tanggal ASC
+  `;
+  const { berubah, negatif } = rantaiSaldo(rows.map((r) => ({
+    id: String(r.id), tanggal: String(r.tanggal), saldo_awal: num(r.saldo_awal), masuk: num(r.masuk), keluar: num(r.keluar),
+  })));
+  if (negatif) {
+    throw new KasStationError(422, `perubahan ini membuat saldo kas tanggal ${negatif} negatif — periksa transaksi hari itu atau sebelumnya`);
+  }
+  for (const b of berubah) {
+    await tx`UPDATE kas_station_harian SET saldo_awal = ${b.saldo_awal}, updated_at = now() WHERE id = ${b.id}`;
+  }
+  return berubah.length;
 }
 
 async function muatHarianDanKunci(tx: Tx, id: string): Promise<{ id: string; cabang: string; tanggal: string; saldo_awal: number }> {
@@ -776,33 +836,34 @@ export async function createHarian(input: HarianInput): Promise<HarianRow & { tr
     if (!(await cabangDikenal(tx, cabang))) throw new KasStationError(400, `cabang '${cabang}' tidak dikenal`);
     await lockCabang(tx, cabang);
 
-    const [terakhir] = await tx`
+    // Rapel: tanggal boleh di antara catatan yang ada, asal sesudah catatan pertama station dan
+    // sesudah minggu terakhir yang rekapnya diajukan/disetujui. Saldo awal = saldo akhir catatan
+    // tepat sebelum tanggal ini; hari-hari sesudahnya dihitung ulang setelah insert.
+    const [ada] = await tx`SELECT 1 FROM kas_station_harian WHERE cabang = ${cabang} AND tanggal = ${tanggal}::date`;
+    if (ada) throw new KasStationError(409, `catatan kas ${cabang} tanggal ${tanggal} sudah ada`);
+    const [pertama] = await tx`SELECT MIN(tanggal)::text AS tanggal FROM kas_station_harian WHERE cabang = ${cabang}`;
+    const [sebelum] = await tx`
       SELECT h.id, h.tanggal::text AS tanggal, h.saldo_awal,
              COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'masuk'), 0) AS masuk,
              COALESCE(SUM(t.nominal) FILTER (WHERE t.jenis = 'keluar'), 0) AS keluar
       FROM kas_station_harian h LEFT JOIN kas_station_transaksi t ON t.harian_id = h.id
-      WHERE h.cabang = ${cabang} GROUP BY h.id ORDER BY h.tanggal DESC LIMIT 1
+      WHERE h.cabang = ${cabang} AND h.tanggal < ${tanggal}::date GROUP BY h.id ORDER BY h.tanggal DESC LIMIT 1
     `;
 
     let saldoAwal: number;
-    if (!terakhir) {
+    if (!pertama?.tanggal) {
       if (saldoAwalInput == null) throw new KasStationError(400, "saldo_awal wajib diisi untuk catatan pertama station");
       saldoAwal = saldoAwalInput;
     } else {
-      if (String(terakhir.tanggal) === tanggal) {
-        throw new KasStationError(409, `catatan kas ${cabang} tanggal ${tanggal} sudah ada`);
+      if (!sebelum) {
+        throw new KasStationError(409, `tanggal tidak boleh sebelum catatan pertama station (${pertama.tanggal}) — saldo awal station dimulai di sana`);
       }
-      if (tanggal < String(terakhir.tanggal)) {
-        throw new KasStationError(409, `tanggal harus setelah catatan terakhir (${terakhir.tanggal}) — catatan mundur tidak diizinkan`);
-      }
-      saldoAwal = hitungSaldoAkhir(num(terakhir.saldo_awal), num(terakhir.masuk), num(terakhir.keluar));
+      saldoAwal = hitungSaldoAkhir(num(sebelum.saldo_awal), num(sebelum.masuk), num(sebelum.keluar));
       if (saldoAwalInput != null && saldoAwalInput !== saldoAwal) {
         throw new KasStationError(400, `saldo_awal ditentukan sistem (${saldoAwal}) = saldo akhir catatan sebelumnya; tidak bisa diisi manual`);
       }
     }
-    if (await tanggalTerkunci(tx, cabang, tanggal)) {
-      throw new KasStationError(409, "tanggal ini berada di minggu yang rekapnya sudah diajukan/disetujui");
-    }
+    await pastikanTanggalBisaDiubah(tx, cabang, tanggal);
 
     const masuk = trx.filter((t) => t.jenis === "masuk").reduce((a, t) => a + t.nominal, 0);
     const keluar = trx.filter((t) => t.jenis === "keluar").reduce((a, t) => a + t.nominal, 0);
@@ -820,7 +881,8 @@ export async function createHarian(input: HarianInput): Promise<HarianRow & { tr
         VALUES (${harianId}, ${t.jenis}, ${t.nominal}, ${t.uraian}, ${t.bukti_ref}, ${actor})
       `;
     }
-    await logAudit(tx, "kas_station.harian_dibuat", actor, { harian_id: harianId, cabang, tanggal, saldo_awal: saldoAwal, transaksi: trx.length }, "dibuat");
+    const disesuaikan = await hitungUlangRantai(tx, cabang);
+    await logAudit(tx, "kas_station.harian_dibuat", actor, { harian_id: harianId, cabang, tanggal, saldo_awal: saldoAwal, transaksi: trx.length, rantai_disesuaikan: disesuaikan }, "dibuat");
     return harianId;
   });
   const detail = await sql.begin((tx) => fetchHarian(tx, id));
@@ -864,6 +926,7 @@ export async function updateHarian(id: string, f: HarianUpdate): Promise<(Harian
         updated_at  = now()
       WHERE id = ${h.id}
     `;
+    if (adaAwal) await hitungUlangRantai(tx, h.cabang);
     await logAudit(tx, "kas_station.harian_diubah", actor, {
       harian_id: h.id, cabang: h.cabang, tanggal: h.tanggal,
       ...(adaFisik ? { saldo_fisik: saldoFisik } : {}), ...(adaAwal ? { saldo_awal: saldoAwal } : {}),
@@ -885,6 +948,7 @@ export async function deleteHarian(id: string, actorRaw?: string | null): Promis
     }
     await pastikanBisaDiubah(tx, h);
     await tx`DELETE FROM kas_station_harian WHERE id = ${h.id}`;
+    await hitungUlangRantai(tx, h.cabang);
     await logAudit(tx, "kas_station.harian_dihapus", actor, { harian_id: h.id, cabang: h.cabang, tanggal: h.tanggal }, "dihapus");
     return { deleted: true };
   });
@@ -920,6 +984,7 @@ export async function addTransaksi(
       VALUES (${h.id}, ${t.jenis}, ${t.nominal}, ${t.uraian}, ${t.bukti_ref}, ${actor})
     `;
     await tx`UPDATE kas_station_harian SET updated_at = now() WHERE id = ${h.id}`;
+    await hitungUlangRantai(tx, h.cabang);
     await logAudit(tx, "kas_station.transaksi_ditambah", actor, { harian_id: h.id, cabang: h.cabang, tanggal: h.tanggal, jenis: t.jenis, nominal: t.nominal }, "ditambah");
     return true;
   });
@@ -967,6 +1032,7 @@ export async function updateTransaksi(
       WHERE id = ${trxId}
     `;
     await tx`UPDATE kas_station_harian SET updated_at = now() WHERE id = ${h.id}`;
+    await hitungUlangRantai(tx, h.cabang);
     await logAudit(tx, "kas_station.transaksi_diubah", actor, { harian_id: h.id, transaksi_id: trxId, cabang: h.cabang, tanggal: h.tanggal, jenis: baru.jenis, nominal: baru.nominal }, "diubah");
     return true;
   });
@@ -994,6 +1060,7 @@ export async function deleteTransaksi(
     pastikanSaldoTidakNegatif(h.saldo_awal, masuk, keluar);
     await tx`DELETE FROM kas_station_transaksi WHERE id = ${trxId}`;
     await tx`UPDATE kas_station_harian SET updated_at = now() WHERE id = ${h.id}`;
+    await hitungUlangRantai(tx, h.cabang);
     await logAudit(tx, "kas_station.transaksi_dihapus", actor, { harian_id: h.id, transaksi_id: trxId, cabang: h.cabang, tanggal: h.tanggal }, "dihapus");
     return { deleted: true };
   });

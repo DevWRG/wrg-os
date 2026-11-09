@@ -14,7 +14,7 @@ import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 import { TrxInput, trxKosong, type BarisTrx } from "./trx-input";
 import { useKasData } from "./use-kas-data";
-import { hariIniWib, kasApi, rp, rpSelisih, tgl, type Harian, type HarianDetail, type IzinKasStation } from "./types";
+import { hariIniWib, kasApi, rp, rpSelisih, tambahHari, tgl, type Harian, type HarianDetail, type IzinKasStation } from "./types";
 
 // F33 — riwayat kas harian satu station (tabel) + dialog detail/ubah satu hari.
 
@@ -46,8 +46,11 @@ export function RiwayatHarian({ rows, onBuka }: { rows: Harian[]; onBuka: (id: s
 
 // ── Detail & ubah ───────────────────────────────────────────────────────────
 
-export function DetailHarianDialog({ id, izin, onClose, onUbah, onBuka }: {
-  id: string; izin: IzinKasStation; onClose: () => void; onUbah: () => void;
+export function DetailHarianDialog({ id, izin, rows = [], batas = null, onClose, onUbah, onBuka }: {
+  id: string; izin: IzinKasStation;
+  /** Catatan station (urut turun) & batas kunci rekap — untuk memilih tanggal transaksi. */
+  rows?: Harian[]; batas?: string | null;
+  onClose: () => void; onUbah: () => void;
   /** Pindah ke catatan lain (dipakai saat transaksi ditambahkan ke tanggal sesudahnya → catatan baru). */
   onBuka?: (id: string) => void;
 }) {
@@ -67,7 +70,7 @@ export function DetailHarianDialog({ id, izin, onClose, onUbah, onBuka }: {
   const ubahBolehTulis = !!h && h.bisa_diubah;
   const alasanKunci = !h ? "" : h.terkunci
     ? "Minggu ini sudah diajukan ke pusat — catatan terkunci."
-    : !h.bisa_diubah ? "Hanya catatan terakhir yang bisa diubah, karena saldo awal hari berikutnya bergantung padanya." : "";
+    : !h.bisa_diubah ? "Minggu ini atau sesudahnya sudah diajukan ke pusat — catatan terkunci." : "";
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -115,11 +118,15 @@ export function DetailHarianDialog({ id, izin, onClose, onUbah, onBuka }: {
               </div>
 
               {ubahBolehTulis && izin.stationCreate && (() => {
-                // Tanggal transaksi: catatan ini atau hari sesudahnya s/d hari ini. Rantai saldo
-                // melarang tanggal sebelum catatan terakhir, jadi tanggal lebih awal tak ditawarkan.
-                // Tanggal sesudahnya = catatan baru (saldo awal otomatis dari catatan ini).
+                // Tanggal transaksi bebas (rapel) antara batas kunci rekap / catatan pertama dan hari ini.
+                // Tanggal yang sudah punya catatan → transaksi masuk ke catatan itu; tanggal kosong →
+                // catatan baru. Saldo hari sesudahnya dihitung ulang oleh API.
                 const tanggalTrx = tglBaru ?? h.tanggal;
-                const hariBaru = tanggalTrx !== h.tanggal;
+                const tertua = rows.length ? rows[rows.length - 1].tanggal : h.tanggal;
+                const tglMin = [batas ? tambahHari(batas, 1) : null, tertua < h.tanggal ? tertua : h.tanggal].filter((x): x is string => !!x).sort().pop();
+                const tujuan = tanggalTrx === h.tanggal ? h : rows.find((r) => r.tanggal === tanggalTrx) ?? null;
+                const hariBaru = tujuan === null;
+                const sebelum = rows.find((r) => r.tanggal < tanggalTrx) ?? null;
                 const siap = !!baru.nominal && Number(baru.nominal) > 0 && !!baru.uraian.trim();
                 const trxBody = { jenis: baru.jenis, nominal: Number(baru.nominal), uraian: baru.uraian.trim(), bukti_ref: baru.bukti_ref.trim() || undefined };
                 return (
@@ -128,26 +135,33 @@ export function DetailHarianDialog({ id, izin, onClose, onUbah, onBuka }: {
                       <Label>Tambah transaksi</Label>
                       <div className="flex items-center gap-2">
                         <Label htmlFor="kd-tgl" className="text-muted-foreground text-xs font-normal">Tanggal</Label>
-                        <Input id="kd-tgl" type="date" className="h-8 w-40" min={h.tanggal} max={hariIniWib()} value={tanggalTrx}
-                          onChange={(e) => setTglBaru(e.target.value && e.target.value >= h.tanggal ? e.target.value : h.tanggal)} />
+                        <Input id="kd-tgl" type="date" className="h-8 w-40" min={tglMin} max={hariIniWib()} value={tanggalTrx}
+                          onChange={(e) => setTglBaru(e.target.value && (!tglMin || e.target.value >= tglMin) ? e.target.value : h.tanggal)} />
                       </div>
                     </div>
                     <TrxInput b={baru} onChange={(p) => setBaru({ ...baru, ...p })} />
-                    {hariBaru && (
+                    {tanggalTrx !== h.tanggal && (
                       <p className="text-muted-foreground text-xs">
-                        Akan dibuat catatan baru {tgl(tanggalTrx)} dengan saldo awal {rp(h.saldo_akhir)} (saldo akhir catatan ini).
+                        {hariBaru
+                          ? `Akan dibuat catatan baru ${tgl(tanggalTrx)}${sebelum ? ` dengan saldo awal ${rp(sebelum.saldo_akhir)}` : ""}.`
+                          : `Transaksi masuk ke catatan ${tgl(tanggalTrx)}.`}
+                        {" "}Saldo hari-hari sesudahnya ikut dihitung ulang.
                       </p>
                     )}
                     <Button size="sm" disabled={busy || !siap}
                       onClick={() => void jalankan(
                         async () => {
-                          if (!hariBaru) return kasApi(`harian/${id}/transaksi`, { method: "POST", body: trxBody });
+                          if (tujuan) {
+                            const r = await kasApi(`harian/${tujuan.id}/transaksi`, { method: "POST", body: trxBody });
+                            if (tujuan.id !== id) onBuka?.(tujuan.id);
+                            return r;
+                          }
                           const r = await kasApi<{ id: string }>("harian", { method: "POST", body: { cabang: h.cabang, tanggal: tanggalTrx, transaksi: [trxBody] } });
                           onBuka?.(r.id);
                           return r;
                         },
                         () => { setBaru(trxKosong()); setTglBaru(null); },
-                      )}><Plus /> {hariBaru ? `Tambah ke ${tgl(tanggalTrx)}` : "Tambah"}</Button>
+                      )}><Plus /> {tanggalTrx !== h.tanggal ? `Tambah ke ${tgl(tanggalTrx)}` : "Tambah"}</Button>
                   </div>
                 );
               })()}
