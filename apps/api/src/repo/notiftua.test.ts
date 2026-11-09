@@ -238,7 +238,7 @@ test("pilihPiutang: hanya yang kritis (90+ atau anomali) dan lewat ambang TUA", 
     new Set(),
     AR,
   );
-  assert.deepEqual(hasil.map((p) => p.invoice_no), ["A", "C"], "urut dari yang paling lama");
+  assert.deepEqual(hasil.map((p) => p.invoice_no), ["A", "C"], "nilai sama → yang paling lama dulu");
 });
 
 test("pilihPiutang: eskalasi >60 hari, sekali per faktur", () => {
@@ -255,8 +255,8 @@ test("pesan piutang: bagian sendiri + eskalasi, tanpa item resume tetap valid", 
   const p = pilihPiutang([piutang("INV-1", 95, "90+", false, 12_500_000)], new Set(), AR);
   const msg = buildMessage([], "2026-10-26", "14:05", [], p);
   assert.match(msg, /^🚨 \*Piutang Lewat Jatuh Tempo/);
-  assert.match(msg, /• INV-1 — RS Sehat — Rp 12\.500\.000 — 95 hari/);
-  assert.match(msg, /🔺 \*Eskalasi ke Direktur — piutang/);
+  assert.match(msg, /🔺 INV-1 — RS Sehat — Rp 12\.500\.000 — 95 hari/);
+  assert.match(msg, /🔺 \*Eskalasi ke Direktur:\* 1 faktur lewat jatuh tempo >60 hari · total Rp 12,5 jt/);
   assert.doesNotMatch(msg, /Item TUA/);
   const tanpa = buildMessage(["• x | status: y"], "2026-10-26", "14:05", [], []);
   assert.doesNotMatch(tanpa, /Piutang/);
@@ -270,4 +270,19 @@ test("pilihPiutang: faktur dengan sisa tagihan 0 (lunas) tidak dihitung", () => 
     { tua: 30, eskalasi: 60 },
   );
   assert.deepEqual(hasil.map((h) => h.invoice_no), ["SISA-1"]);
+});
+
+test("pesan piutang: urut nilai terbesar, total di judul, eskalasi ringkas tanpa mengulang daftar", () => {
+  const rows = [
+    piutang("KECIL", 300, "90+", false, 1_000_000),
+    piutang("BESAR", 100, "90+", false, 70_000_000),
+    piutang("SEDANG", 45, "31-60", true, 20_000_000),
+  ];
+  const p = pilihPiutang(rows, new Set(), AR);
+  assert.deepEqual(p.map((x) => x.invoice_no), ["BESAR", "SEDANG", "KECIL"]);
+  const msg = buildMessage([], "2026-11-09", "14:05", [], p);
+  assert.match(msg, /💸 \*3 Piutang Kritis Lewat Jatuh Tempo · total Rp 91 jt\*/);
+  assert.match(msg, /🔺 \*Eskalasi ke Direktur:\* 2 faktur lewat jatuh tempo >60 hari · total Rp 71 jt/);
+  assert.equal((msg.match(/BESAR/g) ?? []).length, 1, "faktur eskalasi tidak diulang");
+  assert.match(msg, /• SEDANG/); // 45 hari: belum eskalasi → titik biasa
 });

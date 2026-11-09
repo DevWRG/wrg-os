@@ -357,13 +357,23 @@ export function pilihPiutang(
       const eskalasi = r.days_overdue > ambang.eskalasi;
       return { ...r, key, eskalasi, eskBaru: eskalasi && !sudahEskalasi.has(key) };
     })
-    .sort((a, b) => b.days_overdue - a.days_overdue || b.amount - a.amount);
+    // Nilai terbesar dulu — yang paling berharga ditagih lebih dulu (permintaan user 9 Nov); seri → paling lama.
+    .sort((a, b) => b.amount - a.amount || b.days_overdue - a.days_overdue);
 }
 
 const rupiah = (n: number): string => `Rp ${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ".")}`;
 
+/** "Rp 13,0 M" / "Rp 37,3 jt" / "Rp 850 rb" — ringkas untuk judul & total. */
+export const rupiahRingkas = (n: number): string =>
+  n >= 1e9 ? `Rp ${(n / 1e9).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} M`
+    : n >= 1e6 ? `Rp ${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt`
+    : `Rp ${Math.round(n / 1e3).toLocaleString("id-ID")} rb`;
+
+const jumlahNilai = (ps: PiutangItem[]): number => ps.reduce((a, p) => a + p.amount, 0);
+
+// Faktur yang baru masuk eskalasi ditandai 🔺 di daftar utama (blok eskalasi tidak mengulang daftar).
 const barisPiutang = (p: PiutangItem): string =>
-  `• ${p.invoice_no} — ${p.customer_name || "(tanpa nama)"} — ${rupiah(p.amount)} — ${p.days_overdue} hari`;
+  `${p.eskBaru ? "🔺" : "•"} ${p.invoice_no} — ${p.customer_name || "(tanpa nama)"} — ${rupiah(p.amount)} — ${p.days_overdue} hari`;
 
 // Link dashboard: WEB_PUBLIC_URL (domain publik) didahulukan — selaras dgn
 // weeklyreport.ts. NOTIF_TUA_DASHBOARD_URL cuma cadangan: nilainya di prod
@@ -391,12 +401,12 @@ export function buildMessage(
   }
   if (count > 5) msg += `\n\n_…+${count - 5} item lainnya._`;
   if (piutang.length) {
-    msg += `\n\n💸 *${piutang.length} Piutang Kritis Lewat Jatuh Tempo*\n${piutang.slice(0, 5).map(barisPiutang).join("\n")}`;
-    if (piutang.length > 5) msg += `\n_…+${piutang.length - 5} faktur lainnya._`;
+    msg += `\n\n💸 *${piutang.length} Piutang Kritis Lewat Jatuh Tempo · total ${rupiahRingkas(jumlahNilai(piutang))}*\n_Urut dari nilai terbesar._\n${piutang.slice(0, 5).map(barisPiutang).join("\n")}`;
+    if (piutang.length > 5) msg += `\n_…+${piutang.length - 5} faktur lainnya (${rupiahRingkas(jumlahNilai(piutang.slice(5)))})._`;
+    // Eskalasi = ringkasan saja; fakturnya sudah ditandai 🔺 di daftar di atas (tidak diulang).
     const esk = piutang.filter((p) => p.eskBaru);
     if (esk.length) {
-      msg += `\n\n🔺 *Eskalasi ke Direktur — piutang lewat jatuh tempo >${ambangPiutang().eskalasi} hari*\n${esk.slice(0, 5).map(barisPiutang).join("\n")}`;
-      if (esk.length > 5) msg += `\n_…+${esk.length - 5} faktur lainnya._`;
+      msg += `\n\n🔺 *Eskalasi ke Direktur:* ${esk.length} faktur lewat jatuh tempo >${ambangPiutang().eskalasi} hari · total ${rupiahRingkas(jumlahNilai(esk))} (ditandai 🔺 di daftar).`;
     }
   }
   const link = dashboardLink();
