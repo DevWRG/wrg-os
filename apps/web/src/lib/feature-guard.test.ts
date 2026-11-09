@@ -61,3 +61,23 @@ test("roster dibaca form cuti: izin lihat Manage Leave cukup untuk GET", () => {
   assert.equal(featureAllowed(u, "/leave", "view"), true);
   assert.equal(featureAllowed(u, "/users", "view"), false);
 });
+
+// Gelombang 2 penambalan BFF (9 Nov 2026): draft penagihan, cuti, hari libur.
+test("Collection Drafts: approve/send/cancel butuh edit; lihat saja tak cukup", () => {
+  const u = user({ groups: [{ id: 6, key: "fin", name: "Finance" }], permissions: { "collection-drafts": perm({ view: true }) } });
+  assert.equal(featureAllowed(u, "/collection-drafts", "view"), true);
+  assert.equal(featureAllowed(u, "/collection-drafts", "edit"), false);
+  assert.equal(featureAllowed(user({}), "/collection-drafts", "view"), false);
+});
+
+test("Manage Leave & Holidays: tiap aksi tulis ikut matriks", () => {
+  const u = user({ groups: [{ id: 7, key: "hrd", name: "HRD" }], permissions: {
+    leave: perm({ view: true, create: true, edit: true }),
+    holidays: perm({ view: true, create: true }),
+  } });
+  assert.equal(featureAllowed(u, "/leave", "edit"), true); // putuskan cuti
+  assert.equal(featureAllowed(u, "/leave", "delete"), false);
+  assert.equal(featureAllowed(u, "/holidays", "create"), true);
+  assert.equal(featureAllowed(u, "/holidays", "edit"), false); // upsert libur butuh edit juga
+  assert.equal(featureAllowed(u, "/holidays", "delete"), false);
+});

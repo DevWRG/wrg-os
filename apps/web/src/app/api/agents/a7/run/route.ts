@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /agents/a7/run (A7 Product Intelligence).
 export async function POST() {
+  // Menjalankan agen = panggilan LLM berbayar → admin/superuser saja.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   try {
     const res = await gatewayFetch("/agents/a7/run", { method: "POST" });
     const data = await res.json();
