@@ -50,7 +50,11 @@ const OPT_NAMA = { "47fc9ee4": "In Progress", "4d5bc88f": "Checking", "98236657"
 // yang diambilnya: kartu mana di-set ke status apa, kartu baru apa yang dibuat.
 function harness({ action, baseRef, headRef, title, commits = [], cards }) {
   const log = [], updates = [], created = [], warnings = [];
-  const items = cards.map((t, i) => ({ id: `IT${i}`, content: { title: t } }));
+  // Kartu = judul saja, atau { title, status } untuk menguji status yang sudah ada.
+  const items = cards.map((c, i) => {
+    const { title: t, status } = typeof c === "string" ? { title: c } : c;
+    return { id: `IT${i}`, content: { title: t }, ...(status ? { fieldValueByName: { name: status } } : {}) };
+  });
   const github = {
     graphql: async (q, v) => {
       if (q.includes("ProjectV2 { number title }")) return { node: { number: 2, title: "WRG-OS Roadmap" } };
@@ -201,6 +205,55 @@ r = await harness({
   cards: ["[NPK] F66 NPK Engine"],
 });
 cek("base di luar dev/main → di-skip", r.updates, []);
+
+// ── Done/closed hanya boleh diubah PR ke main (9 Nov 2026) ─────────────────
+// Kejadian nyata: F152 sudah tuntas di main (#2165) tapi kartunya terlempar ke
+// Checking tiga kali — fix dev #2166, PR sinkron main→dev #2168 yang judulnya
+// menyebut F152, dan docs #2174. F48 kena lewat sinkron #2173.
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "sync/main-dev-f152",
+  title: "chore(git): sinkron main → dev setelah F152 #2165",
+  cards: [{ title: "[FINANCE] F152 3-Way Match", status: "Done" }],
+});
+cek("merge ke dev: kartu Done tidak turun ke Checking", r.updates, []);
+cek("merge ke dev: alasan lewati tercatat di log", r.log.some((l) => /sudah Done/.test(l)), true);
+
+r = await harness({
+  action: "opened", baseRef: "dev", headRef: "docs/f152-saklar",
+  title: "docs(F152): catat saklar sinkron faktur",
+  cards: [{ title: "[FINANCE] F152 3-Way Match", status: "Done" }],
+});
+cek("PR dibuka ke dev: kartu Done tidak jadi In Progress", r.updates, []);
+
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "feat/f11-x", title: "feat(F11): x",
+  cards: [{ title: "[OPS] F11 Approval Engine", status: "closed" }],
+});
+cek("merge ke dev: kartu closed tidak dibuka lagi", r.updates, []);
+
+r = await harness({
+  action: "closed", baseRef: "dev", headRef: "feat/f175-x", title: "feat(F175): bagian 3",
+  cards: [{ title: "[AFTERSALES] F175 Teknisi", status: "In Progress" }, { title: "[X] F175 lama", status: "Done" }],
+});
+cek("merge ke dev: kartu belum Done tetap jadi Checking, yang Done dilewati", r.updates, [
+  { item: "[AFTERSALES] F175 Teknisi", status: "Checking" },
+]);
+
+r = await harness({
+  action: "closed", baseRef: "main", headRef: "port/f152-susulan", title: "fix(F152): susulan ke main",
+  cards: [{ title: "[FINANCE] F152 3-Way Match", status: "Done" }, { title: "[OPS] F11 Approval", status: "closed" }],
+});
+cek("merge ke main: kartu Done tetap boleh disetel (Done)", r.updates, [
+  { item: "[FINANCE] F152 3-Way Match", status: "Done" },
+]);
+
+r = await harness({
+  action: "closed", baseRef: "main", headRef: "port/f11-main", title: "feat(F11): port ke main",
+  cards: [{ title: "[OPS] F11 Approval", status: "closed" }],
+});
+cek("merge ke main: kartu closed boleh jadi Done (fitur dihidupkan lagi)", r.updates, [
+  { item: "[OPS] F11 Approval", status: "Done" },
+]);
 
 // ── Batas API 250 commit harus BERBUNYI, bukan memotong diam-diam ──────────
 // Promosi besar nyata: #1139 membawa 191 commit. Kalau suatu hari tembus 250,
