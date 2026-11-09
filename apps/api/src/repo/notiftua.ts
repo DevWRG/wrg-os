@@ -350,7 +350,8 @@ export function pilihPiutang(
   ambang = ambangPiutang(),
 ): PiutangItem[] {
   return rows
-    .filter((r) => (r.bucket === "90+" || r.is_anomaly) && r.days_overdue > ambang.tua)
+    // Sisa tagihan 0 = sudah lunas → bukan piutang (uji dev 9 Nov: 3.199 faktur "kritis" Rp 0).
+    .filter((r) => r.amount > 0 && (r.bucket === "90+" || r.is_anomaly) && r.days_overdue > ambang.tua)
     .map((r) => {
       const key = topikKey(`piutang ${r.invoice_no}`);
       const eskalasi = r.days_overdue > ambang.eskalasi;
@@ -486,9 +487,13 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
 
   const amb = ambangPiutang();
   const arRows = await sql`
-    SELECT customer_name, invoice_no, amount, days_overdue, bucket, is_anomaly
-    FROM ar_aging_mv
-    WHERE days_overdue > ${amb.tua}
+    -- Nilai = SISA tagihan (accurate_invoice.outstanding), sama dengan AR Watch (arOver90Outstanding):
+    -- ar_aging_mv.amount ikut memuat faktur yang sudah lunas.
+    SELECT m.customer_name, m.invoice_no, COALESCE(ai.outstanding, m.amount)::float8 AS amount,
+           m.days_overdue, m.bucket, m.is_anomaly
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE m.days_overdue > ${amb.tua} AND COALESCE(ai.outstanding, m.amount) > 0
   `;
   const arKeys = arRows.map((r) => topikKey(`piutang ${String(r.invoice_no)}`));
   const arSudah = new Set<string>();
