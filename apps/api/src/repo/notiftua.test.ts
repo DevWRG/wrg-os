@@ -261,3 +261,13 @@ test("pesan piutang: bagian sendiri + eskalasi, tanpa item resume tetap valid", 
   const tanpa = buildMessage(["• x | status: y"], "2026-10-26", "14:05", [], []);
   assert.doesNotMatch(tanpa, /Piutang/);
 });
+
+test("pilihPiutang: faktur dengan sisa tagihan 0 (lunas) tidak dihitung", () => {
+  const base = { customer_name: "RS Uji", bucket: "90+", is_anomaly: true, days_overdue: 120 };
+  const hasil = pilihPiutang(
+    [{ ...base, invoice_no: "LUNAS-1", amount: 0 }, { ...base, invoice_no: "SISA-1", amount: 1_500_000 }],
+    new Set(),
+    { tua: 30, eskalasi: 60 },
+  );
+  assert.deepEqual(hasil.map((h) => h.invoice_no), ["SISA-1"]);
+});
