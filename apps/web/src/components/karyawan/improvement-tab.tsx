@@ -55,15 +55,15 @@ export function ImprovementTab() {
 
   if (state === "loading") return <SkeletonTable />;
   if (state === "forbidden") return <p className="text-muted-foreground text-sm">Anda tidak punya akses ke data ini.</p>;
-  if (state === "migration") return <p className="text-muted-foreground text-sm">Fitur PIP belum aktif: migrasi database (234) belum diterapkan.</p>;
-  if (state === "error" || !imp) return <p className="text-destructive text-sm">Data improvement tidak dapat dimuat.</p>;
+  if (state === "migration") return <p className="text-muted-foreground text-sm">Fitur PIP belum aktif: migrasi database (236) belum diterapkan.</p>;
+  if (state === "error" || !imp) return <p className="text-destructive text-sm">Data perkembangan tidak dapat dimuat.</p>;
 
   return (
     <div className="space-y-6">
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">PIP</h3>
         {cases.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Belum ada PIP tercatat. PIP dimulai dari halaman detail karyawan.</p>
+          <p className="text-muted-foreground text-sm">Belum ada PIP (rencana perbaikan kinerja 90 hari) tercatat. PIP dimulai dari halaman detail karyawan — klik nama karyawan di tabel bawah.</p>
         ) : (
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {cases.map((c) => (
@@ -77,7 +77,7 @@ export function ImprovementTab() {
                   <div className="text-muted-foreground">
                     {c.goals} goal · milestone {c.milestones_tercapai}/{c.milestones} · {c.checkins} check-in{c.last_checkin ? ` (terakhir ${c.last_checkin})` : ""}
                   </div>
-                  {c.am_id ? <Link href={`/karyawan/${encodeURIComponent(c.am_id)}`} className="text-primary hover:underline">Buka detail</Link> : <span className="text-muted-foreground">Belum tertaut ke Raport (am_id)</span>}
+                  {c.am_id ? <Link href={`/karyawan/${encodeURIComponent(c.am_id)}`} className="text-primary hover:underline">Buka detail</Link> : <span className="text-muted-foreground">Belum tertaut ke Raport</span>}
                 </CardContent>
               </Card>
             ))}
@@ -96,7 +96,7 @@ export function ImprovementTab() {
               <tr>
                 <th className="px-3 py-2">Karyawan</th>
                 {imp.periods.map((p) => <th key={p.key} className="px-3 py-2 text-right whitespace-nowrap">{p.label}</th>)}
-                <th className="px-3 py-2 text-right whitespace-nowrap">Δ terakhir</th>
+                <th className="px-3 py-2 text-right whitespace-nowrap">Perubahan terakhir</th>
                 <th className="px-3 py-2">PIP</th>
               </tr>
             </thead>
@@ -123,7 +123,7 @@ export function ImprovementTab() {
             </tbody>
           </table>
         </div>
-        <p className="text-muted-foreground text-xs">Δ = skor periode ini dikurangi periode sebelumnya (skor komposit Raport 360). Kosong (–) bila salah satu periode belum punya skor. Tanpa ambang penilaian.</p>
+        <p className="text-muted-foreground text-xs">Perubahan = skor gabungan Raport 360 periode ini dikurangi periode sebelumnya: + naik, − turun. Kosong (–) bila salah satu periode belum punya skor.</p>
       </section>
     </div>
   );
