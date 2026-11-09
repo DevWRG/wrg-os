@@ -166,7 +166,7 @@ export function evaluasiBaris(b: BarisFaktur, k: KonteksBaris): HasilBaris {
     const dFak = bakukanDiskon(b.disc_raw);
     if (k.po.disc_raw == null) tambah("BELUM_SINKRON", "diskon PO belum tersinkron");
     else if (dPo === null || dFak === null) tambah("SELISIH_HARGA", "diskon tak terbaca, tak bisa dibandingkan");
-    else if (dPo !== dFak) tambah("SELISIH_HARGA", `diskon faktur ${dFak}% ≠ PO ${dPo}%`);
+    else if (dPo !== dFak) tambah("SELISIH_HARGA", `diskon faktur ${tampilDiskon(dFak)}% ≠ PO ${tampilDiskon(dPo)}%`);
     else if (dFak === "0" && (keDesimal(b.disc_amount) ?? 0n) !== 0n) {
       tambah("SELISIH_HARGA", `faktur memberi potongan nominal ${b.disc_amount} yang tak ada di PO`);
     }
@@ -206,6 +206,9 @@ const fmt = (n: bigint): string => {
   const pecah = (abs % SATU).toString().padStart(SKALA, "0").replace(/0+$/, "");
   return `${neg ? "-" : ""}${bulat}${pecah ? `.${pecah}` : ""}`;
 };
+
+// Diskon baku berskala 1e9 ("54000000000+5000000000") → teks orang ("54+5").
+const tampilDiskon = (baku: string): string => baku.split("+").map((p) => fmt(BigInt(p))).join("+");
 
 export interface HeaderFaktur {
   number: string;

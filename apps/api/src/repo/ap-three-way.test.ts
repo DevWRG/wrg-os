@@ -115,6 +115,11 @@ test("diskon beda (35 vs 30) → SELISIH_HARGA", () => {
   assert.equal(status({ disc_raw: "35" }, { po: { qty_ordered: 10, unit: "BOX", unit_price: 115000, disc_raw: "30" } }), "SELISIH_HARGA");
 });
 
+test("pesan selisih diskon memakai persen yang terbaca, bukan angka berskala", () => {
+  const r = evaluasiBaris(baris({ disc_raw: "54" }), konteks({ po: { qty_ordered: 10, unit: "BOX", unit_price: 115000, disc_raw: "10+5" } }));
+  assert.ok(r.temuan.some((t) => t.pesan === "diskon faktur 54% ≠ PO 10+5%"), JSON.stringify(r.temuan));
+});
+
 test("diskon ada di faktur tapi tidak di PO → SELISIH_HARGA", () => {
   assert.equal(status({ disc_raw: "5" }), "SELISIH_HARGA");
 });
