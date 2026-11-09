@@ -1,9 +1,13 @@
+import { requireAdmin } from "@/lib/admin-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api POST /agents/a6/run (A6 Sales Doc Drafter).
 export async function POST(req: Request) {
+  // Menjalankan agen = panggilan LLM berbayar → admin/superuser saja.
+  const g = await requireAdmin();
+  if (!g.ok) return g.res;
   let body: unknown = {};
   try {
     body = await req.json();
