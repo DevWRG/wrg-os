@@ -43,3 +43,21 @@ test("izin view+create → boleh buat", () => {
 test("path menu salah ketik → tertutup, bukan terbuka", () => {
   assert.equal(featureAllowed(user({ role: "admin" }), "/tidak-ada-menu-ini", "view"), false);
 });
+
+// /api/users (roster karyawan, 9 Nov 2026): dulu cukup login — viewer bisa upsert
+// roster termasuk role & nomor WA. Upsert = create DAN edit di menu Users.
+test("roster /users: viewer tanpa izin tertutup; upsert butuh create + edit", () => {
+  const viewer = user({ role: "viewer", groups: [{ id: 3, key: "v", name: "Viewer" }], permissions: { overview: perm({ view: true }) } });
+  assert.equal(featureAllowed(viewer, "/users", "view"), false);
+  assert.equal(featureAllowed(viewer, "/users", "create"), false);
+  const hr = user({ groups: [{ id: 4, key: "hr", name: "HR" }], permissions: { users: perm({ view: true, create: true }) } });
+  assert.equal(featureAllowed(hr, "/users", "create"), true);
+  assert.equal(featureAllowed(hr, "/users", "edit"), false); // create saja tak cukup untuk upsert
+  assert.equal(featureAllowed(user({ superuser: true }), "/users", "edit"), true);
+});
+
+test("roster dibaca form cuti: izin lihat Manage Leave cukup untuk GET", () => {
+  const u = user({ groups: [{ id: 5, key: "hrd", name: "HRD" }], permissions: { leave: perm({ view: true }) } });
+  assert.equal(featureAllowed(u, "/leave", "view"), true);
+  assert.equal(featureAllowed(u, "/users", "view"), false);
+});
