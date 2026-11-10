@@ -10,11 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatusSphBadge, TierBadge, ambilJson, pesanRamah, rupiah, tglPendek, type AksiSph } from "@/components/sph/sph-ui";
 import { can } from "@/lib/perms";
 import { useSession } from "@/lib/use-session";
 import { cn } from "@/lib/utils";
+import { PagedTable } from "@/components/ui/paged-table";
 
 // F15 — Daftar SPH (dulu /sph hanya redirect ke /sph/new). Satu tempat untuk
 // melihat semua Surat Penawaran Harga, menyaring per tahap, mencari, dan tahu
@@ -202,20 +203,22 @@ export default function SphListPage() {
             <div className={cn(loading && "opacity-60 transition-opacity")}>
               {/* Desktop: tabel */}
               <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="pl-4">Customer</TableHead>
-                      <TableHead>Nomor</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Langkah berikutnya</TableHead>
-                      <TableHead>Dibuat</TableHead>
-                      <TableHead className="w-8" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((r) => (
+                <PagedTable
+                  label="SPH" resetKey={`${tabAktif}|${cari}`}
+                  header={
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="pl-4">Customer</TableHead>
+                        <TableHead>Nomor</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Langkah berikutnya</TableHead>
+                        <TableHead>Dibuat</TableHead>
+                        <TableHead className="w-8" />
+                      </TableRow>
+                    </TableHeader>
+                  }
+                  rows={rows.map((r) => (
                       <TableRow key={r.id} className="cursor-pointer" onClick={() => router.push(`/sph/${r.id}`)}>
                         <TableCell className="max-w-72 pl-4">
                           <Link href={`/sph/${r.id}`} className="block truncate font-medium hover:underline" onClick={(e) => e.stopPropagation()}>
@@ -251,8 +254,7 @@ export default function SphListPage() {
                         </TableCell>
                       </TableRow>
                     ))}
-                  </TableBody>
-                </Table>
+                />
               </div>
               {/* Ponsel: kartu */}
               <ul className="divide-border divide-y md:hidden">
