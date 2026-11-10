@@ -113,7 +113,7 @@ export function OrderView({ awal, bisaUbah }: { awal: DataOrder | null; bisaUbah
             Pesanan AM lewat WhatsApp <b>#ORDER</b> yang sudah dikonfirmasi AM. Input SO-nya di Accurate seperti biasa — sistem mencocokkan otomatis (faskes sama, SO tertanggal sampai 14 hari sesudah konfirmasi, minimal satu kode barang sama) dan menandainya <b>Masuk Accurate</b>{data.dicocokkan ? ` (baru saja: ${data.dicocokkan})` : ""}. Klik nomor pesanan untuk rincian barang.
             {pesan && <span className={cn(" ml-1 font-medium", pesan.ok ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400")}>{pesan.teks}</span>}
           </p>
-          <DataTable columns={kolom} data={tampil} getKey={(o) => o.id} searchPlaceholder="Cari faskes…" pageSize={25}
+          <DataTable columns={kolom} data={tampil} getKey={(o) => o.id} searchPlaceholder="Cari faskes…"
             empty={data.order.length ? "Tidak ada pesanan dengan filter ini." : "Belum ada pesanan — AM mengirim lewat #ORDER di WhatsApp."}
             toolbar={<FilterSelect label="AM" value={am} onChange={setAm} options={opsiAm} />} />
         </CardContent>

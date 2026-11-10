@@ -263,7 +263,7 @@ export function InboundReceivingTable({ rows, initialQuery }: { rows: InboundRec
   return (
     <>
       {dialog}
-      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari no. inbound / supplier / PO / SJ…" pageSize={25} onRowClick={openDetail} initialQuery={initialQuery} />
+      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari no. inbound / supplier / PO / SJ…" onRowClick={openDetail} initialQuery={initialQuery} />
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent>

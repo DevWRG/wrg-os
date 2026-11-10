@@ -67,5 +67,5 @@ export function SalesTable({ rows, header, grandTotal, showTarget = false }: { r
       cell: (r) => <span className="text-muted-foreground">{grandTotal > 0 ? `${Math.round((r.total / grandTotal) * 100)}%` : "—"}</span>,
     },
   ];
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.key} searchPlaceholder={`Cari ${header.toLowerCase()}…`} pageSize={25} initialSort={{ id: "total", dir: "desc" }} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.key} searchPlaceholder={`Cari ${header.toLowerCase()}…`} initialSort={{ id: "total", dir: "desc" }} />;
 }

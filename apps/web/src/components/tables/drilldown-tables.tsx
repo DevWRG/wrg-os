@@ -68,7 +68,7 @@ const planColumns: DataColumn<PlanRow>[] = [
 ];
 
 export function DrilldownPlanTable({ plan }: { plan: PlanRow[] }) {
-  return <DataTable columns={planColumns} data={plan} getKey={(_, i) => String(i)} searchPlaceholder="Cari customer…" pageSize={25} />;
+  return <DataTable columns={planColumns} data={plan} getKey={(_, i) => String(i)} searchPlaceholder="Cari customer…" />;
 }
 
 const unmatchedColumns: DataColumn<UnmatchedRow>[] = [
@@ -79,5 +79,5 @@ const unmatchedColumns: DataColumn<UnmatchedRow>[] = [
 ];
 
 export function DrilldownUnmatchedTable({ rows }: { rows: UnmatchedRow[] }) {
-  return <DataTable columns={unmatchedColumns} data={rows} getKey={(_, i) => String(i)} searchPlaceholder="Cari…" pageSize={25} />;
+  return <DataTable columns={unmatchedColumns} data={rows} getKey={(_, i) => String(i)} searchPlaceholder="Cari…" />;
 }

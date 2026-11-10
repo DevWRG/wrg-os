@@ -47,7 +47,6 @@ export function MonitorMembersTable({ members }: { members: Member[] }) {
       data={members}
       getKey={(m) => m.phone}
       searchPlaceholder="Cari nama / posisi / cabang…"
-      pageSize={25}
       empty="Belum ada member."
     />
   );

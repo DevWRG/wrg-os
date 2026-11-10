@@ -82,13 +82,13 @@ export function ApView({ data }: { data: ListData }) {
 
       <Card><CardContent className="pt-6">
         <DataTable
-          columns={kolom} data={rows} getKey={(r) => String(r.accurate_id)} pageSize={25}
+          columns={kolom} data={rows} getKey={(r) => String(r.accurate_id)}
           searchPlaceholder="Cari faktur / vendor / PO / SJ…" onRowClick={(r) => setBuka(r.accurate_id)}
           empty={data.total === 0 && !status ? "Belum ada faktur pembelian tersinkron. Nyalakan ACCURATE_PO_SYNC_ENABLED lalu tunggu sinkron." : "Tidak ada yang cocok dengan filter."}
           toolbar={<div className="flex gap-2">
             <FilterSelect label="Hasil" value={status} onChange={pilihStatus}
               options={ORDE.map((s) => ({ value: s, label: FAKTUR_LABEL[s] }))} />
-            <Button size="sm" variant="outline" onClick={() => unduhCsv(rows)} disabled={rows.length === 0}>Ekspor CSV</Button>
+            <Button size="sm" onClick={() => unduhCsv(rows)} disabled={rows.length === 0}>Ekspor CSV</Button>
           </div>}
         />
       </CardContent></Card>

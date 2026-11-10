@@ -174,5 +174,5 @@ const columns: DataColumn<AtkSupplierRow>[] = [
 ];
 
 export function AtkSupplierTable({ rows }: { rows: AtkSupplierRow[] }) {
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari pemasok…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari pemasok…" />;
 }

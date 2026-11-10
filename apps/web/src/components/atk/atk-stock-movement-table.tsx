@@ -231,5 +231,5 @@ export function AtkStockMovementTable({
     { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => r.cabang ?? "—" },
     ...(readOnly ? [] : [{ id: "aksi", header: "Aksi", align: "right" as const, cell: (r: AtkStockMovementRow) => <MovementRowActions row={r} items={items ?? []} /> }]),
   ];
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari mutasi…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari mutasi…" />;
 }

@@ -43,9 +43,9 @@ export function ArAgingTabs({
       {active === "customer" ? (
         <ArByCustomerView customers={customers} invoices={invoices} />
       ) : active === "cabang" ? (
-        <DataTable columns={groupCols("Cabang")} data={byCabang} getKey={(r, i) => `${r.key}-${i}`} searchPlaceholder="Cari cabang…" pageSize={25} empty="Tidak ada piutang OPEN." />
+        <DataTable columns={groupCols("Cabang")} data={byCabang} getKey={(r, i) => `${r.key}-${i}`} searchPlaceholder="Cari cabang…" empty="Tidak ada piutang OPEN." />
       ) : active === "sales" ? (
-        <DataTable columns={groupCols("Sales")} data={bySales} getKey={(r, i) => `${r.key}-${i}`} searchPlaceholder="Cari sales…" pageSize={25} empty="Tidak ada piutang OPEN." />
+        <DataTable columns={groupCols("Sales")} data={bySales} getKey={(r, i) => `${r.key}-${i}`} searchPlaceholder="Cari sales…" empty="Tidak ada piutang OPEN." />
       ) : (
         <ArTable invoices={invoices} />
       )}

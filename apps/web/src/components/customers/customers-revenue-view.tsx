@@ -160,7 +160,6 @@ export function CustomersRevenueView({ data }: { data: CustomersRevenue }) {
             data={rows}
             getKey={(c) => c.id}
             searchPlaceholder="Cari customer / cabang…"
-            pageSize={25}
             onRowClick={openDetail}
             toolbar={
               <div className="flex items-center gap-2">

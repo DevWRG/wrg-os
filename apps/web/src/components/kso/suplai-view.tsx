@@ -206,7 +206,7 @@ export function KsoSuplaiPanel({ data: awal }: { data: DataSuplai | null }) {
                 Ritme = median jeda antar-kiriman {periode}; <b>telat</b> bila sudah lewat 1,5× ritme (minimal ritme + 14 hari), atau {data.aturan.telat_tanpa_ritme} hari bila ritme belum terbaca.
                 “Tanpa kiriman” = belum ada DO jenis itu sejak {tgl(data.data_do.sejak)}: alat menganggur, atau reagen dikirim atas nama customer lain.
               </p>
-              <DataTable columns={kolomOrder} data={order} getKey={(o) => `${o.account_id}|${o.jenis}`} searchPlaceholder="Cari faskes…" pageSize={25}
+              <DataTable columns={kolomOrder} data={order} getKey={(o) => `${o.account_id}|${o.jenis}`} searchPlaceholder="Cari faskes…"
                 empty={data.order.length === 0 ? "Tidak ada faskes KSO dalam cakupan Anda." : "Tidak ada baris dengan filter ini."}
                 toolbar={<>
                   <FilterSelect label="Cabang" value={cabang} onChange={setCabang} options={opsiCabang} />
@@ -225,7 +225,7 @@ export function KsoSuplaiPanel({ data: awal }: { data: DataSuplai | null }) {
                 Stok = Accurate{data.stok_per ? ` per ${new Date(data.stok_per).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" })}` : ""}; PO jalan = PO Accurate yang belum selesai, maksimal {data.aturan.po_basi_hari} hari.
                 <b> Stok 0</b> padahal rutin dikirim biasanya berarti stok tidak dicatat di Accurate (kirim langsung principal/konsinyasi) — cek dulu sebelum PO.
               </p>
-              <DataTable columns={kolomItem} data={item} getKey={(i) => i.item_no} searchPlaceholder="Cari item…" pageSize={25}
+              <DataTable columns={kolomItem} data={item} getKey={(i) => i.item_no} searchPlaceholder="Cari item…"
                 empty="Tidak ada item dengan filter ini."
                 toolbar={<FilterSelect label="Jenis alat" value={jenis} onChange={setJenis} options={opsiJenis} />} />
             </CardContent>

@@ -217,7 +217,7 @@ export function BrosurView({ data, driveSiap, bolehTambah, bolehUbah }: { data: 
       </div>
       <Card>
         <CardContent className="pt-6">
-          <DataTable columns={kolom} data={tampil} getKey={(m) => m.id} searchPlaceholder="Cari judul / produk / brand…" pageSize={25}
+          <DataTable columns={kolom} data={tampil} getKey={(m) => m.id} searchPlaceholder="Cari judul / produk / brand…"
             empty={data.length === 0 ? "Katalog masih kosong." : "Tidak ada materi yang cocok dengan filter."}
             toolbar={
               <div className="flex flex-wrap items-center gap-3">

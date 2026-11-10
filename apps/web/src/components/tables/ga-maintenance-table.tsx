@@ -102,5 +102,5 @@ export function GaMaintenanceTable({ schedules, canApproveFinance, users }: { sc
     },
   ];
 
-  return <DataTable columns={columns} data={schedules} getKey={(s) => s.id} searchPlaceholder="Cari kode aset / nama…" pageSize={25} />;
+  return <DataTable columns={columns} data={schedules} getKey={(s) => s.id} searchPlaceholder="Cari kode aset / nama…" />;
 }

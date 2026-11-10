@@ -143,7 +143,7 @@ export function KampanyeDetailView({ d, opsi, bolehUbah }: { d: DetailKampanye; 
       <Card>
         <CardHeader><CardTitle className="text-base">Per AM</CardTitle></CardHeader>
         <CardContent>
-          <DataTable columns={kolom} data={d.per_am} getKey={(a) => a.am_id || "tanpa"} searchPlaceholder="Cari AM…" pageSize={25}
+          <DataTable columns={kolom} data={d.per_am} getKey={(a) => a.am_id || "tanpa"} searchPlaceholder="Cari AM…"
             empty="Belum ada target maupun realisasi." />
         </CardContent>
       </Card>

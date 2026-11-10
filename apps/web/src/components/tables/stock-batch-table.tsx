@@ -186,7 +186,6 @@ export function StockBatchTable({ rows }: { rows: StockBatchRow[] }) {
       data={rows}
       getKey={(r) => `${r.item_id}|${r.warehouse_kode}|${r.batch_no}`}
       searchPlaceholder="Cari SKU / nama / batch…"
-      pageSize={25}
     />
   );
 }

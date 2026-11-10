@@ -69,7 +69,6 @@ export function AccountsTable({ accounts }: { accounts: AccountRow[] }) {
       data={data}
       getKey={(r) => r.id}
       searchPlaceholder="Cari account / cabang…"
-      pageSize={25}
       onRowClick={(r) => router.push(`/accounts/${r.id}`)}
       empty={accounts.length ? "Tidak ada account yang cocok dengan filter." : "Belum ada account (butuh data faktur Accurate)."}
       toolbar={

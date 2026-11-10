@@ -136,5 +136,5 @@ const columns: DataColumn<AtkCategoryRow>[] = [
 ];
 
 export function AtkCategoryTable({ rows }: { rows: AtkCategoryRow[] }) {
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari kategori…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari kategori…" />;
 }

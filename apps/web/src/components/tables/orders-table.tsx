@@ -144,7 +144,6 @@ export function OrdersTable({ orders }: { orders: SalesOrder[] }) {
         data={filtered}
         getKey={(o) => o.id}
         searchPlaceholder="Cari order # / customer / status…"
-        pageSize={25}
         onRowClick={openDetail}
         toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="so" />}
       />

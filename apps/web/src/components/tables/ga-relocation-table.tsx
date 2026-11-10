@@ -78,7 +78,6 @@ export function GaRelocationTable({ rows }: { rows: GaRelocation[] }) {
       data={rows}
       getKey={(r) => r.id}
       searchPlaceholder="Cari kode aset, lokasi, PIC…"
-      pageSize={25}
       initialSort={{ id: "tanggal", dir: "desc" }}
     />
   );

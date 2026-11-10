@@ -37,5 +37,5 @@ export function GaVendorTable({ vendors }: { vendors: GaVendor[] }) {
     { id: "aksi", header: "Aksi", align: "right", cell: (v) => <GaVendorRowActions vendor={v} /> },
   ];
 
-  return <DataTable columns={columns} data={vendors} getKey={(v) => v.id} searchPlaceholder="Cari vendor…" pageSize={25} />;
+  return <DataTable columns={columns} data={vendors} getKey={(v) => v.id} searchPlaceholder="Cari vendor…" />;
 }
