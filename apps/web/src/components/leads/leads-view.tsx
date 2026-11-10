@@ -88,7 +88,6 @@ export function LeadsView({ leads, amOpsi, bolehTambah, bolehUbah }: { leads: Le
             data={data}
             getKey={(r) => r.id}
             searchPlaceholder="Cari faskes / kode lead…"
-            pageSize={25}
             onRowClick={(r) => setBuka(r.id)}
             empty={leads.length === 0 ? "Belum ada lead. Kirim #LEADS dari WhatsApp atau klik Tambah lead." : "Tidak ada lead yang cocok dengan filter."}
             toolbar={

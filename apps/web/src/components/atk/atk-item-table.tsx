@@ -244,5 +244,5 @@ export function AtkItemTable({
     { id: "status", header: "Status", cell: (r) => (r.is_active ? <Badge className="bg-success/10 text-success">Aktif</Badge> : <Badge variant="secondary">Nonaktif</Badge>) },
     { id: "aksi", header: "Aksi", align: "right", cell: (r) => <ItemRowActions row={r} categories={categories} suppliers={suppliers} /> },
   ];
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari barang…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari barang…" />;
 }

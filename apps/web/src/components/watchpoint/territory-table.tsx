@@ -20,5 +20,5 @@ const columns: DataColumn<TerritoryRow>[] = [
 ];
 
 export function TerritoryTable({ rows }: { rows: TerritoryRow[] }) {
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari HoD / cabang…" pageSize={50} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari HoD / cabang…" />;
 }

@@ -68,7 +68,7 @@ export function TargetPacingView({ data }: { data: PacingData }) {
 
       <Card>
         <CardContent>
-          <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "achievement_pct", dir: "asc" }} pageSize={25} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
+          <DataTable data={rows} columns={columns} getKey={(r) => ("am_id" in r ? r.am_id : r.cabang)} initialSort={{ id: "achievement_pct", dir: "asc" }} empty="Belum ada target di-set utk tahun ini (menu Admin → Sales Targets)." />
           <p className="text-muted-foreground mt-3 text-xs">Status = actual vs ekspektasi to-date ({data.elapsed_pct}% periode berlalu): ≥100% Sesuai Target · 90–99% Perlu Perhatian · &lt;90% Tertinggal. Proyeksi = ekstrapolasi linear actual ke akhir tahun.</p>
         </CardContent>
       </Card>

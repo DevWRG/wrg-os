@@ -97,7 +97,6 @@ export function ShipmentsTable({ shipments }: { shipments: DeliveryOrder[] }) {
         data={filtered}
         getKey={(s) => s.id}
         searchPlaceholder="Cari surat jalan / customer / status…"
-        pageSize={25}
         onRowClick={openDetail}
         toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="sj" />}
       />

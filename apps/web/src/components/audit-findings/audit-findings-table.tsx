@@ -38,5 +38,5 @@ export function AuditFindingsTable({ findings }: { findings: AuditFinding[] }) {
     },
   ];
 
-  return <DataTable columns={columns} data={findings} getKey={(f) => f.id} searchPlaceholder="Cari temuan…" pageSize={25} />;
+  return <DataTable columns={columns} data={findings} getKey={(f) => f.id} searchPlaceholder="Cari temuan…" />;
 }

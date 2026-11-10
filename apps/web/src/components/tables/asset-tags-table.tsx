@@ -61,6 +61,6 @@ export function AssetTagsTable({ assets }: { assets: AssetTag[] }) {
   ];
 
   return (
-    <DataTable columns={columns} data={assets} getKey={(a) => a.id} searchPlaceholder="Cari kode / nama…" pageSize={25} />
+    <DataTable columns={columns} data={assets} getKey={(a) => a.id} searchPlaceholder="Cari kode / nama…" />
   );
 }

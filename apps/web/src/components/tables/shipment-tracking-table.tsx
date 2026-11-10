@@ -111,7 +111,6 @@ export function ShipmentTrackingTable({ shipments }: { shipments: ShipmentTracki
       data={shipments}
       getKey={(s) => s.id}
       searchPlaceholder="Cari No. SJ / customer…"
-      pageSize={25}
     />
   );
 }

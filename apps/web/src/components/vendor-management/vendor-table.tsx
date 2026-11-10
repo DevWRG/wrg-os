@@ -89,7 +89,7 @@ export function VendorTable({ rows }: { rows: VendorPartnerRow[] }) {
 
   return (
     <>
-      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari nama vendor / kategori / cabang…" pageSize={25} />
+      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari nama vendor / kategori / cabang…" />
       <VendorDetailDialog vendorId={detailId} onClose={() => setDetailId(null)} />
     </>
   );

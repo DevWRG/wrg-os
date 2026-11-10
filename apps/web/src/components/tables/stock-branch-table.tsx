@@ -203,7 +203,6 @@ export function StockBranchTable({
       data={rows}
       getKey={(r) => r.item_id}
       searchPlaceholder="Cari SKU / nama item…"
-      pageSize={25}
     />
   );
 }

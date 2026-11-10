@@ -30,7 +30,7 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
   const [page, setPage] = useState(0);
-  const [size, setSize] = useState(25);
+  const [size, setSize] = useState(10);
   const [data, setData] = useState<DaftarAset | null>(null);
   const [pending, setPending] = useState(false);
   const [err, setErr] = useState<string | null>(null);

@@ -197,7 +197,6 @@ export function PickupPlanTable({ plans }: { plans: PickupPlan[] }) {
       data={plans}
       getKey={(p) => p.id}
       searchPlaceholder="Cari customer / kurir / SJ…"
-      pageSize={25}
     />
   );
 }

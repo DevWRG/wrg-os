@@ -81,7 +81,6 @@ export function DemoTrialView({ daftar, amOpsi, bolehTambah, bolehUbah }: { daft
             data={data}
             getKey={(r) => r.id}
             searchPlaceholder="Cari faskes / kode / alat…"
-            pageSize={25}
             onRowClick={(r) => setBuka(r.id)}
             empty={items.length === 0 ? "Belum ada demo/trial. Kirim #DEMO dari WhatsApp atau klik Catat demo / trial." : "Tidak ada yang cocok dengan filter."}
             toolbar={
@@ -107,7 +106,6 @@ export function DemoTrialView({ daftar, amOpsi, bolehTambah, bolehUbah }: { daft
           <DataTable
             data={daftar.konversi}
             getKey={(b) => `${b.jenis}|${b.kunci}`}
-            pageSize={15}
             searchPlaceholder="Cari produk…"
             empty="Belum ada data."
             columns={[

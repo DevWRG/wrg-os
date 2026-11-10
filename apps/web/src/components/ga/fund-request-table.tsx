@@ -163,7 +163,7 @@ export function FundRequestTable({ rows }: { rows: FundRequestRow[] }) {
   return (
     <>
       {dialog}
-      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari keperluan / pengaju / cabang…" pageSize={25} onRowClick={openDetail} />
+      <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari keperluan / pengaju / cabang…" onRowClick={openDetail} />
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent>

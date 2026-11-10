@@ -207,7 +207,7 @@ export function ProductScorecardView({ awal }: { awal: DataScorecard | null }) {
             {data.margin && ` GP% hanya dari item dengan HPP tunggal di price book ${data.periode_hpp}; cakupan HPP < 80% ditandai.`}
             {data.range.dipotong && " Rentang dipotong ke 366 hari terakhir."}
           </p>
-          <DataTable columns={kolom} data={data.rows} getKey={(r) => r.key} searchPlaceholder={`Cari ${NAMA_LEVEL[level].toLowerCase()}…`} pageSize={25}
+          <DataTable columns={kolom} data={data.rows} getKey={(r) => r.key} searchPlaceholder={`Cari ${NAMA_LEVEL[level].toLowerCase()}…`}
             empty="Tidak ada penjualan di periode & cakupan ini." />
         </CardContent>
       </Card>

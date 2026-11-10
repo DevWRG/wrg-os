@@ -1,3 +1,4 @@
+import { Card, CardContent } from "@/components/ui/card";
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -46,7 +47,9 @@ export default async function VendorManagementPage() {
           description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 145_vendor_management.sql sudah diterapkan."
         />
       ) : (
-        <VendorTable rows={data.rows ?? []} />
+        <Card><CardContent className="pt-6">
+          <VendorTable rows={data.rows ?? []} />
+        </CardContent></Card>
       )}
     </>
   );

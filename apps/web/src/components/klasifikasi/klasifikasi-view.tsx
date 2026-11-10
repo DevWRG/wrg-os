@@ -494,7 +494,6 @@ function KodeTab({ codes }: { codes: ProductCode[] }) {
           columns={cols}
           data={rows}
           getKey={(r) => r.kode}
-          pageSize={25}
           searchPlaceholder="Cari kode, nama, kode 2025, brand…"
           toolbar={
             <div className="flex flex-wrap items-center gap-2">
@@ -778,7 +777,6 @@ function ReviewTab({ rows, canEdit }: { rows: ReviewRow[]; canEdit: boolean }) {
           columns={cols}
           data={rows}
           getKey={(r) => String(r.id)}
-          pageSize={25}
           searchPlaceholder="Cari nama, sub class, masalah…"
           empty="Tidak ada yang menunggu keputusan."
           toolbar={

@@ -343,7 +343,6 @@ export function PricebookSetupTable({
         data={data}
         getKey={(r) => String(r.rowNo)}
         searchPlaceholder="Cari nama / brand / kode…"
-        pageSize={25}
         initialSort={{ id: "pl", dir: "desc" }}
         empty="Tidak ada SKU yang cocok dengan filter."
         onRowClick={(r) => setEdit(r)}

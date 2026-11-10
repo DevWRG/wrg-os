@@ -251,7 +251,6 @@ export function KsoProduktivitasTabel({ f }: { f: FilterKso }) {
             data={rows}
             getKey={(g) => g.key}
             searchPlaceholder="Cari faskes, alat, kota…"
-            pageSize={25}
             // Kolom Rp/tes hanya ADA di PER_TEST; di BELI_REAGEN namanya `rpa`. Menunjuk
             // "rpt" di kedua skema membuat urutan awal tab BELI_REAGEN menunjuk kolom yang
             // tidak ada — cacat yang masuk bersama #1014 dan tidak memunculkan error apa pun.

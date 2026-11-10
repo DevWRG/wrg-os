@@ -63,7 +63,6 @@ export function CompetitorTable({ items }: { items: CompetitorItem[] }) {
         data={items}
         getKey={(i) => i.id}
         searchPlaceholder="Cari vendor / produk / customer…"
-        pageSize={25}
         onRowClick={(i) => setSel(i)}
       />
 

@@ -108,7 +108,6 @@ export function EcatalogView({ data }: { data: EcatalogData }) {
             data={baris}
             getKey={(r) => r.customer_id}
             searchPlaceholder="Cari faskes / AM…"
-            pageSize={25}
             initialSort={{ id: "status", dir: "asc" }}
             empty={data.total_faskes === 0 ? "Belum ada faktur e-katalog dalam jendela ini." : "Tidak ada faskes dengan status ini."}
           />

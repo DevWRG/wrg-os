@@ -58,5 +58,5 @@ export function AtkStockLevelTable({ rows }: { rows: AtkStockLevelRow[] }) {
       ),
     },
   ];
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.item_id} searchPlaceholder="Cari barang…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.item_id} searchPlaceholder="Cari barang…" />;
 }

@@ -96,7 +96,7 @@ export function OnboardingView({ cases, templates, dept, bolehTambah, bolehUbah,
           <Card>
             <CardContent className="pt-6">
               <DataTable
-                columns={kolom} data={data} getKey={(c) => String(c.id)} pageSize={25}
+                columns={kolom} data={data} getKey={(c) => String(c.id)}
                 searchPlaceholder="Cari karyawan…" onRowClick={(c) => setBuka(c.id)}
                 empty={cases.length === 0 ? "Belum ada onboarding. Klik Mulai onboarding untuk karyawan baru." : "Tidak ada yang cocok dengan filter."}
                 toolbar={<FilterSelect label="Status" value={status} onChange={setStatus}
@@ -110,7 +110,7 @@ export function OnboardingView({ cases, templates, dept, bolehTambah, bolehUbah,
       {tab === "template" && templates && (
         <Card>
           <CardContent className="pt-6">
-            <DataTable columns={kolomTpl} data={templates} getKey={(t) => String(t.id)} pageSize={25} searchPlaceholder="Cari butir…" empty="Belum ada template." />
+            <DataTable columns={kolomTpl} data={templates} getKey={(t) => String(t.id)} searchPlaceholder="Cari butir…" empty="Belum ada template." />
           </CardContent>
         </Card>
       )}

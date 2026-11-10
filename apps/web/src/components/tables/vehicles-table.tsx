@@ -106,6 +106,6 @@ export function VehiclesTable({ vehicles }: { vehicles: Vehicle[] }) {
   ];
 
   return (
-    <DataTable columns={columns} data={vehicles} getKey={(v) => v.id} searchPlaceholder="Cari plat / sopir…" pageSize={25} />
+    <DataTable columns={columns} data={vehicles} getKey={(v) => v.id} searchPlaceholder="Cari plat / sopir…" />
   );
 }

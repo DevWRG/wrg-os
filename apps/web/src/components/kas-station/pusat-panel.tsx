@@ -168,7 +168,7 @@ export function PusatPanel({ izin, cabangOpsi }: { izin: IzinKasStation; cabangO
         <CardContent>
           {ring.galat ? <p className="text-destructive text-sm">{ring.galat}</p>
             : ring.loading && !ring.data ? <p className="text-muted-foreground text-sm">Memuat…</p>
-            : <DataTable columns={kolom} data={stations} getKey={(s) => s.cabang} pageSize={25} initialSort={{ id: "cabang", dir: "asc" }} searchPlaceholder="Cari station…" />}
+            : <DataTable columns={kolom} data={stations} getKey={(s) => s.cabang} initialSort={{ id: "cabang", dir: "asc" }} searchPlaceholder="Cari station…" />}
         </CardContent>
       </Card>
 

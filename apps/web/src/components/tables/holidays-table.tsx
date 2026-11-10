@@ -23,5 +23,5 @@ const columns: DataColumn<Holiday>[] = [
 ];
 
 export function HolidaysTable({ holidays }: { holidays: Holiday[] }) {
-  return <DataTable columns={columns} data={holidays} getKey={(h) => h.id} searchPlaceholder="Cari hari libur…" pageSize={25} />;
+  return <DataTable columns={columns} data={holidays} getKey={(h) => h.id} searchPlaceholder="Cari hari libur…" />;
 }

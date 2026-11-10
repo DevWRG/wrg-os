@@ -130,6 +130,6 @@ export function GaAssetsTable({ assets, categories, users }: { assets: GaAsset[]
   ];
 
   return (
-    <DataTable columns={columns} data={assets} getKey={(a) => a.id} searchPlaceholder="Cari kode aset / nama / serial…" pageSize={25} />
+    <DataTable columns={columns} data={assets} getKey={(a) => a.id} searchPlaceholder="Cari kode aset / nama / serial…" />
   );
 }

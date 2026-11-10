@@ -361,7 +361,6 @@ export function RaciPosisiBridge({
               columns={kolomRantai}
               data={data.rantai}
               getKey={(x) => `${x.employee_id}|${x.posisi_id}`}
-              pageSize={25}
               initialSort={{ id: "proses", dir: "desc" }}
               searchPlaceholder="Cari karyawan / posisi…"
             />
@@ -449,7 +448,6 @@ export function RaciPosisiBridge({
               columns={kolomGap}
               data={gap}
               getKey={(x) => x.employee_id}
-              pageSize={25}
               searchPlaceholder="Cari karyawan / alasan…"
             />
           </>
