@@ -5,15 +5,19 @@ export interface TabBoleh { tab: TabKso; bolehAksi: boolean }
 
 export interface Ringkasan {
   total_diajukan: number; menunggu_hod: number; menunggu_forum: number; menunggu_direksi: number;
-  siap_penawaran: number; ditahan: number; total_jalur_cepat: number; total_jalur_forum: number; capex_disetujui: number;
+  siap_penawaran: number; ditahan: number; total_jalur_cepat: number; total_jalur_forum: number;
+  /** Tidak ada bila respons disaring (AM / HOD Sales / Admin Sales / Teknik — keputusan 10 Nov, margin & HPP). */
+  capex_disetujui?: number;
 }
 
 export interface BarisAntrean {
   antrean: string; id: number; nomor: string | null; status: string; faskes_nama: string; alat_nama: string;
-  capex: number; sejak: string | null; batas: string | null; am_nama: string; cabang: string | null;
+  capex?: number; sejak: string | null; batas: string | null; am_nama: string; cabang: string | null;
   jalur: string | null; pola_gerbang: string | null; gerbang_merah: string | null; volume_sumber: string | null;
   /** F170 v2 (266): zona setelah eskalasi + GPM deal; volume_terverifikasi NULL = belum diperiksa Sekretaris. */
   zona?: Zona | null; gpm_deal?: number | null; volume_terverifikasi?: boolean | null;
+  /** 303: faskes baru (calon customer) + kotanya. */
+  faskes_baru?: boolean; faskes_kota?: string | null;
 }
 
 export type Zona = "am" | "hod" | "forum" | "direktur";
@@ -42,24 +46,34 @@ export interface BarisAgenda {
 
 export type BarisKpi = Record<string, string | number | null> & { am_id: string; am_nama: string; periode: string };
 
-export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[] }
+/**
+ * `tanpa_angka` = API membuang margin/HPP untuk tab ini (keputusan product owner 10 Nov): AM, HOD Sales, Admin Sales,
+ * Teknik. Kolom capex, GPM, harga bersih, harga minimum zona, harga mandat (Admin Sales: kecuali pembuka), biaya CPRR
+ * tidak dikirim — layar menampilkan gerbang hijau/merah saja.
+ */
+export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[]; tanpa_angka?: boolean }
 
 export interface Detail {
   rencana: Record<string, unknown> & {
     id: number; nomor: string | null; status: string; jalur: string | null; am_nama: string; faskes_nama: string; cabang: string | null;
-    alat_nama: string; jumlah: number; capex: number; volume_estimasi: number | null; volume_sumber: string | null;
-    harga_per_test: number | null; tenor_bulan: number | null; alasan_forum: string | null; payback_bulan: number | null;
+    alat_nama: string; jumlah: number; capex?: number; volume_estimasi: number | null; volume_sumber: string | null;
+    harga_per_test: number | null; tenor_bulan: number | null; alasan_forum: string | null; payback_bulan?: number | null;
     zona?: Zona | null; zona_dasar?: Zona | null; gpm_deal?: number | null; alasan_strategis?: string | null; harga_pesaing?: number | null;
     volume_terverifikasi?: boolean | null; volume_verifikasi_catatan?: string | null; volume_verifikasi_at?: string | null;
     /** 282: hari kerja alat/bulan dari AM; null = default parameter Bottom Line. */
     hari_kerja?: number | null; hari_kerja_default?: number | null;
+    /** 302: fee ke RS/perantara (%), harga setelah fee, klausul ADA/TIDAK, kompetitor dari format #KSO. GPM = bersih fee. */
+    fee_persen?: number | null; harga_bersih?: number | null; klausul_ada?: boolean | null; klausul_detail?: string | null;
+    kompetitor_alat?: string | null;
+    /** 303: faskes baru (calon customer, id BARU-n) + kota. */
+    faskes_baru?: boolean; faskes_kota?: string | null;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
   klausul: { kode: string; label: string }[];
   pendapat: { hod_id: string; hod_nama: string | null; jenis: string; keputusan: string | null; catatan: string | null; dianggap_setuju: boolean; at: string }[];
   mandat: {
-    harga_lantai: number; harga_target: number | null; harga_pembuka?: number | null; volume_terbukti?: number | null; tenor_maks_bulan: number; capex_maks: number; volume_minimum: number | null;
+    harga_lantai?: number; harga_target?: number | null; harga_pembuka?: number | null; volume_terbukti?: number | null; tenor_maks_bulan: number; capex_maks?: number; volume_minimum: number | null;
     klausul_dilarang: string[]; klausul_wajib: string[]; berlaku_sampai: string; sumber: string;
   } | null;
   usulan: { usulan: string; syarat: { isi: string; tipe: string }[] | null; data_kurang: string | null; pemilik: string | null; tanggal_kembali: string | null; alasan: string | null; at: string }[];
@@ -70,7 +84,52 @@ export interface Detail {
   klausul_khusus: { kode: string; label: string }[];
   /** F170 v2 (268): GPM deal + harga minimum per zona. */
   angka_gpm?: AngkaGpm | null;
+  /** 302: lampiran PDF Simulator CPRR (terbaru dulu) + yang masih kurang (sumber sama dengan balasan WA). */
+  lampiran_terakhir?: Lampiran | null;
+  lampiran?: Lampiran[];
+  kurang?: ItemKurang[];
+  /** 303: akun master paling mirip untuk faskes baru — hanya tab Sekretariat / Agenda (yang boleh menautkan). */
+  faskes_saran_master?: { id: string; nama: string; cabang: string | null; skor: number }[];
+  /** Respons disaring (lihat DataTab.tanpa_angka). */
+  tanpa_angka?: boolean;
 }
+
+// ---------------------------------------------------------------- 302: format #KSO + lampiran
+
+export type StatusCocok = "cocok" | "beda" | "kosong";
+export interface CocokIsian { label: string; status: StatusCocok; pdf: string | null; wa: string | null }
+
+/** Isian hasil OCR PDF Simulator (services/ai /kso/ocr-cprr) — boleh null semua. */
+export interface IsianCprr {
+  tanggal?: string | null; nama_sales?: string | null; nama_faskes?: string | null; kota?: string | null; analyzer?: string | null;
+  capex_total?: number | null; masa_bulan?: number | null; test_per_bulan?: number | null; hari_kerja?: number | null;
+  markup_persen?: number | null; capex_per_test?: number | null; reagen_per_test?: number | null; qc_per_test?: number | null;
+  base_cost_per_test?: number | null; cprr_per_test?: number | null; kompetitor_teks?: string | null;
+}
+
+export interface Lampiran {
+  id: number; wa_message_id: string | null; lolos: boolean; cocok: Record<string, CocokIsian> | null; isian: IsianCprr | null;
+  galat: string | null; ok: boolean; peringatan: string[] | null; tanggal: string | null; dibuat_at: string; ada_berkas: boolean;
+}
+
+export interface ItemKurang { kunci: string; teks: string; contoh: string }
+
+/** Baris daftar "Belum lengkap" / "Lolos tanpa forum" (GET /kso-komite/:tab/daftar/:filter). */
+export interface BarisDaftar {
+  id: number; nomor: string | null; status: string; jalur: string | null; am_nama: string; cabang: string | null;
+  faskes_nama: string; alat_nama: string; zona: Zona | null; zona_dasar?: Zona | null; gpm_deal?: number | null;
+  harga_per_test: number | null; fee_persen: number | null; harga_bersih?: number | null; volume_estimasi: number | null;
+  tenor_bulan: number | null; dibuat_at: string | null; diajukan_at: string | null; diubah_at: string | null;
+  /** 303: faskes baru (calon customer) + kotanya. */
+  faskes_baru?: boolean; faskes_kota?: string | null;
+  lampiran: { id: number; lolos: boolean; tanggal: string | null; dibuat_at: string } | null;
+  mandat: {
+    harga_pembuka?: number | null; harga_target?: number | null; harga_lantai?: number | null; volume_terbukti: number | null;
+    berlaku_sampai: string | null; sumber: string | null;
+  } | null;
+  kurang?: ItemKurang[];
+}
+export interface DataDaftar { tab: TabKso; filter: string; baris: BarisDaftar[]; tanpa_angka?: boolean }
 
 /** Perlindungan wajib WRG di setiap PKS (mandat.klausul_wajib) — label untuk layar. */
 export const LABEL_PERLINDUNGAN: Record<string, string> = {

@@ -7,8 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
+import { pilihTabDaftar } from "@/lib/kso-komite-daftar";
+
 import { BottomLinePanel } from "./bottom-line";
-import { LabelStatus } from "./label-status";
+import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
+import { TombolFormatKso } from "./format-kso";
+import { BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
@@ -23,41 +27,55 @@ import {
 // Tab "Bottom Line Alat" (F172) bukan tab peran: datanya sendiri (/api/kso-komite/bottom-line) dan
 // izinnya fitur kso-komite-bottomline — tampil bila `bottomLine` true. Tab "Tinjauan Portofolio" (F170 Fase D)
 // memakai izin yang sama.
-type TabLayar = TabKso | "bottomline" | "portofolio";
+// Tab "Belum lengkap" & "Lolos tanpa forum" (302) bukan tab peran: daftar lintas status yang diminta
+// lewat satu tab peran milik pengguna (pilihTabDaftar — cakupan terluas), jadi tak butuh fitur baru.
+type TabDaftar = "belum-lengkap" | "lolos-tanpa-forum";
+type TabLayar = TabKso | "bottomline" | "portofolio" | TabDaftar;
+const isDaftar = (t: TabLayar): t is TabDaftar => t === "belum-lengkap" || t === "lolos-tanpa-forum";
+const isPeran = (t: TabLayar): t is TabKso => t !== "bottomline" && t !== "portofolio" && !isDaftar(t);
 
 export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bottomLine?: boolean }) {
   const [tab, setTab] = useState<TabLayar>(tabs[0]?.tab ?? "bottomline");
   const [data, setData] = useState<Partial<Record<TabKso, DataTab>>>({});
   const [err, setErr] = useState<string | null>(null);
   const [buka, setBuka] = useState<number | null>(null);
+  const [segar, setSegar] = useState(0);
+  const sumber = { "belum-lengkap": pilihTabDaftar(tabs, "belum-lengkap"), "lolos-tanpa-forum": pilihTabDaftar(tabs, "lolos-tanpa-forum") };
 
   const terapkan = useCallback((t: TabKso, p: Promise<DataTab>, batal: () => boolean) => {
     p.then((d) => { if (!batal()) { setData((x) => ({ ...x, [t]: d })); setErr(null); } })
       .catch((e: Error) => { if (!batal()) setErr(e.message); });
   }, []);
   useEffect(() => {
-    if (tab === "bottomline" || tab === "portofolio") return;
+    if (!isPeran(tab)) return;
     let batal = false;
     terapkan(tab, kirim<DataTab>(`/api/kso-komite/${tab}`), () => batal);
     return () => { batal = true; };
   }, [tab, terapkan]);
   const muat = (t: TabKso) => terapkan(t, kirim<DataTab>(`/api/kso-komite/${t}`), () => false);
 
-  const aktif = tab === "bottomline" || tab === "portofolio" ? null : tabs.find((t) => t.tab === tab) ?? null;
+  const aktif = isDaftar(tab) ? sumber[tab]?.tab ?? null : isPeran(tab) ? tabs.find((t) => t.tab === tab) ?? null : null;
   const lebar = useLayarLebar();
-  const d = tab === "bottomline" || tab === "portofolio" ? undefined : data[tab];
+  const d = isPeran(tab) ? data[tab] : undefined;
+  // sesudah aksi di rincian: muat ulang antrean tab peran / daftar yang sedang dibuka
+  const berubah = (t: TabKso) => { if (isPeran(tab)) muat(t); else setSegar((x) => x + 1); };
 
   return (
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
       {tabs.length > 0 && <SusunanPanel />}
-      <div className="-mx-1 overflow-x-auto px-1">
-        <TabsList>
-          {tabs.map((t) => (
-            <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
-          ))}
-          {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
-          {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
-        </TabsList>
+      <div className="flex items-center gap-2">
+        <div className="-mx-1 min-w-0 flex-1 overflow-x-auto px-1">
+          <TabsList>
+            {tabs.map((t) => (
+              <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
+            ))}
+            {sumber["belum-lengkap"] && <TabsTrigger value="belum-lengkap">Belum lengkap</TabsTrigger>}
+            {sumber["lolos-tanpa-forum"] && <TabsTrigger value="lolos-tanpa-forum">Lolos tanpa forum</TabsTrigger>}
+            {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
+            {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
+          </TabsList>
+        </div>
+        {tabs.length > 0 && <TombolFormatKso />}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
       {tabs.map((t) => (
@@ -109,6 +127,21 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
           )}
         </TabsContent>
       ))}
+      {(["belum-lengkap", "lolos-tanpa-forum"] as const).map((f) => {
+        const s = sumber[f];
+        if (!s) return null;
+        const Daftar = f === "belum-lengkap" ? DaftarBelumLengkap : DaftarLolos;
+        return (
+          <TabsContent key={f} value={f}>
+            <DuaKolom lebarDaftar panel={lebar && tab === f ? (
+              <RencanaPanel key={`${f}-${buka ?? "kosong"}`} tab={s.tab.tab} id={buka} bolehAksi={s.tab.bolehAksi}
+                onBerubah={() => setSegar((x) => x + 1)} />
+            ) : null}>
+              <Daftar tab={s.tab.tab} cakupan={s.cakupan} onBuka={setBuka} segar={segar} />
+            </DuaKolom>
+          </TabsContent>
+        );
+      })}
       {bottomLine && (
         <TabsContent value="bottomline"><BottomLinePanel /></TabsContent>
       )}
@@ -117,7 +150,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
       )}
       {aktif && !lebar && (
         <RencanaDialog key={`${aktif.tab}-${buka ?? "tutup"}`} tab={aktif.tab} id={buka} bolehAksi={aktif.bolehAksi}
-          onClose={() => setBuka(null)} onBerubah={() => muat(aktif.tab)} />
+          onClose={() => setBuka(null)} onBerubah={() => berubah(aktif.tab)} />
       )}
     </Tabs>
   );
@@ -145,7 +178,8 @@ function PitaAlur({ r }: { r: Ringkasan }) {
     ["Ditahan", r.ditahan, "data kurang", "text-red-700 dark:text-red-400"],
   ];
   return (
-    <div className="bg-card grid grid-cols-2 overflow-hidden rounded-xl border shadow-[var(--shadow-card)] sm:grid-cols-3 lg:grid-cols-6">
+    <div className={cn("bg-card grid grid-cols-2 overflow-hidden rounded-xl border shadow-[var(--shadow-card)] sm:grid-cols-3",
+      r.capex_disetujui == null ? "lg:grid-cols-5" : "lg:grid-cols-6")}>
       {isi.map(([l, v, ket, warna]) => (
         <div key={l} className="border-border border-b p-3 sm:p-4 lg:border-r lg:border-b-0">
           <div className={cn("text-2xl font-bold tabular-nums", Number(v) === 0 ? "text-muted-foreground" : warna)}>{v}</div>
@@ -153,11 +187,14 @@ function PitaAlur({ r }: { r: Ringkasan }) {
           <div className="text-muted-foreground text-xs">{ket}</div>
         </div>
       ))}
-      <div className="border-border col-span-2 border-b p-3 sm:col-span-1 sm:p-4 lg:border-b-0">
-        <div className="text-2xl font-bold tabular-nums">{rpJt(Number(r.capex_disetujui))}</div>
-        <div className="mt-0.5 text-sm font-medium">Capex disetujui</div>
-        <div className="text-muted-foreground text-xs">jalur cepat + Direksi</div>
-      </div>
+      {/* capex = HPP alat: tidak dikirim API untuk AM / HOD Sales / Admin Sales / Teknik (10 Nov) */}
+      {r.capex_disetujui != null && (
+        <div className="border-border col-span-2 border-b p-3 sm:col-span-1 sm:p-4 lg:border-b-0">
+          <div className="text-2xl font-bold tabular-nums">{rpJt(Number(r.capex_disetujui))}</div>
+          <div className="mt-0.5 text-sm font-medium">Capex disetujui</div>
+          <div className="text-muted-foreground text-xs">jalur cepat + Direksi</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -171,9 +208,10 @@ function useLayarLebar() {
   );
 }
 
-function DuaKolom({ panel, children }: { panel: React.ReactNode; children: React.ReactNode }) {
+function DuaKolom({ panel, children, lebarDaftar = false }: { panel: React.ReactNode; children: React.ReactNode; lebarDaftar?: boolean }) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start">
+    <div className={cn("grid gap-5 lg:items-start",
+      lebarDaftar ? "lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]")}>
       <div className="space-y-6">{children}</div>
       {panel && <aside className="hidden lg:sticky lg:top-4 lg:block">{panel}</aside>}
     </div>
@@ -208,13 +246,14 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
                 className={cn("bg-card w-full rounded-xl border p-3 text-left shadow-[var(--shadow-card)] transition-colors hover:border-primary-dark",
                   pilih === b.id && "border-primary-dark ring-primary-dark ring-1")}>
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-semibold">{b.faskes_nama}{b.cabang ? <span className="text-muted-foreground font-normal"> — {b.cabang}</span> : null}</span>
+                  <span className="font-semibold">{b.faskes_nama}{b.cabang ? <span className="text-muted-foreground font-normal"> — {b.cabang}</span> : null}
+                    {b.faskes_baru && <BadgeFaskesBaru kota={b.faskes_kota} className="ml-1.5 align-middle" />}</span>
                   <span className="text-muted-foreground shrink-0 font-mono text-xs">{b.nomor ?? `D${b.id}`}</span>
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
                   <PolaGerbang pola={b.pola_gerbang} />
                   <span className="text-muted-foreground">{b.alat_nama}</span>
-                  <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>
+                  {b.capex != null && <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>}
                   <LabelStatus status={b.status} />
                   {b.zona && (
                     <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums", ZONA_CLS[b.zona])}>
