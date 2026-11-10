@@ -44,3 +44,16 @@ export function canKelolaHargaBeli(u?: AccessUser | null, aksi: "view" | "edit" 
   if (aksi === "view") return canOrLegacy(v, FITUR_HARGA_BELI.key, false, "view") || canOrLegacy(v, FITUR_HARGA_BELI.key, false, "edit");
   return canOrLegacy(v, FITUR_HARGA_BELI.key, false, "edit");
 }
+
+// Basis "Harga beli (Finance)" di Simulator KSO — keputusan user 10 Nov 2026: hanya Komite, Finance,
+// dan HOD Business; user lain cuma melihat "Harga daftar (lama)". Kunci SENDIRI (lihat saja, tanpa
+// membuka layar kelola) supaya grup-grup itu dicentang di Akses Grup tanpa memberi hak simpan.
+// Pemegang kso-simulator-hargabeli otomatis boleh. Role admin TIDAK otomatis (dipakai HOD juga) —
+// sama dengan canKelolaHargaBeli. Ditegakkan di server: page & BFF membuang harga beli/HPP dari master.
+export const FITUR_BASIS_BELI = { key: "kso-simulator-basisbeli", name: "Simulator KSO — lihat basis Harga beli (Komite / Finance / HOD Business)" };
+
+export function canLihatHargaBeli(u?: AccessUser | null): boolean {
+  if (canKelolaHargaBeli(u, "view")) return true;
+  const v = u && (u as { role?: string | null }).role === "admin" ? { ...u, role: null } : u;
+  return canOrLegacy(v, FITUR_BASIS_BELI.key, false, "view");
+}

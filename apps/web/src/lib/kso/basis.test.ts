@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { terapkanBasis } from "./basis";
+import { sembunyikanHargaBeli, terapkanBasis } from "./basis";
 import type { KsoAnalyzer, KsoMaster, KsoParameter, KsoReagent } from "./types";
 
 // angka FIKTIF (repo publik)
@@ -35,4 +35,13 @@ test("basis beli: harga alat = HPP, diskon nol; tanpa HPP tetap harga daftar", (
 test("harga beli 0 tetap dipakai (barang gratis prinsipal), bukan dianggap kosong", () => {
   const m = terapkanBasis(M([alat({ reagents: [reagen({ hargaBeli: 0 })] })]), "beli");
   assert.equal(m.analyzers[0].reagents[0].hargaDp, 0);
+});
+
+test("sembunyikanHargaBeli: harga beli & HPP alat dibuang, harga daftar utuh", () => {
+  const m = sembunyikanHargaBeli(M([alat({ hppAlat: 70, hppSumber: "standar", reagents: [reagen({ hargaBeli: 200 })] })], [param({ hargaBeli: 150 })]));
+  const a = m.analyzers[0];
+  assert.deepEqual([a.hppAlat, a.hppSumber, a.reagents[0].hargaBeli, m.parameters[0].hargaBeli], [null, null, null, null]);
+  assert.deepEqual([a.defaultCapex, a.reagents[0].hargaDp, a.reagents[0].hargaPl, m.parameters[0].hargaPl], [100, 500, 800, 400]);
+  // basis "beli" atas master yang sudah dibuang = harga daftar
+  assert.equal(terapkanBasis(m, "beli").analyzers[0].defaultCapex, 100);
 });

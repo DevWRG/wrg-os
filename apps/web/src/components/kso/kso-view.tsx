@@ -59,9 +59,11 @@ const KATEGORI: { key: KsoKategori; label: string }[] = [
   { key: "BG", label: "Blood Gas" },
 ];
 
-export function KsoView({ master: masterAsli, kelolaHargaBeli = false }: { master: KsoMaster | null; kelolaHargaBeli?: boolean }) {
+export function KsoView({ master: masterAsli, kelolaHargaBeli = false, lihatHargaBeli = false }: {
+  master: KsoMaster | null; kelolaHargaBeli?: boolean; lihatHargaBeli?: boolean;
+}) {
   const [umum, setUmumState] = useState<Umum>(UMUM_AWAL);
-  const [basis, setBasis] = useState<BasisHarga>("beli");
+  const [basis, setBasis] = useState<BasisHarga>(lihatHargaBeli ? "beli" : "daftar");
   const [kelola, setKelola] = useState(false);
   const [kategori, setKategori] = useState<KsoKategori>("HEMATO");
   const [halaman, setHalaman] = useState<"input" | "hasil">("input");
@@ -127,7 +129,8 @@ export function KsoView({ master: masterAsli, kelolaHargaBeli = false }: { maste
             label="Basis harga"
             value={basis}
             options={[
-              { key: "beli" as const, label: "Harga beli (Finance)" },
+              // Harga beli hanya untuk Komite / Finance / HOD Business (masternya pun sudah dibuang di server)
+              ...(lihatHargaBeli ? [{ key: "beli" as const, label: "Harga beli (Finance)" }] : []),
               { key: "daftar" as const, label: "Harga daftar (lama)" },
             ]}
             onChange={setBasis}
@@ -137,7 +140,9 @@ export function KsoView({ master: masterAsli, kelolaHargaBeli = false }: { maste
               ? <>Reagen/kit pakai harga beli WRG; alat pakai HPP (HPP standar Finance / aset tetap).
                 {tanpaBeli > 0 && <> <b className="text-amber-700 dark:text-amber-400">{tanpaBeli} dari {itemKat.length} barang</b> kategori ini belum punya harga beli — memakai harga lama.</>}
                 {alatTanpaHpp > 0 && <> {alatTanpaHpp} alat tanpa HPP — memakai harga daftar.</>}</>
-              : "Perilaku lama: price list / harga distributor — biaya bisa terlihat 2–4× di atas harga beli."}
+              : lihatHargaBeli
+                ? "Perilaku lama: price list / harga distributor — biaya bisa terlihat 2–4× di atas harga beli."
+                : "Price list / harga distributor."}
           </p>
         </div>
         {kelolaHargaBeli && <Button size="sm" variant="outline" onClick={() => setKelola(true)}>Kelola harga beli</Button>}
