@@ -392,7 +392,7 @@ export function balasanSaranFaskes(nama: string, faskesTeks: string, saran: Sara
   return [
     `Faskes "${faskesTeks}" belum pasti, ${nama}. Draft BELUM dibuat — isian lain sudah disimpan, tinggal pilih faskesnya.`,
     `Mungkin maksudnya:\n${daftar}`,
-    `Balas: #KSO FASKES 1${nomor} — atau #KSO FASKES BARU kalau ini customer baru. Berlaku 24 jam.`,
+    `Balas: #KSO FASKES 1${nomor} — atau #KSO FASKES BARU untuk tetap pakai nama "${faskesTeks}" (customer baru). Berlaku 24 jam.`,
     ...(alatTeks ? [`Alat "${alatTeks}" juga belum pasti — ditanyakan sesudah faskes dipilih.`] : []),
   ].join("\n");
 }
