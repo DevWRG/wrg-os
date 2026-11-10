@@ -7,7 +7,21 @@ import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 
-from .klaim import tesseract_cmd
+def tesseract_cmd() -> Optional[str]:
+    """Lokasi binary tesseract. pm2 di Mac mini tak selalu membawa
+    /opt/homebrew/bin di PATH, jadi lokasi Homebrew dicoba eksplisit.
+    Salinan dari app/klaim.py (dev) — main belum memuat #KLAIM OCR."""
+    env = os.environ.get("TESSERACT_CMD")
+    if env and os.path.exists(env):
+        return env
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    for p in ("/opt/homebrew/bin/tesseract", "/usr/local/bin/tesseract", "/usr/bin/tesseract"):
+        if os.path.exists(p):
+            return p
+    return None
+
 
 # F170 Komite KSO — baca lampiran PDF "KSO CPRR — <KATEGORI>" hasil cetak
 # Simulator KSO (apps/web/src/lib/kso/print-pdf.ts) TANPA LLM: PDF dirender

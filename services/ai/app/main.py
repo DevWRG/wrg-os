@@ -1,3 +1,4 @@
+import base64
 import json
 from typing import Optional
 import os
