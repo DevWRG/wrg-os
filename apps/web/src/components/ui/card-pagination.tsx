@@ -21,6 +21,8 @@ export function CardPagination({
   onPageChange,
   onPageSizeChange,
   label = "pelanggan",
+  sizes = CARD_PAGE_SIZES,
+  perLabel = "Kartu/hal:",
 }: {
   /** Jumlah item hasil filter (bukan jumlah yang dirender di halaman ini). */
   total: number;
@@ -30,8 +32,11 @@ export function CardPagination({
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   label?: string;
+  /** Pilihan ukuran halaman; bawaan kelipatan 12 untuk grid kartu, tabel memakai TABLE_PAGE_SIZES. */
+  sizes?: number[];
+  perLabel?: string;
 }) {
-  if (total <= CARD_PAGE_SIZES[0]) return null;
+  if (total <= sizes[0]) return null;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const cur = Math.min(page, pageCount - 1);
   const from = cur * pageSize + 1;
@@ -44,13 +49,13 @@ export function CardPagination({
       </span>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs">Kartu/hal:</span>
+          <span className="text-muted-foreground text-xs">{perLabel}</span>
           <select
             value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
             className="h-7 rounded-md border border-input bg-transparent px-1.5 text-sm outline-none"
           >
-            {CARD_PAGE_SIZES.map((s) => (
+            {sizes.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
