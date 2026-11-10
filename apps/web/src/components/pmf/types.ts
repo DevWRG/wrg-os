@@ -3,6 +3,7 @@ export type PmfStatus = "MENANG" | "NETRAL" | "KALAH" | "DATA KURANG";
 export interface PmfSel {
   brand: string;
   region: string;
+  produk?: string; // hanya di per_produk
   won: number;
   lost: number;
   n: number;
@@ -13,9 +14,9 @@ export interface PmfSel {
 }
 
 export interface PmfScorecard {
-  tahun: number;
-  kuartal: number;
-  periode: { dari: string; sampai: string };
+  tahun: number | null; // null = semua tahun
+  kuartal: number | null; // null = setahun penuh / semua
+  periode: { dari: string | null; sampai: string | null };
   ambang: { min_deal: number; poin: number };
   ringkasan: {
     won: number;
@@ -29,4 +30,5 @@ export interface PmfScorecard {
   };
   per_brand: PmfSel[];
   sel: PmfSel[];
+  per_produk: PmfSel[];
 }

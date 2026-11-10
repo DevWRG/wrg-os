@@ -26,8 +26,8 @@ export default async function PmfScorecardPage({
   }
   const { tahun, kuartal } = await searchParams;
   const q = new URLSearchParams();
-  if (tahun && /^\d{4}$/.test(tahun)) q.set("tahun", tahun);
-  if (kuartal && /^[1-4]$/.test(kuartal)) q.set("kuartal", kuartal);
+  if (tahun && /^(\d{4}|semua)$/.test(tahun)) q.set("tahun", tahun);
+  if (kuartal && /^([1-4]|semua)$/.test(kuartal)) q.set("kuartal", kuartal);
   let data: PmfScorecard | null = null;
   try {
     const r = await gatewayFetch(`/pmf-scorecard${q.size ? `?${q}` : ""}`);
@@ -38,7 +38,7 @@ export default async function PmfScorecardPage({
     <>
       <PageHeader
         title="PMF Scorecard"
-        description="Brand mana yang menang atau kalah per region — win-rate deal pipeline (Closing-Won vs Closing-Lost) per kuartal."
+        description="Brand dan produk mana yang menang atau kalah per region — win-rate deal pipeline (Closing-Won vs Closing-Lost) per kuartal, setahun, atau semua periode."
       />
       {!data
         ? <EmptyState title="Backend tidak terjangkau" description="Coba muat ulang beberapa saat lagi." />
