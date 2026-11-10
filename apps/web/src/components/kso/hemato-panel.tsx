@@ -167,6 +167,17 @@ export function HematoPanel({
     overheadKontrol: hasil.overheadKontrol,
     sellPerTest: hasil.sellPerTest,
     rows: hasil.rows,
+    kontrol: {
+      free: kontrolNow.free,
+      nQc: kontrolNow.nQc,
+      nCal: kontrolNow.nCal,
+      ctrl: kontrolNow.ctrl,
+      ctrlXr: kontrolNow.ctrlXr,
+      cal: kontrolNow.cal,
+      exz8000: isExz8000,
+      hariKerja: umum.workDays,
+      overheadPerTest: hasil.overheadKontrol,
+    },
   };
 
   if (halaman === "hasil") {
