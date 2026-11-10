@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 interface Candidate {
   deal_id: string;
@@ -72,6 +73,7 @@ export default function HitlPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -299,8 +301,15 @@ export default function HitlPage() {
                             disabled={busy === it.id}
                             onClick={() => {
                               const p = it.payload as DuplicateNamePayload;
-                              if (!window.confirm(`Tautkan deal ini?\n\nNama customer "${p.customer_name}" akan diganti menjadi "${c.customer_name}"${c.kind === "accurate_customer" ? " dan ditautkan ke customer Accurate itu" : " (disamakan dengan deal lain)"}. Tercatat di riwayat deal.`)) return;
-                              void resolve(it.id, "approve", undefined, { kind: c.kind, ref_id: c.ref_id });
+                              // Dialog konfirmasi template (useConfirm), bukan window.confirm bawaan browser.
+                              confirm(
+                                {
+                                  title: "Tautkan deal ini?",
+                                  description: `Nama customer "${p.customer_name}" akan diganti menjadi "${c.customer_name}"${c.kind === "accurate_customer" ? " dan ditautkan ke customer Accurate itu" : " (disamakan dengan deal lain)"}. Tercatat di riwayat deal.`,
+                                  confirmLabel: "Tautkan",
+                                },
+                                () => void resolve(it.id, "approve", undefined, { kind: c.kind, ref_id: c.ref_id }),
+                              );
                             }}
                           >
                             Tautkan
@@ -389,6 +398,7 @@ export default function HitlPage() {
           )}
         </div>
       )}
+      {dialog}
     </div>
   );
 }
