@@ -2,8 +2,14 @@
 // penanda di balasan, saran akun master. Data fiktif.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bacaIsianFormat, bacaKlausul, bacaPilihanFaskes, isianLengkapiDariFormat, putuskanFaskes, skorFaskes, SKOR_FASKES_MIRIP, type FaskesKatalog } from "./kso-format.js";
-import { balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, parseKsoPerintah, pertanyaanTertunda, type DraftTampil } from "./kso-intake.js";
+import {
+  bacaIsianFormat, bacaKlausul, bacaPilihanFaskes, bacaYaTidak, cariAlat, isianLengkapiDariFormat, namaTampilFaskes, peringkatFaskes, putuskanFaskes,
+  semuaKataFaskes, skorFaskes, SKOR_FASKES_MIRIP, type AlatKatalog, type FaskesKatalog, type HasilOcrCprr,
+} from "./kso-format.js";
+import {
+  alatDariPdf, balasanSaranAlat, balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, ksoBolehLampiran, parseKsoPerintah,
+  pertanyaanTertunda, tampilCalonFaskes, teksAlatDariPdf, ubahKonfirmasiFaskes, type DraftTampil,
+} from "./kso-intake.js";
 import { saranAkunMaster } from "./kso-komite.js";
 import { polaTerlarang } from "./kso-saring.js";
 
@@ -67,22 +73,29 @@ test("putuskanFaskes: tak ada yang mirip → faskes baru", () => {
   assert.deepEqual(putuskanFaskes("RS UJI COBA", KATALOG), { kind: "baru" });
 });
 
-test("putuskanFaskes: pasti dari cariAkun → dipakai; nama persis faskes baru lama → dipakai ulang", () => {
-  assert.deepEqual(putuskanFaskes("rs sejahtera", KATALOG, { yakin: { id: "9001", nama: "x" } }),
+test("putuskanFaskes: cariAkun pasti + nama persis → dipakai; tak persis → konfirmasi; nama persis faskes baru lama → dipakai ulang", () => {
+  assert.deepEqual(putuskanFaskes("RS UMUM SEJAHTERA (KOTA CONTOH)", KATALOG, { yakin: { id: "9001", nama: "x" } }),
     { kind: "one", id: "9001", nama: "SEJAHTERA, RS UMUM KOTA CONTOH", baru: false });
+  const r = putuskanFaskes("rs sejahtera", KATALOG, { yakin: { id: "9001", nama: "x" } });
+  assert.equal(r.kind, "saran");
+  assert.equal(r.kind === "saran" && r.saran[0].id, "9001");
   assert.deepEqual(putuskanFaskes("rs anggrek  fiktif.", KATALOG), { kind: "one", id: "BARU-7", nama: "RS ANGGREK FIKTIF", baru: true });
 });
 
-test("putuskanFaskes: salah ketik / ambigu → pilihan (maks 3), tidak membuat faskes kembar", () => {
+test("putuskanFaskes: salah ketik / ambigu → SATU calon untuk dikonfirmasi, tidak membuat faskes kembar", () => {
   const h = putuskanFaskes("RS MITRA KELURGA", KATALOG);
   assert.equal(h.kind, "saran");
   if (h.kind !== "saran") return;
-  assert.deepEqual(h.saran.map((s) => s.id).sort(), ["9002", "9003"]);
-  assert.ok(h.saran.every((s) => s.skor >= SKOR_FASKES_MIRIP));
-  // nama yang disebut cariAkun ambigu selalu ikut ditawarkan
+  assert.equal(h.saran.length, 1, "satu pertanyaan, bukan daftar");
+  // seri (skor & kata sama) → nama lebih pendek, deterministik
+  assert.equal(h.saran[0].id, "9002");
+  assert.ok(h.saran[0].skor >= SKOR_FASKES_MIRIP);
+  // peringkat lengkap tetap memuat keduanya
+  assert.deepEqual(peringkatFaskes("RS MITRA KELURGA", KATALOG).map((s) => s.id), ["9002", "9003"]);
+  // nama yang disebut cariAkun ambigu ikut jadi calon walau tak mirip huruf
   const a = putuskanFaskes("RS XYZ", KATALOG, { ambigu: ["HARAPAN BUNDA, KLINIK"] });
   assert.equal(a.kind, "saran");
-  if (a.kind === "saran") assert.equal(a.saran[0].id, "9004");
+  if (a.kind === "saran") assert.deepEqual(a.saran.map((s) => s.id), ["9004"]);
 });
 
 test("skorFaskes: kata generik & kota tak membuat mirip; satu huruf salah ketik tetap mirip", () => {
@@ -112,8 +125,9 @@ const T = { id: 5, faskes_id: null as string | null, alat_teks: "Z5X", saran: [{
 test("tertunda: faskes ditanya dulu (alat ikut disebut), lalu alat, lalu selesai", () => {
   const q1 = pertanyaanTertunda("HUSNI", T, ["Z3", "Z50"])!;
   assert.equal(q1.hasil.error, "faskes-belum-pasti");
-  assert.match(q1.balasan, /1\. MITRA KELUARGA CONTOH, RS — SBY 1\n2\. RS ANGGREK FIKTIF \(faskes baru\)/);
-  assert.match(q1.balasan, /#KSO FASKES 1 \(atau 1\/2\) — atau #KSO FASKES BARU kalau ini customer baru/);
+  // baris tertunda lama berisi 2 calon → tetap SATU pertanyaan (calon teratas), tanpa daftar bernomor
+  assert.match(q1.balasan, /^Faskes "RS MITRA KELURGA" = RS MITRA KELUARGA CONTOH — cabang SBY 1\? Balas #KSO YA atau #KSO TIDAK \(TIDAK = dicatat sebagai faskes baru "RS MITRA KELURGA"\)\. Berlaku 24 jam\./);
+  assert.doesNotMatch(q1.balasan, /ANGGREK|\n\d\. /);
   assert.match(q1.balasan, /Alat "Z5X" juga belum pasti/);
   // faskes dijawab nomor → alat ditanya
   const q2 = pertanyaanTertunda("HUSNI", { ...T, faskes_id: "9002", faskes_saran: [] }, ["Z3", "Z50"])!;
@@ -160,10 +174,11 @@ test("balasan gerbang: penanda (faskes baru) di kepala, catatan faskes baru tanp
   }
 });
 
-test("balasanSaranFaskes tanpa alat tertunda: tanpa baris alat", () => {
+test("balasanSaranFaskes tanpa alat tertunda: satu pertanyaan YA/TIDAK, tanpa baris alat", () => {
   const t = balasanSaranFaskes("HUSNI", "RS X", [{ id: "1", nama: "RS X SATU", cabang: null, baru: false, skor: 0.9 }], null);
-  assert.match(t, /Balas: #KSO FASKES 1 — atau #KSO FASKES BARU/);
-  assert.doesNotMatch(t, /Alat/);
+  assert.equal(t.split("\n")[0], 'Faskes "RS X" = RS X SATU? Balas #KSO YA atau #KSO TIDAK (TIDAK = dicatat sebagai faskes baru "RS X"). Berlaku 24 jam.');
+  assert.doesNotMatch(t, /Alat|FASKES 1/);
+  assert.deepEqual(polaTerlarang(t), []);
 });
 
 test("saranAkunMaster: urut kemiripan, maks 5, yang tak mirip sama sekali dibuang", () => {
@@ -178,4 +193,221 @@ test("KLAUSUL: YA tanpa isi → gerbang 7 MERAH 'isi klausul belum ditulis' (buk
   assert.match(ya, /7\. Klausul standar {7}❌ MERAH \(isi klausul belum ditulis\)/);
   const belum = formatBalasanGerbang(draft({ kolom_dinyatakan: [], klausul_ada: null }));
   assert.match(belum, /7\. Klausul standar {7}❌ MERAH \(belum dijawab\)/);
+});
+
+test("skorFaskes: angka pembeda beda = faskes lain (bukan salah ketik)", () => {
+  assert.equal(skorFaskes("RS UJI COBA 2", "RS UJI COBA"), 0);
+  assert.equal(skorFaskes("Puskesmas Contoh II", "PUSKESMAS CONTOH I"), 0);
+  assert.equal(skorFaskes("RS CONTOH 02", "RS CONTOH 2") > 0, true);
+  assert.equal(skorFaskes("RS CONTOH SEJAHTRA", "RS CONTOH SEJAHTERA") >= SKOR_FASKES_MIRIP, true);
+  assert.deepEqual(putuskanFaskes("RS UJI COBA 2", [{ id: "BARU-1", nama: "RS UJI COBA", cabang: "KOTA FIKTIF", baru: true }]), { kind: "baru" });
+});
+
+// ---------------------------------------------------------------- 10 Nov malam: bot mencocokkan, AM konfirmasi YA/TIDAK
+
+// Kasus nyata dipetakan ke data fiktif: satu yayasan, banyak kota (nama master Accurate terbalik "INTI, JENIS KOTA").
+const JARINGAN: FaskesKatalog[] = [
+  { id: "8101", nama: "BAKTI LESTARI ALFA, RS", cabang: "KOTA SATU" },
+  { id: "8102", nama: "BAKTI LESTARI BETA, RS UMUM KAB. GUNUNGJATI", cabang: "KOTA DUA" },
+  { id: "8103", nama: "BAKTI LESTARI GAMMA, RS", cabang: "KOTA DUA" },
+  { id: "8104", nama: "BAKTI LESTARI, RS UMUM KAB. GUNUNGJATI", cabang: "KOTA DUA" },
+  { id: "8105", nama: "BAKTI LESTARI DELTA, RS", cabang: "KOTA SATU" },
+];
+
+test("peringkat: calon yang memuat kata kota yang ditulis AM menang atas jaringan sama di kota lain", () => {
+  const teks = "RS BAKTI LESTARI GUNUNGJATI";
+  assert.ok(semuaKataFaskes(teks, "BAKTI LESTARI, RS UMUM KAB. GUNUNGJATI"));
+  assert.ok(!semuaKataFaskes(teks, "BAKTI LESTARI ALFA, RS"));
+  // cariAkun menyebut semuanya ambigu → dulu skor dipaksa 1 (tiga pilihan setara); kini skor sebenarnya
+  const semua = JARINGAN.map((j) => j.nama);
+  const h = putuskanFaskes(teks, JARINGAN, { ambigu: semua, cabangAm: "KOTA SATU" });
+  assert.equal(h.kind, "saran");
+  if (h.kind !== "saran") return;
+  assert.equal(h.saran.length, 1);
+  assert.equal(h.saran[0].id, "8104", "kata kota GUNUNGJATI menang atas cabang AM; nama lebih pendek menang atas 8102");
+  const urut = peringkatFaskes(teks, JARINGAN, { ambigu: semua });
+  assert.deepEqual(urut.slice(0, 2).map((s) => s.id), ["8104", "8102"]);
+  assert.ok(urut[0].skor > urut[2].skor, "skor nyata, bukan 1 untuk semua");
+});
+
+test("peringkat: seri → cabang AM, lalu nama lebih pendek", () => {
+  const k: FaskesKatalog[] = [
+    { id: "1", nama: "KASIH IBU UTARA, KLINIK", cabang: "KOTA DUA" },
+    { id: "2", nama: "KASIH IBU SELATAN, KLINIK", cabang: "KOTA SATU" },
+  ];
+  const a = putuskanFaskes("KLINIK KASIH IBU", k, { cabangAm: "KOTA SATU" });
+  assert.ok(a.kind === "saran" && a.saran[0].id === "2");
+  const b = putuskanFaskes("KLINIK KASIH IBU", k, { cabangAm: "KOTA LAIN" });
+  assert.ok(b.kind === "saran" && b.saran[0].id === "1", "nama lebih pendek");
+});
+
+test("nama tampil: 'INTI, JENIS KOTA' dibalik jadi terbaca; pola tak berlaku = apa adanya", () => {
+  assert.equal(namaTampilFaskes("SEJAHTERA, RS UMUM KAB. CONTOH"), "RS UMUM SEJAHTERA (KAB. CONTOH)");
+  assert.equal(namaTampilFaskes("SEJAHTERA, RS UMUM KOTA CONTOH"), "RS UMUM SEJAHTERA (KOTA CONTOH)");
+  assert.equal(namaTampilFaskes("MITRA KELUARGA CONTOH, RS"), "RS MITRA KELUARGA CONTOH");
+  assert.equal(namaTampilFaskes("HARAPAN BUNDA, KLINIK"), "KLINIK HARAPAN BUNDA");
+  assert.equal(namaTampilFaskes("BAKTI LESTARI, KAB. GUNUNGJATI"), "BAKTI LESTARI (KAB. GUNUNGJATI)");
+  assert.equal(namaTampilFaskes("RS ANGGREK FIKTIF"), "RS ANGGREK FIKTIF");
+  assert.equal(namaTampilFaskes("CONTOH, BAPAK"), "CONTOH, BAPAK", "bagian belakang bukan jenis faskes");
+  assert.equal(namaTampilFaskes("A, B, RS"), "A, B, RS");
+  assert.equal(tampilCalonFaskes({ nama: "BAKTI LESTARI, RS UMUM KAB. GUNUNGJATI", cabang: "KOTA DUA", baru: false }),
+    "RS UMUM BAKTI LESTARI (KAB. GUNUNGJATI) — cabang KOTA DUA");
+  assert.equal(tampilCalonFaskes({ nama: "RS ANGGREK FIKTIF", cabang: null, baru: true }), "RS ANGGREK FIKTIF (faskes baru)");
+});
+
+test("balasan konfirmasi: satu calon, nama terbaca + cabang, YA/TIDAK, tanpa angka margin", () => {
+  const t = balasanSaranFaskes("SALMAN", "RS BAKTI LESTARI GUNUNGJATI",
+    [{ id: "8104", nama: "BAKTI LESTARI, RS UMUM KAB. GUNUNGJATI", cabang: "KOTA DUA", baru: false, skor: 0.9 }], "KIMIA MEREKX CM 250");
+  assert.equal(t,
+    'Faskes "RS BAKTI LESTARI GUNUNGJATI" = RS UMUM BAKTI LESTARI (KAB. GUNUNGJATI) — cabang KOTA DUA? Balas #KSO YA atau #KSO TIDAK ' +
+    '(TIDAK = dicatat sebagai faskes baru "RS BAKTI LESTARI GUNUNGJATI"). Berlaku 24 jam.\n' +
+    "Draft BELUM dibuat, SALMAN — isian lain sudah disimpan, tinggal konfirmasi faskesnya.\n" +
+    'Alat "KIMIA MEREKX CM 250" juga belum pasti — ditanyakan sesudah faskes dijawab.');
+  assert.deepEqual(polaTerlarang(t), []);
+});
+
+test("parser: #KSO YA / TIDAK (+ varian) = konfirmasi, BUKAN nama di kepala; perintah lain tak terganggu", () => {
+  for (const v of ["YA", "ya", "Y", "IYA", "BENAR", "betul", "Ya."]) {
+    const p = parseKsoPerintah(`#KSO ${v}`);
+    assert.equal(p.aksi, "konfirmasi", v);
+    assert.equal(p.jawab, "ya", v);
+    assert.equal(p.nama, undefined, v);
+  }
+  for (const v of ["TIDAK", "tidak", "T", "BUKAN", "tdk"]) {
+    const p = parseKsoPerintah(`#KSO ${v}`);
+    assert.equal(p.aksi, "konfirmasi", v);
+    assert.equal(p.jawab, "tidak", v);
+    assert.equal(p.nama, undefined, v);
+  }
+  assert.ok(ksoBolehLampiran(parseKsoPerintah("#KSO YA")));
+  assert.equal(bacaYaTidak("YAKUB"), null);
+  assert.equal(bacaYaTidak("TIDAK ADA"), null);
+  // nama orang tetap nama; perintah & referensi tetap seperti semula
+  assert.equal(parseKsoPerintah("#KSO YAKUB\nFASKES: RS A\nALAT: Z3").nama, "YAKUB");
+  assert.equal(parseKsoPerintah("#KSO TIARA\nFASKES: RS A\nALAT: Z3").nama, "TIARA");
+  assert.equal(parseKsoPerintah("#KSO kirim D62").aksi, "kirim");
+  assert.equal(parseKsoPerintah("#KSO D62").aksi, "lengkapi");
+  assert.equal(parseKsoPerintah("#KSO D62 KLAUSUL: TIDAK").aksi, "lengkapi");
+  assert.equal(parseKsoPerintah("#KSO FASKES BARU").aksi, "baru");
+  assert.equal(parseKsoPerintah("#KSO FASKES 1").aksi, "baru");
+});
+
+const TF = { faskes_id: null as string | null, faskes_teks: "RS BAKTI LESTARI GUNUNGJATI", alat_kode: "Z3" as string | null,
+  faskes_saran: [{ id: "8104", nama: "BAKTI LESTARI, RS UMUM KAB. GUNUNGJATI", cabang: "KOTA DUA", baru: false, skor: 0.9 }] };
+
+test("YA → calon dipakai; TIDAK → faskes baru dengan nama yang ditulis; tanpa konfirmasi terbuka → dibalas, tak mengubah", () => {
+  assert.deepEqual(ubahKonfirmasiFaskes(TF, "ya", "SALMAN"),
+    { ubah: { faskes_id: "8104", faskes_teks: "RS BAKTI LESTARI GUNUNGJATI", faskes_saran: [] } });
+  assert.deepEqual(ubahKonfirmasiFaskes(TF, "tidak", "SALMAN"),
+    { ubah: { faskes_id: null, faskes_teks: "RS BAKTI LESTARI GUNUNGJATI", faskes_saran: [] } });
+  // sesudah YA: faskes terjawab, alat masih menunggu → YA kedua bukan jawaban faskes
+  const sesudah = { ...TF, faskes_id: "8104", faskes_saran: [], alat_kode: null };
+  const r = ubahKonfirmasiFaskes(sesudah, "ya", "SALMAN");
+  assert.ok("galat" in r && r.galat === "tanpa-konfirmasi");
+  if ("galat" in r) assert.match(r.balasan, /Tidak ada konfirmasi faskes yang menunggu jawaban, SALMAN\. Yang masih ditunggu: pilihan alat/);
+  const kosong = ubahKonfirmasiFaskes(null, "tidak", "SALMAN");
+  assert.ok("galat" in kosong);
+  if ("galat" in kosong) assert.match(kosong.balasan, /Tidak ada konfirmasi faskes yang menunggu jawaban, SALMAN\. Kirim usulan baru/);
+  // sesudah YA dan alat sudah pasti → pertanyaanTertunda null = draft dibuat
+  assert.equal(pertanyaanTertunda("SALMAN", { id: 1, alat_teks: "Z3", saran: [], ...TF, faskes_id: "8104", faskes_saran: [] }, ["Z3"]), null);
+  // sesudah TIDAK, alat masih tertunda → pertanyaan alat + pemberitahuan faskes baru
+  const q = pertanyaanTertunda("SALMAN", { id: 1, alat_teks: "MEREKX", saran: [], ...TF, alat_kode: null, faskes_saran: [] }, ["Z3"])!;
+  assert.match(q.balasan, /Faskes "RS BAKTI LESTARI GUNUNGJATI" belum ada di master — akan dicatat sebagai faskes baru\./);
+});
+
+// varian penulisan pesan AM sungguhan (data fiktif)
+const PESAN_VARIAN = `#KSO SALMAN
+1. NAMA CUSTOMER  ; RS BAKTI LESTARI GUNUNGJATI
+2. NAMA ALAT :  KIMIA KLINIK MEREKX CM 250
+3. JUMLAH TEST : 150 TEST/ BULAN
+4. MASA KSO : 60 BULAN
+5. PERMINTAAN HARGA : 31.000/ TEST
+6. FEE : 0%
+7. KOMPETITOR : -
+8. KLAUSUL : Free Control, RO
+9. LAMPIRAN : ADA`;
+
+test("varian label: NAMA CUSTOMER ';', NAMA ALAT, JUMLAH TEST '150 TEST/ BULAN', KOMPETITOR '-', KLAUSUL teks bebas", () => {
+  const p = parseKsoPerintah(PESAN_VARIAN);
+  assert.equal(p.aksi, "baru");
+  assert.equal(p.nama, "SALMAN");
+  const x = bacaIsianFormat(p.isi);
+  assert.equal(x.faskes, "RS BAKTI LESTARI GUNUNGJATI");
+  assert.equal(x.alat, "KIMIA KLINIK MEREKX CM 250");
+  assert.equal(x.volume, 150);
+  assert.equal(x.tenor, 60);
+  assert.equal(x.harga, 31000);
+  assert.equal(x.fee, 0);
+  assert.deepEqual(x.kompetitor, { alat: "tidak ada", merek: null, harga: null });
+  assert.deepEqual(x.klausul, { ada: true, detail: "Free Control, RO" });
+  assert.equal(x.lampiran, true);
+  assert.deepEqual(x.barisAsing, []);
+  assert.deepEqual(x.tidakTerbaca, []);
+  const o = isianLengkapiDariFormat(x);
+  assert.equal(o.kompetitor_alat, "tidak ada");
+  assert.equal("harga_pesaing" in o, false);
+  assert.deepEqual(o.klausul, ["lainnya"]);
+  assert.equal(o.klausul_ada, true);
+  // label lain
+  for (const [baris, label, nilai] of [
+    ["CUSTOMER: RS A", "faskes", "RS A"], ["NAMA RS = RS A", "faskes", "RS A"], ["NAMA FASKES - RS A", "faskes", "RS A"],
+    ["NAMA ANALYZER : Z3", "alat", "Z3"], ["JUMLAH TES; 700", "tes", "700"], ["KOMPETITOR : TIDAK ADA", "kompetitor", "TIDAK ADA"],
+    ["KOMPETITOR NIHIL", "kompetitor", "NIHIL"], ["KOMPETITOR -", "kompetitor", "-"],
+  ] as const) {
+    const x2 = bacaIsianFormat(baris);
+    assert.ok(x2.label.includes(label), baris);
+    if (label === "faskes") assert.equal(x2.faskes, nilai, baris);
+    if (label === "alat") assert.equal(x2.alat, nilai, baris);
+    if (label === "kompetitor") assert.equal(x2.kompetitor?.alat, "tidak ada", baris);
+  }
+  assert.equal(bacaIsianFormat("JUMLAH TES; 700").volume, 700);
+  // "RS" saja bukan label
+  assert.equal(bacaIsianFormat("RS minta cepat").faskes, undefined);
+});
+
+// katalog dengan kategori kode Simulator (seperti prod): HEMATO / CC / CLIA / ELEKTRO
+const KAT_SIM: AlatKatalog[] = [
+  { kode: "DNX6", nama: "Easy Diagnosis DN-X6", kategori: "ELEKTRO" },
+  { kode: "EXC200", nama: "Zybio EXC200", kategori: "CC" },
+  { kode: "EXC400", nama: "Zybio EXC400", kategori: "CC" },
+  { kode: "EXZ8000", nama: "Zybio EXZ8000", kategori: "CLIA" },
+  { kode: "Z3", nama: "Zybio Z3", kategori: "HEMATO" },
+  { kode: "Z50", nama: "Zybio Z50", kategori: "HEMATO" },
+  { kode: "Z52", nama: "Zybio Z52", kategori: "HEMATO" },
+];
+
+test("alat di luar katalog 'KIMIA KLINIK MEREKX CM 250': bukan Z50 (angka model ≠ salah baca OCR), saran CC di atas", () => {
+  const h = cariAlat("KIMIA KLINIK MEREKX CM 250", KAT_SIM);
+  assert.equal(h.kind, "saran");
+  if (h.kind !== "saran") return;
+  assert.deepEqual(h.saran.slice(0, 2).map((s) => s.kode).sort(), ["EXC200", "EXC400"]);
+  const b = balasanSaranAlat("SALMAN", "KIMIA KLINIK MEREKX CM 250", h, null, KAT_SIM.map((k) => k.kode));
+  assert.match(b, /1\. EXC\d00 — Zybio EXC\d00 \(CC\)\n2\. EXC\d00 — Zybio EXC\d00 \(CC\)/);
+  // OCR PDF "250" tanpa huruf di depan tetap dibaca Z50; kode utuh menang walau kategori bertentangan
+  assert.ok(cariAlat("250", KAT_SIM).kind === "one");
+  const z = cariAlat("KIMIA Z50", KAT_SIM);
+  assert.ok(z.kind === "one" && z.kode === "Z50");
+  const hem = cariAlat("HEMATOLOGY ZYBIO Z50", KAT_SIM);
+  assert.ok(hem.kind === "one" && hem.kode === "Z50");
+});
+
+test("alat dari PDF Simulator: analyzer yang menunjuk tepat satu kode dipakai; tak pasti / OCR gagal = null", () => {
+  const ocr = (analyzer: string | null, ok = true): HasilOcrCprr => ({ ok, isian: { analyzer } });
+  assert.deepEqual(alatDariPdf(ocr("ZYBIO EXC-200"), KAT_SIM), { kode: "EXC200", nama: "Zybio EXC200", kategori: "CC", analyzer: "ZYBIO EXC-200" });
+  assert.equal(alatDariPdf(ocr("MEREKX CM 250"), KAT_SIM), null);
+  assert.equal(alatDariPdf(ocr("ZYBIO EXC-200", false), KAT_SIM), null);
+  assert.equal(alatDariPdf(ocr(null), KAT_SIM), null);
+  const t = teksAlatDariPdf("KIMIA MEREKX", { kode: "EXC200", nama: "Zybio EXC200", analyzer: "ZYBIO EXC-200" }, "D70");
+  assert.match(t, /dipakai alat dari PDF Simulator: EXC200 .*Balas #KSO D70 ALAT: KODE\./);
+  assert.deepEqual(polaTerlarang(t), []);
+});
+
+test("putuskanFaskes: cariAkun yakin tapi nama tak persis → tetap konfirmasi YA/TIDAK", () => {
+  const kat = [{ id: "9101", nama: "Faskes 0AB123", cabang: "KOTA FIKTIF", baru: false }];
+  const r = putuskanFaskes("Faskes 0AB12B", kat, { yakin: { id: "9101", nama: "Faskes 0AB123" } });
+  assert.equal(r.kind, "saran");
+  assert.deepEqual(putuskanFaskes("faskes  0ab123", kat, { yakin: { id: "9101", nama: "Faskes 0AB123" } }),
+    { kind: "one", id: "9101", nama: "Faskes 0AB123", baru: false });
+  const inv = [{ id: "9102", nama: "SEJAHTERA, RS UMUM KAB. CONTOH", cabang: null, baru: false }];
+  assert.equal(putuskanFaskes("RS UMUM SEJAHTERA KAB CONTOH", inv, { yakin: { id: "9102", nama: inv[0].nama } }).kind, "one");
 });
