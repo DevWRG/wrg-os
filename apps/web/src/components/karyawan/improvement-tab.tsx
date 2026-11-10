@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SkeletonTable } from "@/components/ui/loading";
-import { fmtDelta, fmtScore, fmtSisaHari, PIP_STATUS_LABEL, type PipStatus } from "@/components/karyawan/pip-format";
+import { fmtDelta, fmtScore, fmtSisaHari, fmtTgl, PIP_STATUS_LABEL, type PipStatus } from "@/components/karyawan/pip-format";
 
 // F70 — tab "Improvement" di Karyawan 360: perubahan skor Raport antar periode per karyawan,
 // plus penanda PIP aktif. Izin = fitur 'karyawan' (bukan menu baru). Detail & aksi PIP ada di
@@ -60,36 +60,40 @@ export function ImprovementTab() {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">PIP</h3>
+      {/* Kartu putih: tanpa kartu, isi tab menyatu dengan latar halaman (masukan user 10 Nov). */}
+      <Card>
+        <CardHeader><CardTitle className="text-base font-semibold">PIP (rencana perbaikan kinerja 90 hari)</CardTitle></CardHeader>
+        <CardContent>
         {cases.length === 0 ? (
           <p className="text-muted-foreground text-sm">Belum ada PIP (rencana perbaikan kinerja 90 hari) tercatat. PIP dimulai dari halaman detail karyawan — klik nama karyawan di tabel bawah.</p>
         ) : (
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {cases.map((c) => (
-              <Card key={c.id}>
-                <CardContent className="space-y-1 py-3 text-sm">
+              <div key={c.id} className="rounded-lg border bg-card p-3">
+                <div className="space-y-1 text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">{c.nama}</span>
                     <Badge variant={c.status === "aktif" ? "default" : c.status === "terminate" ? "destructive" : "secondary"}>{PIP_STATUS_LABEL[c.status]}</Badge>
                   </div>
-                  <div className="text-muted-foreground">{c.start_date} → {c.end_date}{c.days_left != null ? ` · ${fmtSisaHari(c.days_left)}` : ""}</div>
+                  <div className="text-muted-foreground">{fmtTgl(c.start_date)} – {fmtTgl(c.end_date)}{c.status === "aktif" && c.days_left != null ? ` · ${fmtSisaHari(c.days_left)}` : ""}</div>
                   <div className="text-muted-foreground">
-                    {c.goals} goal · milestone {c.milestones_tercapai}/{c.milestones} · {c.checkins} check-in{c.last_checkin ? ` (terakhir ${c.last_checkin})` : ""}
+                    {c.goals} target · tahapan {c.milestones_tercapai}/{c.milestones} tercapai · {c.checkins} evaluasi{c.last_checkin ? ` (terakhir ${fmtTgl(c.last_checkin)})` : ""}
                   </div>
                   {c.am_id ? <Link href={`/karyawan/${encodeURIComponent(c.am_id)}`} className="text-primary hover:underline">Buka detail</Link> : <span className="text-muted-foreground">Belum tertaut ke Raport</span>}
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </section>
+        </CardContent>
+      </Card>
 
-      <section className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-semibold">Perubahan skor Raport antar periode</h3>
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base font-semibold">Perubahan skor Raport antar periode</CardTitle>
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama / cabang / jabatan" className="max-w-xs" />
-        </div>
+        </CardHeader>
+        <CardContent className="space-y-2">
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-left">
@@ -115,7 +119,7 @@ export function ImprovementTab() {
                   ))}
                   <td className={`px-3 py-2 text-right font-medium tabular-nums ${deltaTone(r.delta)}`}>{fmtDelta(r.delta)}</td>
                   <td className="px-3 py-2">
-                    {r.pip ? <Badge>Aktif · s/d {r.pip.end_date}</Badge> : <span className="text-muted-foreground">–</span>}
+                    {r.pip ? <Badge>Berjalan · s/d {fmtTgl(r.pip.end_date)}</Badge> : <span className="text-muted-foreground">–</span>}
                   </td>
                 </tr>
               ))}
@@ -124,7 +128,8 @@ export function ImprovementTab() {
           </table>
         </div>
         <p className="text-muted-foreground text-xs">Perubahan = skor gabungan Raport 360 periode ini dikurangi periode sebelumnya: + naik, − turun. Kosong (–) bila salah satu periode belum punya skor.</p>
-      </section>
+        </CardContent>
+      </Card>
     </div>
   );
 }
