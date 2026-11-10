@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SkeletonCardGrid } from "@/components/ui/loading";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 interface Candidate {
   deal_id: string;
@@ -39,7 +40,24 @@ interface AnomalyPayload {
   direction: string;
   median: number;
 }
-type HitlPayload = ReportPayload | AuthenticityPayload | AnomalyPayload;
+interface DupCandidate {
+  kind: "deal" | "accurate_customer";
+  ref_id: string;
+  customer_name: string;
+  am_id: string | null;
+  cabang: string | null;
+  score: number;
+  exact: boolean;
+}
+interface DuplicateNamePayload {
+  type: "duplicate_customer_name_flag";
+  deal_id: string;
+  customer_name: string;
+  am_id: string | null;
+  cabang: string | null;
+  candidates: DupCandidate[];
+}
+type HitlPayload = ReportPayload | AuthenticityPayload | AnomalyPayload | DuplicateNamePayload;
 interface HitlItem {
   id: string;
   r_tier: string;
@@ -55,6 +73,7 @@ export default function HitlPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +116,7 @@ export default function HitlPage() {
     id: string,
     decision: "approve" | "reject",
     chosenDealId?: string,
+    chosenRef?: { kind: "deal" | "accurate_customer"; ref_id: string },
   ) {
     setBusy(id);
     setError(null);
@@ -108,6 +128,7 @@ export default function HitlPage() {
           id,
           decision,
           chosen_deal_id: chosenDealId,
+          chosen_ref: chosenRef,
           approver_id: "web-ui",
         }),
       });
@@ -243,6 +264,82 @@ export default function HitlPage() {
                   </div>
                 </CardContent>
               </Card>
+            ) : it.payload.type === "duplicate_customer_name_flag" ? (
+              <Card key={it.id}>
+                <CardHeader className="flex flex-row items-start justify-between space-y-0">
+                  <CardTitle className="text-base">
+                    Nama mirip: {it.payload.customer_name}
+                  </CardTitle>
+                  <div className="flex gap-1">
+                    <Badge variant="outline">{it.r_tier}</Badge>
+                    <Badge variant="outline">{it.hitl_level}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    AM: {it.am_name ?? it.payload.am_id ?? "—"} {it.payload.cabang ? `· ${it.payload.cabang}` : ""}
+                  </p>
+                  <div className="space-y-1">
+                    <p className="text-muted-foreground text-xs">
+                      Kalau ini customer yang sama, tekan <span className="font-medium text-foreground">Tautkan</span> pada kandidat yang benar:
+                      nama customer di deal diganti dengan nama kandidat dan akun faskesnya ditautkan (tercatat di riwayat deal).
+                    </p>
+                    {it.payload.candidates.map((c) => (
+                      <div key={`${c.kind}-${c.ref_id}`} className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5 text-sm">
+                        <span className="min-w-0 truncate">
+                          {c.customer_name}{" "}
+                          {c.kind === "accurate_customer" ? <Badge variant="outline">Accurate</Badge> : <Badge variant="outline">Deal lain</Badge>}
+                          {c.am_id && <span className="text-muted-foreground"> ({c.am_id})</span>}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <Badge variant={c.exact ? "destructive" : "secondary"}>
+                            {c.exact ? "IDENTIK" : `${(c.score * 100).toFixed(0)}%`}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="soft"
+                            disabled={busy === it.id}
+                            onClick={() => {
+                              const p = it.payload as DuplicateNamePayload;
+                              // Dialog konfirmasi template (useConfirm), bukan window.confirm bawaan browser.
+                              confirm(
+                                {
+                                  title: "Tautkan deal ini?",
+                                  description: `Nama customer "${p.customer_name}" akan diganti menjadi "${c.customer_name}"${c.kind === "accurate_customer" ? " dan ditautkan ke customer Accurate itu" : " (disamakan dengan deal lain)"}. Tercatat di riwayat deal.`,
+                                  confirmLabel: "Tautkan",
+                                },
+                                () => void resolve(it.id, "approve", undefined, { kind: c.kind, ref_id: c.ref_id }),
+                              );
+                            }}
+                          >
+                            Tautkan
+                          </Button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      variant="soft"
+                      onClick={() => void resolve(it.id, "approve")}
+                    >
+                      Bukan duplikat (sudah dicek)
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      disabled={busy === it.id}
+                      onClick={() => void resolve(it.id, "reject")}
+                    >
+                      Tolak
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             ) : (
               <Card key={it.id}>
                 <CardHeader className="flex flex-row items-start justify-between space-y-0">
@@ -301,6 +398,7 @@ export default function HitlPage() {
           )}
         </div>
       )}
+      {dialog}
     </div>
   );
 }
