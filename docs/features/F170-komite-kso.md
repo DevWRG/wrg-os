@@ -214,3 +214,33 @@ Finance pengisi angka Bottom Line). TIDAK untuk **AM, HOD Sales, Admin Sales, Te
   dari `master_hod.peran` ("Business …" / "Sales …"). Kursi akun = `app_user.hod_key` **dan** `kso.hod_akun.hod_id`
   (keduanya dibaca; memegang kursi Business = boleh). Kursi tak dikenal = disaring (tertutup).
 - Uji: `apps/api/src/repo/kso-saring.test.ts`, `kso-intake.test.ts` (penjaga `polaTerlarang`), `kso-jadwal.test.ts`.
+
+## Faskes baru (calon customer) dari #KSO (migrasi 303, 10 Nov 2026)
+
+Keputusan product owner: nama faskes di `#KSO` tidak harus faskes yang sudah ada — bisa customer/faskes baru.
+Keputusan faskes untuk usulan baru (`putuskanFaskes`, `kso-format.ts`; dipanggil `cariFaskesBot`, `kso-intake.ts`):
+
+| Hasil pencarian | Tindakan |
+|---|---|
+| Pasti ke satu faskes master (`cariAkun` → satu `kso.faskes`), atau nama persis sama dengan faskes baru yang belum ditautkan | dipakai |
+| Mirip tapi tidak pasti (salah ketik / ambigu; skor ≥ `SKOR_FASKES_MIRIP` 0,5 atau nama yang disebut `cariAkun` ambigu) | draft BELUM dibuat; isian disimpan di `kso.intake_tertunda` (24 jam); balasan maks 3 pilihan + `#KSO FASKES 1` / `#KSO FASKES BARU` / `#KSO FASKES: NAMA` |
+| Tidak ada yang mirip | faskes SEMENTARA dibuat langsung, draft jalan |
+
+- Faskes sementara: `kso.faskes` id `BARU-<n>`, `baru = true`, cabang = cabang AM, piutang/tagihan 0 (gerbang 5 hijau
+  "Faskes baru — belum ada tagihan"), `kota` dari label opsional `KOTA:` (atau `#KSO D64 KOTA: …`) atau dari PDF Simulator,
+  `dibuat_oleh_am`, `dibuat_at`. Nama sama (tanpa beda huruf besar/spasi) dipakai ulang, tidak digandakan. Tulis hanya lewat
+  `kso.app_bot_buat_faskes_baru` / `kso.app_bot_isi_kota_faskes` (peran bot_wa, pola 227).
+- Isian tertunda menampung alat DAN faskes: `faskes_id` kosong + `faskes_saran` berisi = faskes ditanya; `faskes_id` kosong tanpa
+  pilihan = faskes baru dibuat saat draft jadi; `alat_kode` kosong = alat ditanya. Urutan: faskes dulu, lalu alat
+  (`pertanyaanTertunda`). PDF yang dikirim bersama pesan asli disimpan (`lampiran_wa`/`lampiran_path`) dan diproses saat draft jadi.
+- Balasan: `D64 · RS UJI COBA (faskes baru) · Z3 · 5/7 HIJAU` + catatan "dicatat sebagai FASKES BARU (calon customer)". PDF:
+  nama faskes PDF dicocokkan ke nama yang ditulis AM (= nama faskes sementara); kota kosong diisi dari PDF.
+- `kso.segarkan_referensi()` tidak diubah: hanya meng-upsert id = `crm_account.account_id`, tak pernah menghapus → baris `BARU-…`
+  tak tersentuh. CHECK `faskes_baru_id_ck` (`baru ⇔ id 'BARU-%'`). Konsumen `faskes_id` lain (231 bulan-6, 280 mandat untuk
+  deal) membandingkan teks → faskes sementara tak cocok ke akun mana pun sampai ditautkan.
+- Tautkan ke akun master (Sekretariat / Komite, tab `sekretariat`/`agenda`): `POST /kso-komite/rencana/:id/tautkan-faskes {akun}`
+  → `kso.app_tautkan_faskes`: semua usulan + isian tertunda pindah ke akun master, baris sementara menyimpan `ditautkan_ke/at/oleh`,
+  gerbang draft terbuka dihitung ulang (usulan yang sudah diajukan tidak). Akun master harus sudah ada di `kso.faskes`
+  (customer baru masuk sesudah penyegaran malam). Detail rencana memuat `faskes_saran_master` (5 akun termirip) untuk tab itu.
+- Dashboard: `faskes_baru` + `faskes_kota` di antrean, daftar belum-lengkap/lolos, detail → lencana "Faskes baru".
+- Uji: `scripts/qa/kso-komite/919_uji_faskes_baru.sql`, `apps/api/src/repo/kso-faskes-baru.test.ts`.

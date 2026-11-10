@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 import { persenFee } from "@/lib/kso-komite-daftar";
 
-import { LabelStatus } from "./label-status";
+import { BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
 import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
@@ -85,9 +85,10 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
           <span className="text-muted-foreground font-mono text-xs">{r.nomor ?? `D${r.id} · draft`}</span>
           <LabelStatus status={r.status} />
         </div>
-        <h2 className="mt-1 text-lg font-bold leading-tight">{r.faskes_nama}</h2>
+        <h2 className="mt-1 text-lg font-bold leading-tight">{r.faskes_nama}{r.faskes_baru && <BadgeFaskesBaru kota={r.faskes_kota} className="ml-2 align-middle" />}</h2>
         <p className="text-muted-foreground text-sm">{r.jumlah} × {r.alat_nama} · AM {r.am_nama}{r.cabang ? ` · ${r.cabang}` : ""}</p>
       </header>
+      {bolehAksi && r.faskes_baru && d.faskes_saran_master && <FormTautkanFaskes d={d} jalankan={jalankan} />}
       <AngkaKunci d={d} />
       <Peringatan d={d} />
       <BagianKurang d={d} />
@@ -361,6 +362,39 @@ function Pilihan<T extends string>({ nilai, set, opsi }: { nilai: T | null; set:
         <Button key={v} type="button" size="sm" variant={nilai === v ? "default" : "soft"} aria-pressed={nilai === v} onClick={() => set(v)}>{l}</Button>
       ))}
     </div>
+  );
+}
+
+/**
+ * 303: faskes baru (calon customer) → akun master begitu customer terdaftar di Accurate/CRM (masuk referensi KSO sesudah
+ * penyegaran malam). Pilihan = akun master paling mirip; ID akun boleh diketik bila tak ada di pilihan.
+ */
+function FormTautkanFaskes({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
+  const { sibuk, err, go } = useKirim(jalankan);
+  const saran = d.faskes_saran_master ?? [];
+  const [akun, setAkun] = useState<string>(saran[0]?.id ?? "");
+  return (
+    <Kotak judul="Tautkan ke akun master">
+      <p className="text-muted-foreground text-sm">Faskes ini dicatat AM sebagai calon customer. Begitu akunnya ada di Accurate/CRM, tautkan —
+        semua usulan untuk faskes ini pindah ke akun master dan gerbang draft dihitung ulang.</p>
+      {saran.length > 0 && (
+        <div className="space-y-1.5" role="radiogroup" aria-label="Akun master yang mirip">
+          {saran.map((s) => (
+            <label key={s.id} className="flex cursor-pointer items-center gap-2 text-sm">
+              <input type="radio" name="akun-master" value={s.id} checked={akun === s.id} onChange={() => setAkun(s.id)} />
+              <span>{s.nama}{s.cabang ? <span className="text-muted-foreground"> — {s.cabang}</span> : null}
+                <span className="text-muted-foreground font-mono text-xs"> · {s.id}</span></span>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="space-y-1">
+        <Label htmlFor="akun-master-id">ID akun master</Label>
+        <Input id="akun-master-id" value={akun} onChange={(e) => setAkun(e.target.value)} placeholder="ID akun (Accounts)" className="max-w-[16rem] font-mono" />
+      </div>
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      <Button disabled={!akun.trim() || sibuk} onClick={() => go("tautkan-faskes", { akun: akun.trim() })}>Tautkan</Button>
+    </Kotak>
   );
 }
 

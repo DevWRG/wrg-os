@@ -12,7 +12,7 @@ import { pilihTabDaftar } from "@/lib/kso-komite-daftar";
 import { BottomLinePanel } from "./bottom-line";
 import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
 import { TombolFormatKso } from "./format-kso";
-import { LabelStatus } from "./label-status";
+import { BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
@@ -246,7 +246,8 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
                 className={cn("bg-card w-full rounded-xl border p-3 text-left shadow-[var(--shadow-card)] transition-colors hover:border-primary-dark",
                   pilih === b.id && "border-primary-dark ring-primary-dark ring-1")}>
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-semibold">{b.faskes_nama}{b.cabang ? <span className="text-muted-foreground font-normal"> — {b.cabang}</span> : null}</span>
+                  <span className="font-semibold">{b.faskes_nama}{b.cabang ? <span className="text-muted-foreground font-normal"> — {b.cabang}</span> : null}
+                    {b.faskes_baru && <BadgeFaskesBaru kota={b.faskes_kota} className="ml-1.5 align-middle" />}</span>
                   <span className="text-muted-foreground shrink-0 font-mono text-xs">{b.nomor ?? `D${b.id}`}</span>
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">

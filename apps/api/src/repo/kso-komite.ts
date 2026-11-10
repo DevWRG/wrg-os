@@ -12,7 +12,7 @@
 import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
-import { daftarKurang, type CocokIsian, type ItemKurang } from "./kso-format.js";
+import { daftarKurang, skorFaskes, type CocokIsian, type ItemKurang } from "./kso-format.js";
 import { saringDaftarFilter, saringDaftarTab, saringDetail, type ModeSaring } from "./kso-saring.js";
 
 export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
@@ -233,8 +233,9 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
     const baris = await tx`
       select a.antrean, a.rencana_id::int as id, a.nomor, a.status, a.faskes_nama, a.alat_nama, a.capex::float8 as capex,
              a.sejak, a.batas, v.am_nama, v.cabang, v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
-             r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi
+             r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota
         from kso.v_antrean a join kso.v_rencana v on v.id = a.rencana_id join kso.rencana_kso r on r.id = a.rencana_id
+        join kso.faskes f on f.id = r.faskes_id
        where a.antrean = any(${label}) and (${pemilik}::text is null or a.pemilik_id = ${pemilik})
        order by a.batas nulls last, a.sejak desc`;
     const agenda = tab === "agenda"
@@ -247,8 +248,8 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
       ? await tx`select 'Sekretariat · Verifikasi Volume' as antrean, r.id::int as id, v.nomor, v.status::text as status, v.faskes_nama,
                         v.alat_nama, v.capex::float8 as capex, r.diajukan_at as sejak, null::timestamptz as batas, v.am_nama, v.cabang,
                         v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
-                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi
-                   from kso.rencana_kso r join kso.v_rencana v on v.id = r.id
+                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota
+                   from kso.rencana_kso r join kso.v_rencana v on v.id = r.id join kso.faskes f on f.id = r.faskes_id
                   where r.zona in ('forum','direktur') and r.volume_terverifikasi is null and r.volume_sumber_label = 'data'
                     and r.status in ('DIAJUKAN','JALUR_FORUM','DIAGENDAKAN')
                   order by r.diajukan_at`
@@ -272,6 +273,13 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
                                   (harga_per_test * (1 - coalesce(fee_persen, 0) / 100))::float8 as harga_bersih
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
+    // 303: faskes baru (calon customer) — penanda + kota; Sekretariat/Komite mendapat saran akun master untuk ditautkan
+    const [fk] = await tx`select baru, kota, ditautkan_ke from kso.faskes where id = ${String(r.faskes_id)}`;
+    Object.assign(r, { faskes_baru: Boolean(fk?.baru), faskes_kota: fk?.kota ?? null });
+    const faskesSaranMaster = fk?.baru && !fk.ditautkan_ke && TAB_TAUTKAN.includes(tab)
+      ? saranAkunMaster(String(r.faskes_nama), (await tx`select id, nama, cabang from kso.faskes where not baru`)
+          .map((x) => ({ id: String(x.id), nama: String(x.nama), cabang: x.cabang ? String(x.cabang) : null })))
+      : undefined;
     // angka GPM per zona (268) — hanya untuk rencana yang boleh dilihat peran tab ini
     const [angkaGpm] = await tx`select gpm::float8, zona, hd, catatan, biaya_per_tes::float8, harga_am::float8, harga_hod::float8,
                                        harga_forum::float8, volume_min_forum::float8 from kso.app_angka_gpm(${id})`;
@@ -299,7 +307,8 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     const [kd] = await bahanKurang(tx, [id]);
     return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
              forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null,
-             lampiran_terakhir: lampiran[0] ?? null, lampiran, kurang: kd ? kurangDari(kd) : [] };
+             lampiran_terakhir: lampiran[0] ?? null, lampiran, kurang: kd ? kurangDari(kd) : [],
+             ...(faskesSaranMaster ? { faskes_saran_master: faskesSaranMaster } : {}) };
   });
   // Nama pelaku dibaca DI LUAR transaksi peran (koneksi biasa API): wrg_app tak dijamin boleh
   // membaca app_user di setiap lingkungan, dan nama akun bukan data KSO yang perlu RLS.
@@ -338,6 +347,15 @@ async function bahanKurang(tx: Tx, ids: number[]): Promise<BarisKurang[]> {
 const kurangDari = (b: BarisKurang): ItemKurang[] =>
   daftarKurang({ ...b, angka: b.hd == null ? null : { hd: b.hd } }, `D${b.id}`);
 
+/** Tab yang boleh menautkan faskes baru ke akun master (= AKSI_TAB["tautkan-faskes"]). */
+const TAB_TAUTKAN: TabKso[] = ["sekretariat", "agenda"];
+
+/** Maks 5 akun master paling mirip nama faskes baru (pilihan "Tautkan ke akun master"). Murni. */
+export function saranAkunMaster(nama: string, master: { id: string; nama: string; cabang: string | null }[]): { id: string; nama: string; cabang: string | null; skor: number }[] {
+  return master.map((m) => ({ ...m, skor: skorFaskes(nama, m.nama) })).filter((m) => m.skor > 0)
+    .sort((a, b) => b.skor - a.skor || a.nama.localeCompare(b.nama)).slice(0, 5);
+}
+
 export type FilterKso = "belum-lengkap" | "lolos-tanpa-forum";
 export function isFilterKso(f: string): f is FilterKso {
   return f === "belum-lengkap" || f === "lolos-tanpa-forum";
@@ -357,13 +375,13 @@ export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKs
       select r.id::int, r.nomor, r.status::text, r.jalur::text as jalur, v.am_nama, v.cabang, v.faskes_nama, v.alat_nama,
              r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm_deal, r.harga_per_test::float8 as harga_per_test, r.fee_persen::float8 as fee_persen,
              (r.harga_per_test * (1 - coalesce(r.fee_persen, 0) / 100))::float8 as harga_bersih, r.volume_estimasi, r.tenor_bulan,
-             r.dibuat_at::text, r.diajukan_at::text, r.diubah_at::text,
+             r.dibuat_at::text, r.diajukan_at::text, r.diubah_at::text, f.baru as faskes_baru, f.kota as faskes_kota,
              (select json_build_object('id', l.id, 'lolos', l.lolos, 'tanggal', l.hasil_ocr->'isian'->>'tanggal', 'dibuat_at', l.dibuat_at)
                 from kso.rencana_lampiran l where l.rencana_id = r.id order by l.dibuat_at desc, l.id desc limit 1) as lampiran,
              (select json_build_object('harga_pembuka', m.harga_pembuka, 'harga_target', m.harga_target, 'harga_lantai', m.harga_lantai,
                                        'volume_terbukti', m.volume_terbukti, 'berlaku_sampai', m.berlaku_sampai, 'sumber', m.sumber)
                 from kso.mandat m where m.rencana_id = r.id) as mandat
-        from kso.rencana_kso r join kso.v_rencana v on v.id = r.id
+        from kso.rencana_kso r join kso.v_rencana v on v.id = r.id join kso.faskes f on f.id = r.faskes_id
        where r.status::text = any(${status})
        order by coalesce(r.diajukan_at, r.diubah_at) desc
        limit 500`;
@@ -390,7 +408,7 @@ export async function berkasLampiran(userId: string, tab: TabKso, id: number, la
 
 export type AksiKso =
   | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima"
-  | "verifikasi-volume";
+  | "verifikasi-volume" | "tautkan-faskes";
 
 /**
  * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
@@ -409,6 +427,8 @@ export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
   "serah-terima": ["teknik"],
   // F170 v2 (268/266): bukti volume zona Forum & Direktur — Sekretaris
   "verifikasi-volume": ["sekretariat"],
+  // 303: faskes baru (calon customer) → akun master begitu customer terdaftar di Accurate/CRM
+  "tautkan-faskes": ["sekretariat", "agenda"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -465,6 +485,9 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
     case "verifikasi-volume":
       if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
       return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
+    case "tautkan-faskes":
+      return typeof b.akun === "string" && /^[0-9A-Za-z_-]{1,40}$/.test(b.akun.trim()) && !/^BARU-/i.test(b.akun.trim())
+        ? null : "Pilih akun master faskes yang akan ditautkan.";
   }
 }
 
@@ -503,6 +526,8 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/TRANSISI_TIDAK_SAH/, 409, "Aksi ini tidak berlaku untuk status rencana sekarang."],
     [/BUKAN_TAHAP_VERIFIKASI/, 409, "Bukti volume hanya bisa diverifikasi sebelum putusan."],
     [/ALASAN_WAJIB/, 400, "Bukti ditolak wajib disertai alasan."],
+    [/FASKES_BUKAN_BARU/, 409, "Faskes usulan ini bukan faskes baru, atau sudah ditautkan ke akun master."],
+    [/AKUN_MASTER_TIDAK_ADA/, 400, "Akun master itu belum ada di referensi Komite KSO — customer baru dari Accurate/CRM masuk sesudah penyegaran malam."],
   ];
   for (const [re, status, pesan] of peta) if (re.test(m)) return { status, pesan };
   return { status: 500, pesan: "Aksi gagal diproses. Coba lagi atau hubungi admin." };
@@ -568,6 +593,10 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
         case "verifikasi-volume":
           await tx`select kso.app_verifikasi_volume(${id}, ${b.sah === true}, ${teks(b.catatan)})`;
           return { ok: true };
+        case "tautkan-faskes": {
+          const [r] = await tx`select kso.app_tautkan_faskes(${id}, ${String(b.akun).trim()}) as n`;
+          return { ok: true, rencana_dipindah: Number(r.n) };
+        }
       }
     });
   } catch (e) {
