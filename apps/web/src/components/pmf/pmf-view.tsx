@@ -19,9 +19,9 @@ const VARIAN: Record<PmfStatus, "default" | "secondary" | "destructive" | "outli
 const persen = (v: number | null) => (v === null ? "—" : `${v.toLocaleString("id-ID")}%`);
 const poin = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${v.toLocaleString("id-ID")} poin`);
 
-const kolom = (judulKedua: string): DataColumn<PmfSel>[] => [
+const kolom = (judulKedua: string, kedua: (r: PmfSel) => string = (r) => r.region): DataColumn<PmfSel>[] => [
   { id: "brand", header: "Brand", sortable: true, accessor: (r) => r.brand },
-  { id: "region", header: judulKedua, sortable: true, accessor: (r) => r.region },
+  { id: "kedua", header: judulKedua, sortable: true, accessor: kedua },
   { id: "n", header: "n deal", align: "right", sortable: true, accessor: (r) => r.n },
   { id: "won", header: "Won", align: "right", sortable: true, accessor: (r) => r.won },
   { id: "lost", header: "Lost", align: "right", sortable: true, accessor: (r) => r.lost },
@@ -46,6 +46,7 @@ const kolom = (judulKedua: string): DataColumn<PmfSel>[] => [
 const kolomExport: ExportColumn<PmfSel>[] = [
   { header: "Brand", value: (r) => r.brand },
   { header: "Region", value: (r) => r.region },
+  { header: "Produk", value: (r) => r.produk ?? "" },
   { header: "n deal", value: (r) => r.n },
   { header: "Won", value: (r) => r.won },
   { header: "Lost", value: (r) => r.lost },
@@ -71,16 +72,23 @@ export function PmfView({ data }: { data: PmfScorecard }) {
   const tahunIni = new Date().getFullYear();
   const tahunOpsi = [tahunIni, tahunIni - 1, tahunIni - 2, tahunIni - 3].map((t) => ({ value: String(t), label: String(t) }));
   const kuartalOpsi = [1, 2, 3, 4].map((k) => ({ value: String(k), label: `Q${k}` }));
-  const pindah = (tahun: string, kuartal: string) => router.push(`/pmf-scorecard?tahun=${tahun}&kuartal=${kuartal}`);
-  const namaFile = `pmf-scorecard-${data.tahun}-Q${data.kuartal}`;
+  // Nilai "" di FilterSelect = pilihan "Semua". Tahun Semua = seluruh riwayat (kuartal ikut Semua);
+  // Kuartal Semua = setahun penuh.
+  const pindah = (tahun: string, kuartal: string) =>
+    router.push(tahun ? `/pmf-scorecard?tahun=${tahun}&kuartal=${kuartal || "semua"}` : "/pmf-scorecard?tahun=semua");
+  const tahunNilai = data.tahun === null ? "" : String(data.tahun);
+  const kuartalNilai = data.kuartal === null ? "" : String(data.kuartal);
+  const namaFile = `pmf-scorecard-${data.tahun ?? "semua"}${data.tahun === null ? "" : data.kuartal === null ? "-setahun" : `-Q${data.kuartal}`}`;
+  const labelPeriode = data.periode.dari && data.periode.sampai ? `${data.periode.dari} s/d ${data.periode.sampai}` : "Semua periode";
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <FilterSelect label="Tahun" value={String(data.tahun)} onChange={(v) => v && pindah(v, String(data.kuartal))} options={tahunOpsi} semua={String(data.tahun)} />
-        <FilterSelect label="Kuartal" value={String(data.kuartal)} onChange={(v) => v && pindah(String(data.tahun), v)} options={kuartalOpsi} semua={`Q${data.kuartal}`} />
+        <FilterSelect label="Tahun" value={tahunNilai} onChange={(v) => pindah(v, kuartalNilai)} options={tahunOpsi} />
+        <FilterSelect label="Kuartal" value={kuartalNilai} onChange={(v) => pindah(tahunNilai, v)} options={kuartalOpsi}
+          disabled={data.tahun === null} />
         <span className="text-xs text-muted-foreground">
-          {data.periode.dari} s/d {data.periode.sampai} · tanggal tutup = log perpindahan stage
+          {labelPeriode} · tanggal tutup = log perpindahan stage
         </span>
       </div>
 
@@ -106,7 +114,7 @@ export function PmfView({ data }: { data: PmfScorecard }) {
         <CardHeader><CardTitle className="text-base">Brand × region</CardTitle></CardHeader>
         <CardContent>
           <DataTable columns={kolom("Region")} data={data.sel} getKey={(s) => `${s.brand}|${s.region}`}
-            searchPlaceholder="Cari brand atau region…" pageSize={10} empty="Belum ada deal tertutup pada kuartal ini."
+            searchPlaceholder="Cari brand atau region…" pageSize={10} empty="Belum ada deal tertutup pada periode ini."
             initialSort={{ id: "n", dir: "desc" }}
             toolbar={<ExportButton filename={namaFile} columns={kolomExport} data={data.sel} label="Export CSV" />} />
         </CardContent>
@@ -116,9 +124,25 @@ export function PmfView({ data }: { data: PmfScorecard }) {
         <CardHeader><CardTitle className="text-base">Per brand (semua region)</CardTitle></CardHeader>
         <CardContent>
           <DataTable columns={kolom("Cakupan")} data={data.per_brand} getKey={(s) => s.brand}
-            searchPlaceholder="Cari brand…" pageSize={10} empty="Belum ada deal tertutup pada kuartal ini."
+            searchPlaceholder="Cari brand…" pageSize={10} empty="Belum ada deal tertutup pada periode ini."
             initialSort={{ id: "n", dir: "desc" }}
             toolbar={<ExportButton filename={`${namaFile}-per-brand`} columns={kolomExport} data={data.per_brand} label="Export CSV" />} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Brand × produk</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Produk dari isian deal, dirapikan (huruf besar, nama brand di depan dibuang). Penulisan berbeda untuk alat yang sama
+            tetap terpisah — rapikan isian Produk di Pipeline supaya angkanya menyatu.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <DataTable columns={kolom("Produk", (r) => r.produk ?? "")} data={data.per_produk} getKey={(s) => `${s.brand}|${s.produk}`}
+            searchPlaceholder="Cari brand atau produk…" pageSize={10} empty="Belum ada deal tertutup pada periode ini."
+            initialSort={{ id: "n", dir: "desc" }}
+            toolbar={<ExportButton filename={`${namaFile}-per-produk`} columns={kolomExport} data={data.per_produk} label="Export CSV" />} />
         </CardContent>
       </Card>
     </div>
