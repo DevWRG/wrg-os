@@ -13,6 +13,7 @@ import {
   extractActionItems,
   parseTenggat,
   pilihPiutang,
+  piutangAktif,
   topikKey,
   umurMenit,
 } from "./notiftua.js";
@@ -285,4 +286,10 @@ test("pesan piutang: urut nilai terbesar, total di judul, eskalasi ringkas tanpa
   assert.match(msg, /🔺 \*Eskalasi ke Direktur:\* 2 faktur lewat jatuh tempo >60 hari · total Rp 71 jt/);
   assert.equal((msg.match(/BESAR/g) ?? []).length, 1, "faktur eskalasi tidak diulang");
   assert.match(msg, /• SEDANG/); // 45 hari: belum eskalasi → titik biasa
+});
+
+test("piutangAktif: bagian piutang kritis default mati, hanya 'true' yang menyalakan", () => {
+  assert.equal(piutangAktif({}), false);
+  assert.equal(piutangAktif({ NOTIF_TUA_PIUTANG_ENABLED: "false" }), false);
+  assert.equal(piutangAktif({ NOTIF_TUA_PIUTANG_ENABLED: " TRUE " }), true);
 });

@@ -22,6 +22,15 @@ Job `notif-tua` (14:05 & 22:15, `repo/notiftua.ts`) membaca section "⏳ OUTSTAN
 - Eskalasi: Harga dengan umur > 2 hari → blok "🔺 Eskalasi ke Direktur" di pesan, **sekali per item** (`tua_item.eskalasi_at`, diisi hanya setelah pesan terkirim).
 - `tua_item` (migrasi 254) mencatat pertama/terakhir terlihat per topik, karena resume hanya mencakup beberapa jam dan tak bisa menunjukkan umur berhari-hari. Topik yang tak terlihat >3 hari dianggap selesai dan dihapus.
 
+## Saklar bagian piutang (10 Nov 2026)
+Bagian **Piutang Kritis** + eskalasi piutang ke Direktur hanya ikut bila `NOTIF_TUA_PIUTANG_ENABLED=true` (default **mati**),
+supaya membawa QW2 ke prod tidak tiba-tiba mengirim dan mengeskalasi seluruh piutang 90+. Item TUA dari resume (bertingkat
+Harga 4 jam / umum 8 jam + eskalasi Harga) tetap jalan mengikuti `NOTIF_TUA_ENABLED` seperti sebelumnya. Pratinjau manual:
+`POST /notif/tua {"dry_run":true,"piutang":true}` memaksa bagian piutang ikut walau saklar mati.
+
+Nilai piutang = sisa tagihan (`accurate_invoice.outstanding`, sama dengan AR Watch); faktur lunas tidak dihitung. Daftar urut
+nilai terbesar, judul memuat total, dan eskalasi ditulis ringkas (faktur yang baru dieskalasi ditandai 🔺 di daftar).
+
 ## Target
 Tetap satu target `NOTIF_TUA_TARGET` — untuk tahap uji isi dengan **grup Research**. Tidak ada DM personal, tidak ada mention,
 tidak ada hashtag. Nomor/grup Direktur ditentukan Direktur, lalu cukup ganti env.

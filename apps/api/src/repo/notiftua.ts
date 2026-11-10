@@ -423,7 +423,52 @@ export interface NotifTuaResult {
   payload?: string;
 }
 
-export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = {}): Promise<NotifTuaResult> {
+/** Saklar bagian piutang kritis di notif TUA (NOTIF_TUA_PIUTANG_ENABLED, default mati). */
+export const piutangAktif = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  (env.NOTIF_TUA_PIUTANG_ENABLED ?? "false").trim().toLowerCase() === "true";
+
+async function hitungPiutang(sql: ReturnType<typeof db>, dryRun: boolean): Promise<PiutangItem[]> {
+  const amb = ambangPiutang();
+  const arRows = await sql`
+    -- Nilai = SISA tagihan (accurate_invoice.outstanding), sama dengan AR Watch (arOver90Outstanding):
+    -- ar_aging_mv.amount ikut memuat faktur yang sudah lunas.
+    SELECT m.customer_name, m.invoice_no, COALESCE(ai.outstanding, m.amount)::float8 AS amount,
+           m.days_overdue, m.bucket, m.is_anomaly
+    FROM ar_aging_mv m
+    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
+    WHERE m.days_overdue > ${amb.tua} AND COALESCE(ai.outstanding, m.amount) > 0
+  `;
+  const arKeys = arRows.map((r) => topikKey(`piutang ${String(r.invoice_no)}`));
+  const arSudah = new Set<string>();
+  if (arKeys.length) {
+    const rows = await sql`SELECT topik_key FROM tua_item WHERE topik_key = ANY(${arKeys}::text[]) AND eskalasi_at IS NOT NULL`;
+    for (const r of rows) arSudah.add(String(r.topik_key));
+  }
+  const piutang = pilihPiutang(
+    arRows.map((r) => ({
+      customer_name: r.customer_name ? String(r.customer_name) : null,
+      invoice_no: String(r.invoice_no),
+      amount: Number(r.amount),
+      days_overdue: Number(r.days_overdue),
+      bucket: String(r.bucket),
+      is_anomaly: Boolean(r.is_anomaly),
+    })),
+    arSudah,
+    amb,
+  );
+  if (!dryRun) {
+    for (const p of piutang) {
+      await sql`
+        INSERT INTO tua_item (topik_key, topik, kategori)
+        VALUES (${p.key}, ${`Piutang ${p.invoice_no} ${p.customer_name ?? ""}`.trim().slice(0, 300)}, 'umum')
+        ON CONFLICT (topik_key) DO UPDATE SET last_seen = now()
+      `;
+    }
+  }
+  return piutang;
+}
+
+export async function runNotifTua(opts: { dryRun?: boolean; target?: string; piutang?: boolean } = {}): Promise<NotifTuaResult> {
   const target = opts.target || process.env.NOTIF_TUA_TARGET || "";
   if (!target) return { sent: false, count: 0, skipped: "no-target" };
 
@@ -495,43 +540,10 @@ export async function runNotifTua(opts: { dryRun?: boolean; target?: string } = 
   const tuaItems = nilai.filter((p) => p.n.tua);
   const tua = tuaItems.map((p) => p.raw);
 
-  const amb = ambangPiutang();
-  const arRows = await sql`
-    -- Nilai = SISA tagihan (accurate_invoice.outstanding), sama dengan AR Watch (arOver90Outstanding):
-    -- ar_aging_mv.amount ikut memuat faktur yang sudah lunas.
-    SELECT m.customer_name, m.invoice_no, COALESCE(ai.outstanding, m.amount)::float8 AS amount,
-           m.days_overdue, m.bucket, m.is_anomaly
-    FROM ar_aging_mv m
-    LEFT JOIN accurate_invoice ai ON ai.number = m.invoice_no AND ai.customer_id::text = m.customer_id
-    WHERE m.days_overdue > ${amb.tua} AND COALESCE(ai.outstanding, m.amount) > 0
-  `;
-  const arKeys = arRows.map((r) => topikKey(`piutang ${String(r.invoice_no)}`));
-  const arSudah = new Set<string>();
-  if (arKeys.length) {
-    const rows = await sql`SELECT topik_key FROM tua_item WHERE topik_key = ANY(${arKeys}::text[]) AND eskalasi_at IS NOT NULL`;
-    for (const r of rows) arSudah.add(String(r.topik_key));
-  }
-  const piutang = pilihPiutang(
-    arRows.map((r) => ({
-      customer_name: r.customer_name ? String(r.customer_name) : null,
-      invoice_no: String(r.invoice_no),
-      amount: Number(r.amount),
-      days_overdue: Number(r.days_overdue),
-      bucket: String(r.bucket),
-      is_anomaly: Boolean(r.is_anomaly),
-    })),
-    arSudah,
-    amb,
-  );
-  if (!opts.dryRun) {
-    for (const p of piutang) {
-      await sql`
-        INSERT INTO tua_item (topik_key, topik, kategori)
-        VALUES (${p.key}, ${`Piutang ${p.invoice_no} ${p.customer_name ?? ""}`.trim().slice(0, 300)}, 'umum')
-        ON CONFLICT (topik_key) DO UPDATE SET last_seen = now()
-      `;
-    }
-  }
+  // Bagian piutang kritis punya saklar sendiri (default MATI): menyalakan QW2 di prod tak
+  // boleh tiba-tiba mengirim + mengeskalasi seluruh piutang 90+ ke Direktur. Pratinjau manual
+  // bisa memaksanya lewat opts.piutang.
+  const piutang = (opts.piutang ?? piutangAktif()) ? await hitungPiutang(sql, Boolean(opts.dryRun)) : [];
 
   if (!row && piutang.length === 0) return { sent: false, count: 0, skipped: "no-resume" };
   if (tua.length === 0 && piutang.length === 0) {

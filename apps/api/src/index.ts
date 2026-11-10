@@ -1895,13 +1895,14 @@ app.post("/monitor/resume/generate", async (c) => {
 // terbaru ke NOTIF_TUA_TARGET. body: {dry_run?, target?}. dry_run → payload saja.
 app.post("/notif/tua", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { dry_run?: boolean; target?: string } = {};
+  let body: { dry_run?: boolean; target?: string; piutang?: boolean } = {};
   try {
     body = await c.req.json();
   } catch {
     /* body opsional */
   }
-  const r = await runNotifTua({ dryRun: body.dry_run, target: body.target });
+  // `piutang` memaksa bagian piutang kritis ikut (untuk pratinjau) walau NOTIF_TUA_PIUTANG_ENABLED mati.
+  const r = await runNotifTua({ dryRun: body.dry_run, target: body.target, piutang: body.piutang });
   return c.json(r);
 });
 
