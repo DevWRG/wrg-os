@@ -15,6 +15,9 @@
 //   - Status sel deterministik: n < 5 → DATA KURANG; win-rate ≥ portofolio + 10 poin → MENANG;
 //     ≤ portofolio − 10 poin → KALAH; selain itu NETRAL. Jumlah deal (n) selalu ikut ditampilkan.
 //   - Lost tanpa alasan ditampilkan apa adanya (dihitung, tidak disembunyikan).
+//   - Produk (tabel Brand × produk) = isian teks bebas `deal.product`, hanya dirapikan: huruf besar,
+//     spasi tunggal, awalan nama brand dibuang ("ZYBIO EXR110" → "EXR110"). Varian penulisan lain
+//     ("Z50" vs "HEMATOLOGY ANALYZER 5 DIFF Z50") tetap terpisah — tak ada master yang bisa dicocokkan.
 
 import { db } from "../db.js";
 import { cabangRegionMap } from "./sales.js";
@@ -24,6 +27,7 @@ export const MIN_DEAL = 5;
 export const AMBANG_POIN = 10;
 export const TANPA_BRAND = "(tanpa brand)";
 export const TANPA_REGION = "Tanpa region";
+export const TANPA_PRODUK = "(tanpa produk)";
 
 export type PmfRegion = "East" | "West" | typeof TANPA_REGION;
 export type PmfStatus = "MENANG" | "NETRAL" | "KALAH" | "DATA KURANG";
@@ -31,6 +35,7 @@ export type PmfStatus = "MENANG" | "NETRAL" | "KALAH" | "DATA KURANG";
 /** Satu deal terminal, sudah dinormalisasi dari baris DB. */
 export interface DealTerminal {
   brand: string | null;
+  produk?: string | null;
   region: PmfRegion;
   menang: boolean;
   impor: boolean;
@@ -41,6 +46,7 @@ export interface DealTerminal {
 export interface PmfSel {
   brand: string;
   region: PmfRegion | "Semua region";
+  produk?: string; // hanya di per_produk
   won: number;
   lost: number;
   n: number;
@@ -62,13 +68,15 @@ export interface PmfRingkasan {
 }
 
 export interface PmfScorecard {
-  tahun: number;
-  kuartal: number;
-  periode: { dari: string; sampai: string };
+  tahun: number | null; // null = semua tahun
+  kuartal: number | null; // null = setahun penuh (atau semua tahun)
+  periode: { dari: string | null; sampai: string | null }; // null = tanpa batas
+
   ambang: { min_deal: number; poin: number };
   ringkasan: PmfRingkasan;
   per_brand: PmfSel[];
   sel: PmfSel[];
+  per_produk: PmfSel[];
 }
 
 const pct = (won: number, n: number): number | null => (n > 0 ? Math.round((won / n) * 1000) / 10 : null);
@@ -106,6 +114,14 @@ export function regionDariCabang(cabang: string | null, peta: Record<string, str
   return r === "East" || r === "West" ? r : TANPA_REGION;
 }
 
+/** Rapikan teks produk deal: huruf besar, spasi tunggal, buang awalan nama brand. Kosong → TANPA_PRODUK. */
+export function normProduk(produk: string | null | undefined, brand: string | null | undefined): string {
+  let p = (produk ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+  const b = (brand ?? "").replace(/\s+/g, " ").trim().toUpperCase();
+  if (b && p.startsWith(b + " ")) p = p.slice(b.length + 1).trim();
+  return p || TANPA_PRODUK;
+}
+
 function bangunSel(
   brand: string,
   region: PmfSel["region"],
@@ -132,8 +148,9 @@ function bangunSel(
 /** Fungsi murni: agregasi deal terminal satu periode jadi scorecard. Deal impor tidak ikut dihitung. */
 export function hitungScorecard(
   deals: DealTerminal[],
-  tahun: number,
-  kuartal: number,
+  tahun: number | null,
+  kuartal: number | null,
+  periode?: { dari: string | null; sampai: string | null },
 ): PmfScorecard {
   const dihitung = deals.filter((d) => !d.impor);
   const won = dihitung.filter((d) => d.menang).length;
@@ -142,11 +159,14 @@ export function hitungScorecard(
 
   const perBrand = new Map<string, DealTerminal[]>();
   const perSel = new Map<string, DealTerminal[]>();
+  const perProduk = new Map<string, DealTerminal[]>();
   for (const d of dihitung) {
     const brand = d.brand?.trim() || TANPA_BRAND;
     (perBrand.get(brand) ?? perBrand.set(brand, []).get(brand)!).push(d);
     const kunci = `${brand}\u0000${d.region}`;
     (perSel.get(kunci) ?? perSel.set(kunci, []).get(kunci)!).push(d);
+    const kunciProduk = `${brand}\u0000${normProduk(d.produk, brand)}`;
+    (perProduk.get(kunciProduk) ?? perProduk.set(kunciProduk, []).get(kunciProduk)!).push(d);
   }
 
   const urut = (a: PmfSel, b: PmfSel) => b.n - a.n || a.brand.localeCompare(b.brand) || a.region.localeCompare(b.region);
@@ -159,11 +179,17 @@ export function hitungScorecard(
   const per_brand = [...perBrand.entries()]
     .map(([brand, ds]) => bangunSel(brand, "Semua region", ds, wrPortofolio))
     .sort(urut);
+  const per_produk = [...perProduk.entries()]
+    .map(([kunci, ds]) => {
+      const [brand, produk] = kunci.split("\u0000") as [string, string];
+      return { ...bangunSel(brand, "Semua region", ds, wrPortofolio), produk };
+    })
+    .sort((a, b) => b.n - a.n || a.brand.localeCompare(b.brand) || a.produk.localeCompare(b.produk));
 
   return {
     tahun,
     kuartal,
-    periode: rentangKuartal(tahun, kuartal),
+    periode: periode ?? (tahun !== null && kuartal !== null ? rentangKuartal(tahun, kuartal) : { dari: null, sampai: null }),
     ambang: { min_deal: MIN_DEAL, poin: AMBANG_POIN },
     ringkasan: {
       won,
@@ -177,26 +203,32 @@ export function hitungScorecard(
     },
     per_brand,
     sel,
+    per_produk,
   };
 }
 
 interface BarisDeal {
   stage: string;
   brand: string | null;
+  produk: string | null;
   cabang: string | null;
   alasan_kalah: string | null;
   impor: boolean;
   dari_log: boolean;
 }
 
-/** Validasi param kuartal dari query. null = tak diisi; string = pesan galat (400). */
+/** Pilihan periode dari query: angka, "semua" (tanpa filter), atau null (tak diisi → default). */
+export type PilihanPeriode = number | "semua" | null;
+
+/** Validasi param kuartal dari query. null = tak diisi; "semua" = semua tahun / setahun penuh; string lain = pesan galat (400). */
 export function bacaParamKuartal(tahunRaw: string | undefined, kuartalRaw: string | undefined):
-  { tahun: number | null; kuartal: number | null } | string {
+  { tahun: PilihanPeriode; kuartal: PilihanPeriode } | string {
   const kosong = (v: string | undefined) => v === undefined || v.trim() === "";
-  const tahun = kosong(tahunRaw) ? null : Number(tahunRaw);
-  const kuartal = kosong(kuartalRaw) ? null : Number(kuartalRaw);
-  if (tahun !== null && !(Number.isInteger(tahun) && tahun >= 2000 && tahun <= 2100)) return "tahun harus angka 2000-2100";
-  if (kuartal !== null && !(Number.isInteger(kuartal) && kuartal >= 1 && kuartal <= 4)) return "kuartal harus 1-4";
+  const semua = (v: string | undefined) => v?.trim().toLowerCase() === "semua";
+  const tahun = kosong(tahunRaw) ? null : semua(tahunRaw) ? "semua" : Number(tahunRaw);
+  const kuartal = kosong(kuartalRaw) ? null : semua(kuartalRaw) ? "semua" : Number(kuartalRaw);
+  if (typeof tahun === "number" && !(Number.isInteger(tahun) && tahun >= 2000 && tahun <= 2100)) return "tahun harus angka 2000-2100 atau semua";
+  if (typeof kuartal === "number" && !(Number.isInteger(kuartal) && kuartal >= 1 && kuartal <= 4)) return "kuartal harus 1-4 atau semua";
   return { tahun, kuartal };
 }
 
@@ -213,7 +245,7 @@ export function kuartalDefault(hariIni: string, tutupTerakhir: string | null): {
 }
 
 /** Scorecard kuartal (default: kuartal deal tertutup terakhir, lihat kuartalDefault). Hanya SELECT. */
-export async function getPmfScorecard(tahunIn?: number | null, kuartalIn?: number | null): Promise<PmfScorecard> {
+export async function getPmfScorecard(tahunIn?: PilihanPeriode, kuartalIn?: PilihanPeriode): Promise<PmfScorecard> {
   const sql = db();
   const hariIni = wibToday().toISOString().slice(0, 10);
   let def = kuartalDari(hariIni);
@@ -229,14 +261,20 @@ export async function getPmfScorecard(tahunIn?: number | null, kuartalIn?: numbe
         AND NOT EXISTS (SELECT 1 FROM spt_state_log l WHERE l.deal_id = d.deal_id AND l.changed_by = 'import-pameran')`;
     def = kuartalDefault(hariIni, r?.tgl ?? null);
   }
-  const tahun = tahunIn ?? (kuartalIn == null ? def.tahun : kuartalDari(hariIni).tahun);
-  const kuartal = kuartalIn ?? def.kuartal;
-  const { dari, sampai } = rentangKuartal(tahun, kuartal);
+  // "semua" tahun = seluruh riwayat (kuartal ikut diabaikan); kuartal "semua" = setahun penuh.
+  const semuaTahun = tahunIn === "semua";
+  const tahun = semuaTahun ? null : typeof tahunIn === "number" ? tahunIn : (kuartalIn == null ? def.tahun : kuartalDari(hariIni).tahun);
+  const kuartal = semuaTahun || kuartalIn === "semua" ? null : typeof kuartalIn === "number" ? kuartalIn : def.kuartal;
+  const periode = tahun === null
+    ? { dari: null, sampai: null }
+    : kuartal === null ? { dari: `${tahun}-01-01`, sampai: `${tahun}-12-31` } : rentangKuartal(tahun, kuartal);
+  const { dari, sampai } = periode;
 
   const [rows, peta] = await Promise.all([
     sql<BarisDeal[]>`
       SELECT d.stage,
              nullif(btrim(d.brand), '') AS brand,
+             nullif(btrim(d.product), '') AS produk,
              coalesce(nullif(btrim(d.cabang), ''), nullif(btrim(mu.cabang), '')) AS cabang,
              d.loss_reason::text AS alasan_kalah,
              EXISTS (SELECT 1 FROM spt_state_log l
@@ -250,8 +288,10 @@ export async function getPmfScorecard(tahunIn?: number | null, kuartalIn?: numbe
       ) x
       WHERE d.stage IN ('Closing-Won', 'Closing-Lost')
         AND d.opsi_utama -- Multi-Opsi (274): opsi di-drop bukan kekalahan
-        AND (coalesce(x.tgl_log, d.stage_entered_at) AT TIME ZONE 'Asia/Jakarta')::date
-            BETWEEN ${dari}::date AND ${sampai}::date`,
+        ${dari !== null && sampai !== null
+          ? sql`AND (coalesce(x.tgl_log, d.stage_entered_at) AT TIME ZONE 'Asia/Jakarta')::date
+                BETWEEN ${dari}::date AND ${sampai}::date`
+          : sql``}`,
     cabangRegionMap(sql),
   ]);
 
@@ -260,11 +300,12 @@ export async function getPmfScorecard(tahunIn?: number | null, kuartalIn?: numbe
 
   const deals: DealTerminal[] = rows.map((r) => ({
     brand: r.brand,
+    produk: r.produk,
     region: regionDariCabang(r.cabang, petaNorm),
     menang: r.stage === "Closing-Won",
     impor: r.impor,
     tanggal_dari_log: r.dari_log,
     alasan_kalah: r.alasan_kalah,
   }));
-  return hitungScorecard(deals, tahun, kuartal);
+  return hitungScorecard(deals, tahun, kuartal, periode);
 }
