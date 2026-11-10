@@ -29,7 +29,7 @@ export function FilterSelect({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="max-w-[12rem] rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground disabled:opacity-50"
+        className="max-w-[12rem] rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground disabled:opacity-50"
       >
         <option value="">{semua}</option>
         {options.map((o) => (
