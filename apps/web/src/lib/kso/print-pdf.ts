@@ -12,6 +12,7 @@
 import type {
   BarisExcelHemato, BarisExcelKk, DokumenKso, InfoKunjungan, RingkasKso,
 } from "./export-excel";
+import type { HargaInput } from "./types";
 
 const F = (v: number | null | undefined): string =>
   v === null || v === undefined || !Number.isFinite(v) ? "—" : Math.round(v).toLocaleString("id-ID");
@@ -28,50 +29,56 @@ const tanggalHariIni = (): string =>
 const esc = (s: string | null | undefined): string =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// Warna mengikuti palet WRG-OS (apps/web/src/app/globals.css :root): primary #0ca6bd, primary-dark #0a8a9e,
+// accent-foreground #0a7c8c, foreground #1e293b, muted-foreground #64748b, border #e4e8ef, muted #f1f5f9,
+// primary-soft #e0f7fb, success #10b981, warning #f59e0b. Header memakai teal TERGELAP (#0a7c8c): judul & tanggal
+// putih di header dibaca OCR bot #KSO (services/ai/app/kso_cprr.py) — teal primary #0ca6bd terlalu terang untuk itu.
+// Nama kelas navy/green/amber dipertahankan (dipakai semua kategori), warnanya yang diganti.
 const CSS = `
 @page { size: A4 portrait; margin: 12mm 15mm; }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-size: 10pt; color: #1A2733; background: #fff; }
-.hdr { background: #1C3F6E; padding: 14px 16px 12px; display: flex; justify-content: space-between; align-items: flex-end;
+body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-size: 10pt; color: #1e293b; background: #fff; }
+.hdr { background: #0a7c8c; padding: 14px 16px 12px; display: flex; justify-content: space-between; align-items: flex-end;
   -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .hdr-title { font-size: 13pt; font-weight: 800; color: #fff; letter-spacing: .3px; }
-.hdr-sub { font-size: 7.5pt; color: rgba(255,255,255,.6); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 3px; }
-.hdr-date { font-size: 8pt; color: rgba(255,255,255,.6); text-align: right; margin-top: 4px; }
+.hdr-sub { font-size: 7.5pt; color: rgba(255,255,255,.8); letter-spacing: 1.5px; text-transform: uppercase; margin-top: 3px; }
+.hdr-date { font-size: 8pt; color: rgba(255,255,255,.9); text-align: right; margin-top: 4px; }
 .hdr img { height: 34px; max-width: 180px; object-fit: contain; display: block; }
-.meta { background: #EEF2F7; border-bottom: 1px solid #C9D4E0; padding: 7px 16px; display: grid;
+.meta { background: #f1f5f9; border-bottom: 1px solid #e4e8ef; padding: 7px 16px; display: grid;
   grid-template-columns: 1fr 1fr 1fr; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .meta-item { display: flex; flex-direction: column; gap: 1px; }
-.meta-item:not(:last-child) { border-right: 1px solid #C9D4E0; padding-right: 12px; margin-right: 12px; }
-.meta-lbl { font-size: 7pt; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #7A90A8; }
-.meta-val { font-size: 9.5pt; font-weight: 600; color: #1C3F6E; }
+.meta-item:not(:last-child) { border-right: 1px solid #e4e8ef; padding-right: 12px; margin-right: 12px; }
+.meta-lbl { font-size: 7pt; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #64748b; }
+.meta-val { font-size: 9.5pt; font-weight: 600; color: #0a7c8c; }
 .body { padding: 13px 16px 14px; display: flex; flex-direction: column; gap: 12px; }
 .sec-hdr { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
 .sec-bar { width: 3px; height: 12px; border-radius: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.sec-bar.navy { background: #1C3F6E; } .sec-bar.green { background: #2E7D52; } .sec-bar.amber { background: #C07800; }
+.sec-bar.navy { background: #0ca6bd; } .sec-bar.green { background: #10b981; } .sec-bar.amber { background: #f59e0b; }
 .sec-ttl { font-size: 7.5pt; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
-.sec-ttl.navy { color: #3A5272; } .sec-ttl.green { color: #1B5E35; } .sec-ttl.amber { color: #92400E; }
-.kso-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); border: 1px solid #DDE4ED; border-radius: 4px; overflow: hidden; }
-.kso-cell { display: flex; justify-content: space-between; gap: 10px; padding: 4px 9px; border-bottom: 1px solid #EDF1F6; font-size: 9.5pt; }
-.kso-cell .k { color: #6B7C90; } .kso-cell .v { font-weight: 600; }
-.cprr-tbl { border: 1px solid #DDE4ED; border-radius: 4px; overflow: hidden; }
-.cprr-row { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #EDF1F6; font-size: 10pt; }
-.cprr-row .cl { color: #48607A; } .cprr-row .cv { font-weight: 700; font-variant-numeric: tabular-nums; }
-.cprr-row.hi { background: #FFF9C4; border-top: 1px solid #F9A825; border-bottom: 1px solid #F9A825;
+.sec-ttl.navy { color: #0a7c8c; } .sec-ttl.green { color: #047857; } .sec-ttl.amber { color: #b45309; }
+.kso-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); border: 1px solid #e4e8ef; border-radius: 4px; overflow: hidden; }
+.kso-cell { display: flex; justify-content: space-between; gap: 10px; padding: 4px 9px; border-bottom: 1px solid #eef1f5; font-size: 9.5pt; }
+.kso-cell .k { color: #64748b; } .kso-cell .v { font-weight: 600; }
+.cprr-tbl { border: 1px solid #e4e8ef; border-radius: 4px; overflow: hidden; }
+.cprr-row { display: flex; justify-content: space-between; padding: 5px 10px; border-bottom: 1px solid #eef1f5; font-size: 10pt; }
+.cprr-row .cl { color: #475569; } .cprr-row .cv { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cprr-row.hi { background: #e0f7fb; border-top: 1px solid #0ca6bd; border-bottom: 1px solid #0ca6bd;
   -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.cprr-row.hi .cl, .cprr-row.hi .cv { font-weight: 800; font-size: 11pt; color: #1C3F6E; }
+.cprr-row.hi .cl, .cprr-row.hi .cv { font-weight: 800; font-size: 11pt; color: #0a7c8c; }
 table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-th { background: #EEF2F7; text-align: left; padding: 5px 8px; font-size: 7.5pt; letter-spacing: .8px; text-transform: uppercase;
-  color: #48607A; border-bottom: 1px solid #C9D4E0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-td { padding: 4px 8px; border-bottom: 1px solid #EDF1F6; }
+th { background: #f1f5f9; text-align: left; padding: 5px 8px; font-size: 7.5pt; letter-spacing: .8px; text-transform: uppercase;
+  color: #475569; border-bottom: 1px solid #e4e8ef; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+td { padding: 4px 8px; border-bottom: 1px solid #eef1f5; }
 td.r, th.r { text-align: right; font-variant-numeric: tabular-nums; }
-td.muted { color: #7A90A8; font-size: 8pt; }
+td.muted { color: #64748b; font-size: 8pt; }
 tr { break-inside: avoid; }
-.info-k { display: flex; gap: 10px; padding: 7px 10px; background: #F7F9FC; border: 1px solid #DDE4ED; border-radius: 4px;
+.info-k { display: flex; gap: 10px; padding: 7px 10px; background: #f8fafc; border: 1px solid #e4e8ef; border-radius: 4px;
   -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-.info-k-lbl { font-size: 7.5pt; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #7A90A8; }
+.info-k-lbl { font-size: 7.5pt; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
 .info-k-val { font-size: 9.5pt; }
-.footer { display: flex; justify-content: space-between; padding: 8px 16px; border-top: 1px solid #DDE4ED;
-  font-size: 7.5pt; color: #7A90A8; }
+.catatan { font-size: 8pt; color: #64748b; margin-top: 5px; }
+.footer { display: flex; justify-content: space-between; padding: 8px 16px; border-top: 1px solid #e4e8ef;
+  font-size: 7.5pt; color: #64748b; }
 `;
 
 function buka(html: string) {
@@ -137,6 +144,56 @@ function pasanganRingkas(r: RingkasKso, satuan: string): [string, string][] {
   ];
 }
 
+// ── Kontrol & kalibrator (input panel hematologi) ───────────────────────────
+//
+// Label di bagian ini SENGAJA tidak memakai frasa yang dicari OCR bot #KSO (kso_cprr.py _LABEL):
+// "Kontrol & kalibrator" (= qc_status), "QC + kalibrasi / test" & "Kalibrasi / test" (= biaya per test).
+// Angka per test tetap hanya di tabel CPRR; di sini dasar perhitungannya.
+
+export interface KontrolPdf {
+  free: boolean;
+  nQc: number;
+  nCal: number;
+  ctrl: HargaInput;
+  ctrlXr?: HargaInput;
+  cal: HargaInput;
+  /** EXZ8000: label kontrol Check-XN/XR & kalibrasi per 25 hari. */
+  exz8000: boolean;
+  /** Hari kerja / bulan (EXZ8000: 25 hari). */
+  hariKerja: number;
+  /** Hasil perhitungan panel (sama dengan baris CPRR). */
+  overheadPerTest: number;
+}
+
+const hargaDiskon = (h: HargaInput | undefined): string => {
+  if (!h || !(h.price > 0)) return "—";
+  const d = Number(h.disc) || 0;
+  if (d <= 0) return Rp(h.price);
+  return `${Rp(h.price)} − ${d}% = ${Rp(h.price * (1 - d / 100))}`;
+};
+
+function secKontrol(k: KontrolPdf): string {
+  const hari = k.exz8000 ? 25 : k.hariKerja;
+  const pairs: [string, string][] = [
+    ["Skema", k.free ? "Free — material ditanggung vendor" : "Beli — sesuai price list"],
+    [k.exz8000 ? "Harga Check-XN control" : "Harga kontrol", hargaDiskon(k.ctrl)],
+    ...(k.exz8000 && k.ctrlXr ? ([["Harga Check-XR control", hargaDiskon(k.ctrlXr)]] as [string, string][]) : []),
+    ["Harga kalibrator", hargaDiskon(k.cal)],
+    ...(k.free
+      ? ([
+          ["Run QC / hari", `${F(k.nQc)} run`],
+          ["Run QC / bulan", `${F(k.nQc * hari)} run (${hari} hari)`],
+          [k.exz8000 ? "Kalibrasi / 25 hari" : "Kalibrasi / bulan", `${F(k.nCal)} kali`],
+          ["Overhead kontrol per test", Rp(k.overheadPerTest)],
+        ] as [string, string][])
+      : []),
+  ];
+  const catatan = k.free
+    ? "Material kontrol ditanggung vendor, tetapi tiap run QC dan kalibrasi tetap menghabiskan reagen — itu yang masuk ke biaya per test."
+    : "Kontrol dan kalibrator dibeli faskes sesuai price list — tidak dibebankan ke biaya per test.";
+  return sec("navy", "Pengaturan QC & kalibrasi", `${grid(pairs)}<div class="catatan">${esc(catatan)}</div>`);
+}
+
 // ── Hematologi ──────────────────────────────────────────────────────────────
 
 export function printHemato(arg: {
@@ -148,6 +205,8 @@ export function printHemato(arg: {
   overheadKontrol: number;
   sellPerTest: number;
   rows: BarisExcelHemato[];
+  /** Input kontrol & kalibrator panel — opsional supaya pemanggil lama tetap jalan. */
+  kontrol?: KontrolPdf;
 }) {
   const { ringkas: r, info } = arg;
   const base = arg.capPerTest + arg.reagenPerTest + arg.overheadKontrol;
@@ -193,6 +252,7 @@ export function printHemato(arg: {
       <div class="cprr-row"><span class="cl">Markup ${r.markup}%</span><span class="cv">${Rp(arg.sellPerTest - base)}</span></div>
       <div class="cprr-row hi"><span class="cl">CPRR (harga jual / test)</span><span class="cv">${Rp(arg.sellPerTest)}</span></div>
     </div>`),
+    arg.kontrol ? secKontrol(arg.kontrol) : "",
     sec("amber", "Rincian reagen", `<table><thead><tr><th>Nama barang</th><th>Kemasan</th>
       <th class="r">Kontribusi / test</th><th class="r">Harga KSO di Excel</th></tr></thead><tbody>${reagen}</tbody></table>`),
     supplyHtml,
