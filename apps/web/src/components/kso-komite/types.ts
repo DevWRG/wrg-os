@@ -53,6 +53,9 @@ export interface Detail {
     volume_terverifikasi?: boolean | null; volume_verifikasi_catatan?: string | null; volume_verifikasi_at?: string | null;
     /** 282: hari kerja alat/bulan dari AM; null = default parameter Bottom Line. */
     hari_kerja?: number | null; hari_kerja_default?: number | null;
+    /** 302: fee ke RS/perantara (%), harga setelah fee, klausul ADA/TIDAK, kompetitor dari format #KSO. GPM = bersih fee. */
+    fee_persen?: number | null; harga_bersih?: number | null; klausul_ada?: boolean | null; klausul_detail?: string | null;
+    kompetitor_alat?: string | null;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
@@ -70,7 +73,46 @@ export interface Detail {
   klausul_khusus: { kode: string; label: string }[];
   /** F170 v2 (268): GPM deal + harga minimum per zona. */
   angka_gpm?: AngkaGpm | null;
+  /** 302: lampiran PDF Simulator CPRR (terbaru dulu) + yang masih kurang (sumber sama dengan balasan WA). */
+  lampiran_terakhir?: Lampiran | null;
+  lampiran?: Lampiran[];
+  kurang?: ItemKurang[];
 }
+
+// ---------------------------------------------------------------- 302: format #KSO + lampiran
+
+export type StatusCocok = "cocok" | "beda" | "kosong";
+export interface CocokIsian { label: string; status: StatusCocok; pdf: string | null; wa: string | null }
+
+/** Isian hasil OCR PDF Simulator (services/ai /kso/ocr-cprr) — boleh null semua. */
+export interface IsianCprr {
+  tanggal?: string | null; nama_sales?: string | null; nama_faskes?: string | null; kota?: string | null; analyzer?: string | null;
+  capex_total?: number | null; masa_bulan?: number | null; test_per_bulan?: number | null; hari_kerja?: number | null;
+  markup_persen?: number | null; capex_per_test?: number | null; reagen_per_test?: number | null; qc_per_test?: number | null;
+  base_cost_per_test?: number | null; cprr_per_test?: number | null; kompetitor_teks?: string | null;
+}
+
+export interface Lampiran {
+  id: number; wa_message_id: string | null; lolos: boolean; cocok: Record<string, CocokIsian> | null; isian: IsianCprr | null;
+  galat: string | null; ok: boolean; peringatan: string[] | null; tanggal: string | null; dibuat_at: string; ada_berkas: boolean;
+}
+
+export interface ItemKurang { kunci: string; teks: string; contoh: string }
+
+/** Baris daftar "Belum lengkap" / "Lolos tanpa forum" (GET /kso-komite/:tab/daftar/:filter). */
+export interface BarisDaftar {
+  id: number; nomor: string | null; status: string; jalur: string | null; am_nama: string; cabang: string | null;
+  faskes_nama: string; alat_nama: string; zona: Zona | null; zona_dasar: Zona | null; gpm_deal: number | null;
+  harga_per_test: number | null; fee_persen: number | null; harga_bersih: number | null; volume_estimasi: number | null;
+  tenor_bulan: number | null; dibuat_at: string | null; diajukan_at: string | null; diubah_at: string | null;
+  lampiran: { id: number; lolos: boolean; tanggal: string | null; dibuat_at: string } | null;
+  mandat: {
+    harga_pembuka: number | null; harga_target: number | null; harga_lantai: number | null; volume_terbukti: number | null;
+    berlaku_sampai: string | null; sumber: string | null;
+  } | null;
+  kurang?: ItemKurang[];
+}
+export interface DataDaftar { tab: TabKso; filter: string; baris: BarisDaftar[] }
 
 /** Perlindungan wajib WRG di setiap PKS (mandat.klausul_wajib) — label untuk layar. */
 export const LABEL_PERLINDUNGAN: Record<string, string> = {

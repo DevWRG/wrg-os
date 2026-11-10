@@ -884,3 +884,47 @@ def transkrip(req: TranskripRequest) -> TranskripResponse:
     except Exception as e:  # noqa: BLE001
         return TranskripResponse(model="dry-run-fallback", dry_run=True, galat=f"llm: {e}"[:300])
     return TranskripResponse(teks=(text or "").strip(), model=model)
+
+
+# === F170 Komite KSO: baca lampiran PDF "KSO CPRR" hasil Simulator KSO ===
+from .kso_cprr import GalatCprr, adalah_cprr, baca_cprr  # noqa: E402
+from .schemas import KsoCprrIsian, KsoOcrCprrRequest, KsoOcrCprrResponse  # noqa: E402
+
+
+@app.post("/kso/ocr-cprr", response_model=KsoOcrCprrResponse)
+def kso_ocr_cprr(req: KsoOcrCprrRequest) -> KsoOcrCprrResponse:
+    """Baca PDF "KSO CPRR — <KATEGORI>" (cetak Simulator KSO) dengan render +
+    Tesseract LOKAL, lalu ambil field dengan pola label (app/kso_cprr.py).
+    Deterministik, tanpa LLM. Selalu 200; kegagalan lewat `galat`:
+    dry-run · pdf-rusak · ocr-tidak-tersedia · render-tidak-tersedia ·
+    ocr-gagal · ocr-timeout · bukan-cprr · cprr-tidak-terbaca.
+    ok=True hanya kalau dokumen CPRR dan harga CPRR/test terbaca; field lain
+    boleh null (isian parsial tetap dikirim)."""
+    if req.dry_run:
+        return KsoOcrCprrResponse(galat="dry-run")
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_base64, validate=False)
+    except Exception:  # noqa: BLE001
+        return KsoOcrCprrResponse(galat="pdf-rusak")
+    try:
+        res = baca_cprr(pdf_bytes)
+    except GalatCprr as e:
+        print(f"[kso/ocr-cprr] {e}", flush=True)
+        return KsoOcrCprrResponse(galat=e.kode)
+    except Exception as e:  # noqa: BLE001 — endpoint tetap 200
+        print(f"[kso/ocr-cprr] gagal tak terduga: {e}", flush=True)
+        return KsoOcrCprrResponse(galat="ocr-gagal")
+    isian = KsoCprrIsian(**res["isian"])
+    galat = None
+    if not adalah_cprr(res["teks_ocr"]):
+        galat = "bukan-cprr"
+    elif isian.cprr_per_test is None:
+        galat = "cprr-tidak-terbaca"
+    return KsoOcrCprrResponse(
+        ok=galat is None,
+        galat=galat,
+        halaman=res["halaman"],
+        teks_ocr=res["teks_ocr"],
+        isian=isian,
+        peringatan=res["peringatan"],
+    )

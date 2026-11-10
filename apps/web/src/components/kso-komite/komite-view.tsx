@@ -7,7 +7,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
+import { pilihTabDaftar } from "@/lib/kso-komite-daftar";
+
 import { BottomLinePanel } from "./bottom-line";
+import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
+import { TombolFormatKso } from "./format-kso";
 import { LabelStatus } from "./label-status";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
@@ -23,41 +27,55 @@ import {
 // Tab "Bottom Line Alat" (F172) bukan tab peran: datanya sendiri (/api/kso-komite/bottom-line) dan
 // izinnya fitur kso-komite-bottomline — tampil bila `bottomLine` true. Tab "Tinjauan Portofolio" (F170 Fase D)
 // memakai izin yang sama.
-type TabLayar = TabKso | "bottomline" | "portofolio";
+// Tab "Belum lengkap" & "Lolos tanpa forum" (302) bukan tab peran: daftar lintas status yang diminta
+// lewat satu tab peran milik pengguna (pilihTabDaftar — cakupan terluas), jadi tak butuh fitur baru.
+type TabDaftar = "belum-lengkap" | "lolos-tanpa-forum";
+type TabLayar = TabKso | "bottomline" | "portofolio" | TabDaftar;
+const isDaftar = (t: TabLayar): t is TabDaftar => t === "belum-lengkap" || t === "lolos-tanpa-forum";
+const isPeran = (t: TabLayar): t is TabKso => t !== "bottomline" && t !== "portofolio" && !isDaftar(t);
 
 export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bottomLine?: boolean }) {
   const [tab, setTab] = useState<TabLayar>(tabs[0]?.tab ?? "bottomline");
   const [data, setData] = useState<Partial<Record<TabKso, DataTab>>>({});
   const [err, setErr] = useState<string | null>(null);
   const [buka, setBuka] = useState<number | null>(null);
+  const [segar, setSegar] = useState(0);
+  const sumber = { "belum-lengkap": pilihTabDaftar(tabs, "belum-lengkap"), "lolos-tanpa-forum": pilihTabDaftar(tabs, "lolos-tanpa-forum") };
 
   const terapkan = useCallback((t: TabKso, p: Promise<DataTab>, batal: () => boolean) => {
     p.then((d) => { if (!batal()) { setData((x) => ({ ...x, [t]: d })); setErr(null); } })
       .catch((e: Error) => { if (!batal()) setErr(e.message); });
   }, []);
   useEffect(() => {
-    if (tab === "bottomline" || tab === "portofolio") return;
+    if (!isPeran(tab)) return;
     let batal = false;
     terapkan(tab, kirim<DataTab>(`/api/kso-komite/${tab}`), () => batal);
     return () => { batal = true; };
   }, [tab, terapkan]);
   const muat = (t: TabKso) => terapkan(t, kirim<DataTab>(`/api/kso-komite/${t}`), () => false);
 
-  const aktif = tab === "bottomline" || tab === "portofolio" ? null : tabs.find((t) => t.tab === tab) ?? null;
+  const aktif = isDaftar(tab) ? sumber[tab]?.tab ?? null : isPeran(tab) ? tabs.find((t) => t.tab === tab) ?? null : null;
   const lebar = useLayarLebar();
-  const d = tab === "bottomline" || tab === "portofolio" ? undefined : data[tab];
+  const d = isPeran(tab) ? data[tab] : undefined;
+  // sesudah aksi di rincian: muat ulang antrean tab peran / daftar yang sedang dibuka
+  const berubah = (t: TabKso) => { if (isPeran(tab)) muat(t); else setSegar((x) => x + 1); };
 
   return (
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
       {tabs.length > 0 && <SusunanPanel />}
-      <div className="-mx-1 overflow-x-auto px-1">
-        <TabsList>
-          {tabs.map((t) => (
-            <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
-          ))}
-          {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
-          {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
-        </TabsList>
+      <div className="flex items-center gap-2">
+        <div className="-mx-1 min-w-0 flex-1 overflow-x-auto px-1">
+          <TabsList>
+            {tabs.map((t) => (
+              <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
+            ))}
+            {sumber["belum-lengkap"] && <TabsTrigger value="belum-lengkap">Belum lengkap</TabsTrigger>}
+            {sumber["lolos-tanpa-forum"] && <TabsTrigger value="lolos-tanpa-forum">Lolos tanpa forum</TabsTrigger>}
+            {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
+            {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
+          </TabsList>
+        </div>
+        {tabs.length > 0 && <TombolFormatKso />}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
       {tabs.map((t) => (
@@ -109,6 +127,21 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
           )}
         </TabsContent>
       ))}
+      {(["belum-lengkap", "lolos-tanpa-forum"] as const).map((f) => {
+        const s = sumber[f];
+        if (!s) return null;
+        const Daftar = f === "belum-lengkap" ? DaftarBelumLengkap : DaftarLolos;
+        return (
+          <TabsContent key={f} value={f}>
+            <DuaKolom lebarDaftar panel={lebar && tab === f ? (
+              <RencanaPanel key={`${f}-${buka ?? "kosong"}`} tab={s.tab.tab} id={buka} bolehAksi={s.tab.bolehAksi}
+                onBerubah={() => setSegar((x) => x + 1)} />
+            ) : null}>
+              <Daftar tab={s.tab.tab} cakupan={s.cakupan} onBuka={setBuka} segar={segar} />
+            </DuaKolom>
+          </TabsContent>
+        );
+      })}
       {bottomLine && (
         <TabsContent value="bottomline"><BottomLinePanel /></TabsContent>
       )}
@@ -117,7 +150,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
       )}
       {aktif && !lebar && (
         <RencanaDialog key={`${aktif.tab}-${buka ?? "tutup"}`} tab={aktif.tab} id={buka} bolehAksi={aktif.bolehAksi}
-          onClose={() => setBuka(null)} onBerubah={() => muat(aktif.tab)} />
+          onClose={() => setBuka(null)} onBerubah={() => berubah(aktif.tab)} />
       )}
     </Tabs>
   );
@@ -171,9 +204,10 @@ function useLayarLebar() {
   );
 }
 
-function DuaKolom({ panel, children }: { panel: React.ReactNode; children: React.ReactNode }) {
+function DuaKolom({ panel, children, lebarDaftar = false }: { panel: React.ReactNode; children: React.ReactNode; lebarDaftar?: boolean }) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] lg:items-start">
+    <div className={cn("grid gap-5 lg:items-start",
+      lebarDaftar ? "lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]")}>
       <div className="space-y-6">{children}</div>
       {panel && <aside className="hidden lg:sticky lg:top-4 lg:block">{panel}</aside>}
     </div>
