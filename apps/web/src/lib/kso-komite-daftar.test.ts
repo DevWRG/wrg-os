@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   FORMAT_KSO, hargaBersih, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran,
@@ -75,7 +77,21 @@ test("penyaring Lolos: zona + segera berakhir", () => {
   assert.deepEqual(saringLolos(b, { zona: "", segera: true }, "2026-11-10").map((x) => x.id), [1]);
 });
 
-test("FORMAT_KSO memuat sembilan isian bernomor", () => {
-  for (let i = 1; i <= 9; i++) assert.match(FORMAT_KSO, new RegExp(`^${i}\\. `, "m"));
+test("FORMAT_KSO memuat dua belas isian bernomor, tanpa KOTA, tambahan opsional ringkas", () => {
+  for (let i = 1; i <= 12; i++) assert.match(FORMAT_KSO, new RegExp(`^${i}\\. `, "m"));
   assert.match(FORMAT_KSO, /^#KSO /);
+  assert.match(FORMAT_KSO, /^10\. STATUS UNIT : BARU \/ RELOKASI IDLE \/ EKS KSO \/ EKS DEMO \/ REFURBISH \/ PINJAMAN PRINCIPAL$/m);
+  assert.match(FORMAT_KSO, /^11\. BUKTI VOLUME : REKAP LIS 6 BULAN \/ PEMBELIAN REAGEN \/ SURAT RS$/m);
+  assert.match(FORMAT_KSO, /^12\. PENDUKUNG : dr\. NAMA, JABATAN \(mis\. kepala instalasi lab\)$/m);
+  for (const l of ["ALASAN : …", "JUMLAH : 2", "HARI KERJA : 26"]) assert.ok(FORMAT_KSO.includes(l), l);
+  assert.doesNotMatch(FORMAT_KSO, /KOTA/);
+  assert.doesNotMatch(FORMAT_KSO, /[<>]/);
+});
+
+test("FORMAT_KSO sama persis dengan KSO_FORMAT_ISIAN di API (salinan, belum ada endpoint)", () => {
+  const api = readFileSync(fileURLToPath(new URL("../../../api/src/repo/kso-intake.ts", import.meta.url)), "utf8");
+  const m = /export const KSO_FORMAT_ISIAN =([\s\S]*?);\n/.exec(api);
+  assert.ok(m, "KSO_FORMAT_ISIAN tidak ditemukan di kso-intake.ts");
+  const teks = [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => JSON.parse(`"${x[1]}"`) as string).join("");
+  assert.equal(FORMAT_KSO, teks);
 });

@@ -104,8 +104,10 @@ export function rp(n: number | null | undefined): string {
 }
 
 // Tanpa kurung sudut: WhatsApp membuang teks "<...>" (memori: placeholder hilang) — pakai huruf besar.
-export const KSO_BANTUAN =
-  "Format #KSO (usulan baru — satu pesan, nama kamu sendiri di baris pertama):\n" +
+// KSO_FORMAT_ISIAN disalin APA ADANYA ke FORMAT_KSO di apps/web/src/lib/kso-komite-daftar.ts (dialog "Format #KSO");
+// uji web kso-komite-daftar.test.ts membaca berkas ini dan gagal bila keduanya beda.
+// KOTA sengaja tidak diminta (keputusan 10 Nov): faskes master punya kota/cabang sendiri, faskes baru = area AM (304).
+export const KSO_FORMAT_ISIAN =
   "#KSO BUDI\n" +
   "1. FASKES : RS CONTOH SEJAHTERA\n" +
   "2. ALAT : ZYBIO Z50\n" +
@@ -116,9 +118,15 @@ export const KSO_BANTUAN =
   "7. KOMPETITOR : MEREK-MODEL-HARGA (atau TIDAK ADA)\n" +
   "8. KLAUSUL : TIDAK (atau ADA - isi klausulnya)\n" +
   "9. LAMPIRAN : ADA — kirim PDF Simulator KSO di chat ini dalam 10 menit\n" +
-  "Boleh ditambah di pesan yang sama: PENDUKUNG: dr. Contoh, kepala instalasi lab · " +
-  "STATUS UNIT: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal · HARI KERJA: 26 · JUMLAH: 1 · " +
-  "ALASAN: alasan strategis (wajib bila diminta bot) · KOTA: kota faskes (untuk faskes/customer baru)\n\n" +
+  "10. STATUS UNIT : BARU / RELOKASI IDLE / EKS KSO / EKS DEMO / REFURBISH / PINJAMAN PRINCIPAL\n" +
+  "11. BUKTI VOLUME : REKAP LIS 6 BULAN / PEMBELIAN REAGEN / SURAT RS\n" +
+  "12. PENDUKUNG : dr. NAMA, JABATAN (mis. kepala instalasi lab)\n" +
+  "(10 dan 11 pilih SATU. Tambahan bila perlu: JUMLAH : 2 bila lebih dari 1 unit · " +
+  "HARI KERJA : 26 bila beda dari default · ALASAN : … hanya bila diminta bot)";
+
+export const KSO_BANTUAN =
+  "Format #KSO (usulan baru — satu pesan, nama kamu sendiri di baris pertama):\n" +
+  KSO_FORMAT_ISIAN + "\n\n" +
   "Melengkapi/koreksi: #KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)\n" +
   "PDF menyusul: kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit.\n" +
   "Data lengkap + PDF cocok → diajukan otomatis. Mengajukan manual: #KSO kirim D12\n" +
@@ -128,7 +136,7 @@ export const KSO_BANTUAN =
 /** Terjemahan galat fungsi kso.* ke bahasa manusia. Tak pernah menampilkan nama fungsi/kode. */
 export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/SUMBER_VOLUME_KOSONG/.test(pesan))
-    return `Bukti volume belum ada — kirim PDF Simulator KSO, atau tulis: #KSO ${ref} SUMBER: rekap LIS 3 bulan`;
+    return `Bukti volume belum ada — kirim PDF Simulator KSO, atau tulis: #KSO ${ref} BUKTI VOLUME: rekap LIS 6 bulan`;
   const kurang = pesan.match(/KOLOM_WAJIB_KOSONG:\s*(.+)/);
   if (kurang) {
     const label: Record<string, string> = {
@@ -174,6 +182,8 @@ export interface DraftTampil {
   faskes_id?: string;
   faskes_baru?: boolean;
   faskes_kota?: string | null;
+  /** 304: kota faskes baru masih default area AM (boleh diganti PDF Simulator / label KOTA). */
+  faskes_kota_area?: boolean | null;
   alat: string;
   alat_kode: string;
   jumlah: number;
@@ -387,12 +397,13 @@ export function balasanSaranFaskes(nama: string, faskesTeks: string, saran: Sara
   ].join("\n");
 }
 
-/** Catatan di balasan draft yang memakai faskes baru (calon customer). Tanpa angka. */
-export function catatanFaskesBaru(d: Pick<DraftTampil, "id" | "faskes" | "cabang" | "faskes_kota">, adaLampiran: boolean): string[] {
-  const out = [`Faskes "${d.faskes}" belum ada di master — dicatat sebagai FASKES BARU (calon customer)${d.cabang ? `, cabang ${d.cabang}` : ""}. ` +
+/**
+ * Catatan di balasan draft yang memakai faskes baru (calon customer). Tanpa angka. Kota TIDAK ditanyakan (keputusan
+ * 10 Nov): default = area AM (304), diganti kota dari PDF Simulator atau label KOTA bila AM menulisnya.
+ */
+export function catatanFaskesBaru(d: Pick<DraftTampil, "faskes" | "cabang">): string[] {
+  return [`Faskes "${d.faskes}" belum ada di master — dicatat sebagai FASKES BARU (calon customer)${d.cabang ? `, cabang ${d.cabang}` : ""}. ` +
     "Sekretariat menautkannya ke akun master begitu customer ini terdaftar."];
-  if (!d.faskes_kota && !adaLampiran) out.push(`Kota faskes belum ada — tulis: #KSO D${d.id} KOTA: NAMA KOTA (atau terisi dari PDF Simulator).`);
-  return out;
 }
 
 /** Balasan pesan #KSO yang tidak sesuai format (teks bebas tidak lagi diproses). */
@@ -417,7 +428,7 @@ export async function sebagaiBot<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
   const [r] = await tx`
     select r.id::int, r.nomor, r.status::text, r.faskes_id, f.nama as faskes, f.cabang, f.baru as faskes_baru, f.kota as faskes_kota,
-           a.nama as alat, a.kode as alat_kode,
+           f.kota_dari_area as faskes_kota_area, a.nama as alat, a.kode as alat_kode,
            r.jumlah, r.volume_estimasi, r.volume_sumber, r.harga_per_test::float8, k.harga_standar_per_test::float8 as harga_standar,
            k.label as kategori, r.tenor_bulan, r.hari_kerja,
            coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
@@ -616,9 +627,10 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
                  ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
       // cek.info (peringatan hitungan OCR, harga pesaing) tidak dikirim ke AM — balasan hanya gerbang + kurang
       lampiranHasil = { lolos: cek.lolos, beda: cek.beda.length };
-      // 303: faskes baru tanpa kota → kota dari PDF Simulator (nama faskes PDF sudah dicocokkan dengan nama yang ditulis AM)
+      // 303/304: faskes baru tanpa kota ATAU kota masih default area AM → kota dari PDF Simulator (nama faskes PDF sudah
+      // dicocokkan dengan nama yang ditulis AM)
       const kotaPdf = o.ocr.hasil.ok ? o.ocr.hasil.isian?.kota?.trim() : null;
-      if (awal.faskes_baru && !awal.faskes_kota && kotaPdf && awal.faskes_id) {
+      if (awal.faskes_baru && (!awal.faskes_kota || awal.faskes_kota_area) && kotaPdf && awal.faskes_id) {
         const [kt] = await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${awal.faskes_id}, ${kotaPdf}) as ok`;
         if (kt?.ok) lampiranHasil.kota_faskes = kotaPdf;
       }
@@ -651,7 +663,7 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
         galatAjukan = (e as Error).message;
       }
     }
-    const catatan = [...(o.baru && d.faskes_baru ? catatanFaskesBaru(d, !!o.ocr || !!d.lampiran) : []), ...(o.catatan ?? [])];
+    const catatan = [...(o.baru && d.faskes_baru ? catatanFaskesBaru(d) : []), ...(o.catatan ?? [])];
     if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
     const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan });
     return {
@@ -1081,12 +1093,11 @@ async function lengkapi(k: KsoKonteks, x: IsianFormat, ref: string, tidakTerbaca
       }
       if (x.faskes && awal && !awal.faskes.toLowerCase().includes(x.faskes.toLowerCase()))
         catatan.push("Faskes tidak bisa diganti di draft yang sama — kirim #KSO baru untuk faskes lain.");
-      // 303: "#KSO D12 KOTA: SURABAYA" — kota faskes baru (hanya mengisi yang kosong)
-      if (x.kota && awal) {
-        const [kt] = awal.faskes_baru && awal.faskes_id
-          ? await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${awal.faskes_id}, ${x.kota}) as ok` : [{ ok: false }];
-        catatan.push(kt?.ok ? `Kota faskes baru dicatat: ${x.kota}.`
-          : awal.faskes_baru ? "Kota faskes ini sudah terisi — tidak diubah." : "KOTA hanya untuk faskes baru — faskes master sudah punya cabang/kota.");
+      // 303/304: "#KSO D12 KOTA: SURABAYA" — tidak diminta lagi, tetap diterima untuk faskes baru (mengganti default area
+      // AM, tak menimpa kota yang ditulis/dari PDF). Faskes master: diabaikan diam-diam (kota dari master customer).
+      if (x.kota && awal?.faskes_baru && awal.faskes_id) {
+        const [kt] = await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${awal.faskes_id}, ${x.kota}) as ok`;
+        catatan.push(kt?.ok ? `Kota faskes baru dicatat: ${x.kota}.` : "Kota faskes ini sudah terisi — tidak diubah.");
       }
       if (Object.keys(isian).length === 0 && tanpaTipe.length === 0 && !catatan.length)
         return { balasan: `Tidak ada isian baru yang terbaca untuk ${ref}. Tulis langsung, mis. "#KSO ${ref} MASA KSO: 36".`,

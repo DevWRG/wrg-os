@@ -38,7 +38,7 @@ const POLA_LABEL: [LabelKso, RegExp][] = [
   ["alasan", /^alasan(?:\s+strategis)?\b/i],
   ["jumlah", /^jumlah(?:\s+(?:unit|alat))?\b/i],
   ["sumber", /^(?:sumber|bukti)(?:\s+volume)?\b/i],
-  // 303: kota faskes BARU (calon customer) — opsional; faskes master sudah punya cabang/kota
+  // 303/304: kota faskes BARU (calon customer) — TIDAK ditanyakan lagi (default area AM, 304), tapi tetap diterima diam-diam
   ["kota", /^(?:kota|kab(?:upaten)?\s*\/\s*kota)\b/i],
 ];
 
@@ -46,7 +46,7 @@ const POLA_LABEL: [LabelKso, RegExp][] = [
 export const NAMA_LABEL: Record<LabelKso, string> = {
   faskes: "FASKES", alat: "ALAT", tes: "TES", masa: "MASA KSO", harga: "PERMINTAAN HARGA", fee: "FEE",
   kompetitor: "KOMPETITOR", klausul: "KLAUSUL", lampiran: "LAMPIRAN", pendukung: "PENDUKUNG", status_unit: "STATUS UNIT",
-  alasan: "ALASAN", hari_kerja: "HARI KERJA", jumlah: "JUMLAH", sumber: "SUMBER", kota: "KOTA",
+  alasan: "ALASAN", hari_kerja: "HARI KERJA", jumlah: "JUMLAH", sumber: "BUKTI VOLUME", kota: "KOTA",
 };
 
 const NOMOR_BARIS = /^\s*(?:\d{1,2}\s*[.)]|[-•*])\s*/;
@@ -159,6 +159,26 @@ export function statusUnit(s: string): string | null {
   return null;
 }
 
+/** Pemisah PILIHAN di templat ("BARU / RELOKASI IDLE / …") dan "atau". Koma/"dan" = beberapa hal sekaligus, bukan pilihan. */
+const PISAH_PILIHAN = /\s*(?:\/|\||\batau\b)\s*/i;
+
+/**
+ * Nilai yang MENDAFTAR beberapa pilihan berbeda (templat ditempel apa adanya) → true. Bot tak boleh memilih sendiri.
+ * "rekap LIS / SIMRS" = satu jenis → bukan daftar pilihan.
+ */
+export function daftarPilihan(s: string, jenis: (bagian: string) => string | null): boolean {
+  const k = new Set(s.split(PISAH_PILIHAN).map(jenis).filter(Boolean));
+  return k.size > 1;
+}
+
+/** Jenis bukti volume yang diterima Pedoman (selaras kso.tebak_label_sumber 266) — hanya untuk mendeteksi daftar pilihan. */
+export function jenisBuktiVolume(s: string): string | null {
+  if (/\bsurat\b/i.test(s)) return "surat";
+  if (/\b(?:pembelian|beli|reagen|faktur|invoice|nota|po)\b/i.test(s)) return "pembelian";
+  if (/\b(?:lis|simrs|sim|rekap|rekapan|laporan|log|logbook|sistem|register)\b/i.test(s)) return "lis";
+  return null;
+}
+
 // Port deterministik services/ai/app/kso_intake.py _PERAN_KATA (urutan sama: kepala instalasi menang atas dokter).
 const PERAN_KATA: [string, RegExp][] = [
   ["kepala_instalasi", /kepala\s+(instalasi|lab(oratorium)?)|ka\.?\s*instalasi|kainst|\bkalab\b/i],
@@ -214,7 +234,7 @@ export interface IsianFormat {
   hari_kerja?: number;
   jumlah?: number;
   sumber?: string;
-  /** 303: kota faskes baru (label KOTA:). Tidak masuk isian draft — milik kso.faskes. */
+  /** 303: kota faskes baru (label KOTA:, opsional — tak ditanyakan; default area AM, 304). Milik kso.faskes. */
   kota?: string;
   /** Label yang muncul di pesan (nilainya terbaca atau tidak). */
   label: LabelKso[];
@@ -280,10 +300,14 @@ export function bacaIsianFormat(teks: string): IsianFormat {
       case "lampiran":
         x.lampiran = /^(?:ada|ya|iya|yes|terlampir)\b/i.test(v) ? true : TIDAK_ADA.test(v) || /^(?:tidak|belum)\b/i.test(v) ? false : null;
         break;
-      case "pendukung": x.pendukung.push(...bacaPendukung(v)); break;
+      case "pendukung":
+        // templat ditempel apa adanya ("dr. NAMA, JABATAN") → tidak dicatat sebagai orang
+        if (/\b(?:nama|jabatan)\b/i.test(v)) gagal(label, v, "tulis nama dan jabatan pendukung yang sebenarnya");
+        else x.pendukung.push(...bacaPendukung(v));
+        break;
       case "status_unit": {
-        const u = statusUnit(v);
-        if (u) x.status_unit = u; else gagal(label, v, "pilih: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal");
+        const u = daftarPilihan(v, statusUnit) ? null : statusUnit(v);
+        if (u) x.status_unit = u; else gagal(label, v, "pilih SATU: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal");
         break;
       }
       case "alasan": x.alasan = v; break;
@@ -297,7 +321,10 @@ export function bacaIsianFormat(teks: string): IsianFormat {
         if (n != null && Number.isInteger(n) && n >= 1 && n <= 50) x.jumlah = n; else gagal(label, v, "jumlah unit tidak terbaca");
         break;
       }
-      case "sumber": x.sumber = v; break;
+      case "sumber":
+        if (daftarPilihan(v, jenisBuktiVolume)) gagal(label, v, "pilih SATU: rekap LIS 6 bulan / pembelian reagen / surat RS");
+        else x.sumber = v;
+        break;
       case "kota": x.kota = v; break;
     }
   }
@@ -723,7 +750,8 @@ export function daftarKurang(d: DataKurang, ref: string): ItemKurang[] {
   }
   if (d.pendukung.length === 0) t("pendukung", "PENDUKUNG di RS — nama + jabatan", "PENDUKUNG: dr. Contoh, kepala instalasi lab");
   if (!d.unit_status) t("status_unit", "STATUS UNIT — baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal", "STATUS UNIT: baru");
-  if (!d.volume_sumber?.trim() && d.lampiran?.lolos) t("sumber", "SUMBER volume (bukti tertulis)", "SUMBER: rekap LIS 3 bulan");
+  if (!d.volume_sumber?.trim() && d.lampiran?.lolos)
+    t("sumber", "BUKTI VOLUME — rekap LIS 6 bulan / pembelian reagen / surat RS", "BUKTI VOLUME: rekap LIS 6 bulan");
   if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alasan_strategis?.trim())
     // teks tanpa margin: daftar ini juga dikirim ke AM (keputusan 10 Nov)
     t("alasan", "ALASAN strategis — diperlukan untuk usulan ini", "ALASAN: referensi wilayah");
