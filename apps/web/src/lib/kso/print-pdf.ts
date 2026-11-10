@@ -77,6 +77,8 @@ tr { break-inside: avoid; }
 .info-k-lbl { font-size: 7.5pt; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #64748b; }
 .info-k-val { font-size: 9.5pt; }
 .catatan { font-size: 8pt; color: #64748b; margin-top: 5px; }
+table.asumsi tr.grp td { background: #f1f5f9; font-size: 7.5pt; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: #0a7c8c; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .footer { display: flex; justify-content: space-between; padding: 8px 16px; border-top: 1px solid #e4e8ef;
   font-size: 7.5pt; color: #64748b; }
 `;
@@ -144,11 +146,12 @@ function pasanganRingkas(r: RingkasKso, satuan: string): [string, string][] {
   ];
 }
 
-// ── Kontrol & kalibrator (input panel hematologi) ───────────────────────────
+// ── Asumsi & kondisi perhitungan (input panel hematologi) ──────────────────
 //
-// Label di bagian ini SENGAJA tidak memakai frasa yang dicari OCR bot #KSO (kso_cprr.py _LABEL):
-// "Kontrol & kalibrator" (= qc_status), "QC + kalibrasi / test" & "Kalibrasi / test" (= biaya per test).
-// Angka per test tetap hanya di tabel CPRR; di sini dasar perhitungannya.
+// Tabel paling bawah: semua input simulator (harga list, diskon, nett, skema KSO, reagen, kontrol). Ditaruh
+// SESUDAH ringkasan & CPRR karena parser OCR bot #KSO (kso_cprr.py pasangan_label) memakai kemunculan PERTAMA
+// tiap label — "Masa KSO", "Test / bulan", "UPS", dst. di sini tidak menggeser nilai yang dibaca. Frasa
+// "Kontrol & kalibrator", "QC + kalibrasi / test", "Kalibrasi / test" tetap dihindari.
 
 export interface KontrolPdf {
   free: boolean;
@@ -157,41 +160,74 @@ export interface KontrolPdf {
   ctrl: HargaInput;
   ctrlXr?: HargaInput;
   cal: HargaInput;
-  /** EXZ8000: label kontrol Check-XN/XR & kalibrasi per 25 hari. */
+  /** EXZ8000: kontrol Check-XN/XR & kalibrasi per 25 hari. */
   exz8000: boolean;
-  /** Hari kerja / bulan (EXZ8000: 25 hari). */
-  hariKerja: number;
   /** Hasil perhitungan panel (sama dengan baris CPRR). */
   overheadPerTest: number;
 }
 
-const hargaDiskon = (h: HargaInput | undefined): string => {
-  if (!h || !(h.price > 0)) return "—";
-  const d = Number(h.disc) || 0;
-  if (d <= 0) return Rp(h.price);
-  return `${Rp(h.price)} − ${d}% = ${Rp(h.price * (1 - d / 100))}`;
-};
+export interface AsumsiPdf {
+  alat: { nama: string; harga: HargaInput };
+  backup?: { nama: string; harga: HargaInput } | null;
+  ups: number;
+  lis: number;
+  kso: number;
+  tests: number;
+  workDays: number;
+  markup: number;
+  /** EXZ8000: mode test. */
+  modeTest?: string | null;
+  reagen: { nama: string; harga: HargaInput | undefined }[];
+  kontrol: KontrolPdf;
+}
 
-function secKontrol(k: KontrolPdf): string {
-  const hari = k.exz8000 ? 25 : k.hariKerja;
-  const pairs: [string, string][] = [
-    ["Skema", k.free ? "Free — material ditanggung vendor" : "Beli — sesuai price list"],
-    [k.exz8000 ? "Harga Check-XN control" : "Harga kontrol", hargaDiskon(k.ctrl)],
-    ...(k.exz8000 && k.ctrlXr ? ([["Harga Check-XR control", hargaDiskon(k.ctrlXr)]] as [string, string][]) : []),
-    ["Harga kalibrator", hargaDiskon(k.cal)],
+const nettHarga = (h: HargaInput | undefined): number =>
+  !h || !(h.price > 0) ? 0 : h.price * (1 - (Number(h.disc) || 0) / 100);
+
+function secAsumsi(a: AsumsiPdf): string {
+  const grup = (judul: string) => `<tr class="grp"><td colspan="4">${esc(judul)}</td></tr>`;
+  const harga = (label: string, h: HargaInput | undefined) =>
+    `<tr><td>${esc(label)}</td><td class="r">${h && h.price > 0 ? Rp(h.price) : "—"}</td>` +
+    `<td class="r">${h && h.price > 0 ? `${Number(h.disc) || 0}%` : "—"}</td><td class="r">${h && h.price > 0 ? Rp(nettHarga(h)) : "—"}</td></tr>`;
+  const nilai = (label: string, v: string) => `<tr><td>${esc(label)}</td><td class="r" colspan="3">${esc(v)}</td></tr>`;
+  const k = a.kontrol;
+  const hari = k.exz8000 ? 25 : a.workDays;
+  const baris = [
+    grup("Alat & CAPEX"),
+    harga(`Harga alat — ${a.alat.nama}`, a.alat.harga),
+    ...(a.backup ? [harga(`Backup — ${a.backup.nama}`, a.backup.harga)] : []),
+    nilai("UPS", Rp(a.ups)),
+    nilai("LIS", Rp(a.lis)),
+    grup("Skema KSO"),
+    nilai("Masa KSO", `${F(a.kso)} bulan`),
+    nilai("Test / bulan", `${F(a.tests)} test`),
+    nilai("Hari kerja / bulan", `${F(a.workDays)} hari`),
+    nilai("Margin / markup", `${a.markup}%`),
+    ...(a.modeTest ? [nilai("Mode test", a.modeTest)] : []),
+    ...(a.reagen.length ? [grup("Reagen (harga list & diskon)"), ...a.reagen.map((r) => harga(r.nama, r.harga))] : []),
+    grup("Pengaturan QC & kalibrasi"),
+    nilai("Skema", k.free ? "Free — material ditanggung vendor" : "Beli — sesuai price list"),
+    harga(k.exz8000 ? "Harga Check-XN control" : "Harga kontrol", k.ctrl),
+    ...(k.exz8000 && k.ctrlXr ? [harga("Harga Check-XR control", k.ctrlXr)] : []),
+    harga("Harga kalibrator", k.cal),
     ...(k.free
-      ? ([
-          ["Run QC / hari", `${F(k.nQc)} run`],
-          ["Run QC / bulan", `${F(k.nQc * hari)} run (${hari} hari)`],
-          [k.exz8000 ? "Kalibrasi / 25 hari" : "Kalibrasi / bulan", `${F(k.nCal)} kali`],
-          ["Overhead kontrol per test", Rp(k.overheadPerTest)],
-        ] as [string, string][])
+      ? [
+          nilai("Run QC / hari", `${F(k.nQc)} run`),
+          nilai("Run QC / bulan", `${F(k.nQc * hari)} run (${hari} hari)`),
+          nilai(k.exz8000 ? "Kalibrasi / 25 hari" : "Kalibrasi / bulan", `${F(k.nCal)} kali`),
+          nilai("Overhead kontrol per test", Rp(k.overheadPerTest)),
+        ]
       : []),
-  ];
+  ].join("");
   const catatan = k.free
     ? "Material kontrol ditanggung vendor, tetapi tiap run QC dan kalibrasi tetap menghabiskan reagen — itu yang masuk ke biaya per test."
     : "Kontrol dan kalibrator dibeli faskes sesuai price list — tidak dibebankan ke biaya per test.";
-  return sec("navy", "Pengaturan QC & kalibrasi", `${grid(pairs)}<div class="catatan">${esc(catatan)}</div>`);
+  return sec(
+    "navy",
+    "Asumsi & kondisi perhitungan",
+    `<table class="asumsi"><thead><tr><th>Komponen</th><th class="r">Harga list / nilai</th><th class="r">Diskon</th><th class="r">Nett</th></tr></thead>` +
+      `<tbody>${baris}</tbody></table><div class="catatan">${esc(catatan)}</div>`,
+  );
 }
 
 // ── Hematologi ──────────────────────────────────────────────────────────────
@@ -205,8 +241,8 @@ export function printHemato(arg: {
   overheadKontrol: number;
   sellPerTest: number;
   rows: BarisExcelHemato[];
-  /** Input kontrol & kalibrator panel — opsional supaya pemanggil lama tetap jalan. */
-  kontrol?: KontrolPdf;
+  /** Semua input panel (diskon, skema, reagen, kontrol) — opsional supaya pemanggil lama tetap jalan. */
+  asumsi?: AsumsiPdf;
 }) {
   const { ringkas: r, info } = arg;
   const base = arg.capPerTest + arg.reagenPerTest + arg.overheadKontrol;
@@ -252,10 +288,10 @@ export function printHemato(arg: {
       <div class="cprr-row"><span class="cl">Markup ${r.markup}%</span><span class="cv">${Rp(arg.sellPerTest - base)}</span></div>
       <div class="cprr-row hi"><span class="cl">CPRR (harga jual / test)</span><span class="cv">${Rp(arg.sellPerTest)}</span></div>
     </div>`),
-    arg.kontrol ? secKontrol(arg.kontrol) : "",
     sec("amber", "Rincian reagen", `<table><thead><tr><th>Nama barang</th><th>Kemasan</th>
       <th class="r">Kontribusi / test</th><th class="r">Harga KSO di Excel</th></tr></thead><tbody>${reagen}</tbody></table>`),
     supplyHtml,
+    arg.asumsi ? secAsumsi(arg.asumsi) : "",
   ].join("");
 
   buka(
