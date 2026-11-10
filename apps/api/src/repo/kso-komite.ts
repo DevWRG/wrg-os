@@ -302,7 +302,10 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     // 302: lampiran PDF Simulator CPRR (terbaru dulu) + daftar "Belum lengkap" (sumber sama dengan balasan WA)
     const lampiran = await tx`select id::int, wa_message_id, lolos, cocok, hasil_ocr->'isian' as isian, hasil_ocr->>'galat' as galat,
                                      coalesce((hasil_ocr->>'ok')::boolean, false) as ok, hasil_ocr->'peringatan' as peringatan,
-                                     hasil_ocr->'isian'->>'tanggal' as tanggal, dibuat_at::text, media_path is not null as ada_berkas
+                                     hasil_ocr->'isian'->>'tanggal' as tanggal, dibuat_at::text,
+                                     -- 305: PDF tidak disimpan sesudah dibaca → ada_berkas hanya bila berkasnya belum dihapus
+                                     (media_path is not null and berkas_dihapus_at is null) as ada_berkas,
+                                     berkas_dihapus_at is not null as berkas_dihapus, dibuat_at::text as diunggah_at, dibaca_at::text
                                 from kso.rencana_lampiran where rencana_id = ${id} order by dibuat_at desc, id desc`;
     const [kd] = await bahanKurang(tx, [id]);
     return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
@@ -393,14 +396,25 @@ export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKs
   });
 }
 
+/** 305: jawaban 410 Gone untuk berkas lampiran yang sudah dihapus sesudah dibaca. */
+export const PESAN_BERKAS_DIHAPUS =
+  "Lampiran simulator sudah diunggah dan dibaca. Berkas PDF-nya tidak disimpan di server — hasil bacanya ada di rincian usulan.";
+
+/** Path berkas dari baris kso.rencana_lampiran: tak ada → 404; berkas sudah dihapus sesudah dibaca (305) → 410. Murni. */
+export function pathBerkasLampiran(l: { media_path: string | null; berkas_dihapus_at?: unknown } | null | undefined): string {
+  if (!l) throw new GalatKso(404, "Lampiran tidak ada, atau di luar akses tab ini.");
+  if (l.berkas_dihapus_at) throw new GalatKso(410, PESAN_BERKAS_DIHAPUS);
+  if (!l.media_path) throw new GalatKso(404, "Lampiran tidak ada, atau di luar akses tab ini.");
+  return String(l.media_path);
+}
+
 /** Path berkas PDF lampiran — hanya bila rencananya boleh dilihat peran tab ini (RLS). API yang menyajikan berkasnya. */
 export async function berkasLampiran(userId: string, tab: TabKso, id: number, lampiranId: number): Promise<string> {
   return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
     // PDF Simulator memuat capex, reagen, QC, base cost, CPRR per tes (HPP) → hanya untuk yang berhak melihat angka
     if (await modeUntuk(u, eff, tab)) throw new GalatKso(403, "Berkas PDF Simulator memuat angka biaya — tidak dibuka untuk tab ini.");
-    const [l] = await tx`select media_path from kso.rencana_lampiran where id = ${lampiranId} and rencana_id = ${id}`;
-    if (!l?.media_path) throw new GalatKso(404, "Lampiran tidak ada, atau di luar akses tab ini.");
-    return String(l.media_path);
+    const [l] = await tx`select id, media_path, berkas_dihapus_at from kso.rencana_lampiran where id = ${lampiranId} and rencana_id = ${id}`;
+    return pathBerkasLampiran(l as { media_path: string | null; berkas_dihapus_at: unknown } | undefined);
   });
 }
 

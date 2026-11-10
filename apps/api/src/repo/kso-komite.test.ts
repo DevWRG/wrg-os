@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AKSI_TAB, TAB_KSO, putuskanIzin, refUntuk, terjemahGalatWeb, validasiAksi, type PenggunaKso } from "./kso-komite.js";
+import { AKSI_TAB, GalatKso, PESAN_BERKAS_DIHAPUS, TAB_KSO, pathBerkasLampiran, putuskanIzin, refUntuk, terjemahGalatWeb, validasiAksi, type PenggunaKso } from "./kso-komite.js";
 import { bolehUbahSusunan } from "./kso-komite-susunan.js";
 import type { Effective } from "./rbac.js";
 
@@ -109,4 +109,17 @@ test("F170 v2: verifikasi bukti volume hanya tab Sekretariat; tolak wajib alasan
   assert.equal(validasiAksi("verifikasi-volume", { sah: false, catatan: "Rekap LIS tidak cocok" }), null);
   assert.equal(validasiAksi("verifikasi-volume", { sah: true }), null);
   assert.equal(terjemahGalatWeb("BUKAN_TAHAP_VERIFIKASI: status DIPUTUS_AM").status, 409);
+});
+
+test("pathBerkasLampiran (305): berkas sudah dihapus sesudah dibaca → 410 pesan ramah; tak ada → 404; ada → path", () => {
+  const galat = (f: () => unknown) => { try { f(); } catch (e) { return e as GalatKso; } return null; };
+  const g410 = galat(() => pathBerkasLampiran({ media_path: "/m/inbound/a.pdf", berkas_dihapus_at: "2026-11-10T07:00:00Z" }));
+  assert.ok(g410 instanceof GalatKso);
+  assert.equal(g410!.status, 410);
+  assert.equal(g410!.message, PESAN_BERKAS_DIHAPUS);
+  assert.match(PESAN_BERKAS_DIHAPUS, /sudah diunggah dan dibaca/);
+  assert.doesNotMatch(PESAN_BERKAS_DIHAPUS, /\d/);
+  assert.equal(galat(() => pathBerkasLampiran(undefined))!.status, 404);
+  assert.equal(galat(() => pathBerkasLampiran({ media_path: null, berkas_dihapus_at: null }))!.status, 404);
+  assert.equal(pathBerkasLampiran({ media_path: "/m/inbound/a.pdf", berkas_dihapus_at: null }), "/m/inbound/a.pdf");
 });

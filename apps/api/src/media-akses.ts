@@ -7,9 +7,15 @@
 // ("wa", "ga", dipisah koma). Service token mem-bypass JWT di API, jadi tanpa
 // header ini /media dulu melayani SEMUA path di kedua root untuk user login mana pun.
 
-import { isAbsolute, relative } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, relative, resolve } from "node:path";
 
 export type ScopeMedia = "wa" | "ga";
+
+/** MEDIA_ROOT: media MASUK WhatsApp (capture openclaw). Satu sumber untuk GET /media, rute lampiran KSO, dan hapus lampiran (305). */
+export function mediaRootWa(): string {
+  return resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
+}
 
 /** `abs` di dalam `root`? path.relative aman lintas-platform (startsWith gagal di backslash). */
 export function isInsideRoot(abs: string, root: string): boolean {

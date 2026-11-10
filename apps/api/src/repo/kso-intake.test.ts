@@ -96,6 +96,19 @@ test("formatBalasanGerbang: semua hijau → kepala tebal, 7 dari 7, tujuh ✅, a
   tanpaJargon(t);
 });
 
+test("formatBalasanGerbang (305): PDF terbaca → 'Lampiran simulator diterima ✅' sesudah hitungan gerbang, tanpa angka", () => {
+  const t = formatBalasanGerbang(draft({ angka: ANGKA }), { lampiranDiterima: true });
+  const baris = t.split("\n");
+  assert.equal(baris[0], "*D12 · RS SWASTA A · Z3*");
+  assert.equal(baris[1], "7 dari 7 gerbang hijau");
+  assert.equal(baris[2], "Lampiran simulator diterima ✅");
+  assert.equal(baris[3], "");
+  assert.doesNotMatch(t, /hapus|disimpan/i);
+  assert.doesNotMatch(formatBalasanGerbang(draft({ angka: ANGKA })), /Lampiran simulator diterima/);
+  tanpaAngkaMargin(t);
+  tanpaJargon(t);
+});
+
 test("formatBalasanGerbang: nama faskes master terbalik ditampilkan terbaca di kepala", () => {
   assert.equal(formatBalasanGerbang(draft({ faskes: "CONTOH WETAN, RS PKU KAB. UJI" })).split("\n")[0], "*D12 · RS PKU CONTOH WETAN (KAB. UJI) · Z3*");
 });

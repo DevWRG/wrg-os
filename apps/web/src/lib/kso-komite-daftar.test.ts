@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  FORMAT_KSO, hargaBersih, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran,
+  FORMAT_KSO, hargaBersih, keadaanBerkas, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran, teksDiunggah,
 } from "./kso-komite-daftar";
 
 test("pilihTabDaftar: cakupan terluas dulu, teknik tak pernah, admin sales hanya untuk Lolos", () => {
@@ -94,4 +94,17 @@ test("FORMAT_KSO sama persis dengan KSO_FORMAT_ISIAN di API (salinan, belum ada 
   assert.ok(m, "KSO_FORMAT_ISIAN tidak ditemukan di kso-intake.ts");
   const teks = [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => JSON.parse(`"${x[1]}"`) as string).join("");
   assert.equal(FORMAT_KSO, teks);
+});
+
+test("keadaanBerkas & teksDiunggah (305): berkas ada → tombol; sudah dibaca & dihapus → badge diunggah", () => {
+  assert.equal(keadaanBerkas(null), "tanpa");
+  assert.equal(keadaanBerkas({ ada_berkas: true, dibaca_at: null }), "buka");
+  assert.equal(keadaanBerkas({ ada_berkas: true, dibaca_at: "2026-11-10T07:05:00Z" }), "buka");
+  assert.equal(keadaanBerkas({ ada_berkas: false, dibaca_at: "2026-11-10T07:05:00Z", berkas_dihapus: true }), "diunggah");
+  assert.equal(keadaanBerkas({ ada_berkas: false, berkas_dihapus: true }), "diunggah");
+  assert.equal(keadaanBerkas({ ada_berkas: false }), "tanpa");
+  const fmt = (x: string | null | undefined) => `<${x}>`;
+  assert.equal(teksDiunggah({ dibaca_at: "B", diunggah_at: "U" }, fmt), "Lampiran simulator sudah diunggah · dibaca <B>");
+  assert.equal(teksDiunggah({ diunggah_at: "U" }, fmt), "Lampiran simulator sudah diunggah · dibaca <U>");
+  assert.equal(teksDiunggah({}, fmt), "Lampiran simulator sudah diunggah");
 });
