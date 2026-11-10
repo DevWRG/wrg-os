@@ -80,5 +80,5 @@ export function LpseTenderTable({ tenders, employees }: { tenders: LpseTender[];
     },
   ];
 
-  return <DataTable columns={columns} data={tenders} getKey={(t) => t.id} searchPlaceholder="Cari tender/instansi…" pageSize={25} />;
+  return <DataTable columns={columns} data={tenders} getKey={(t) => t.id} searchPlaceholder="Cari tender/instansi…" />;
 }

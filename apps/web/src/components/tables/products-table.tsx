@@ -25,5 +25,5 @@ const columns: DataColumn<AccurateItem>[] = [
 ];
 
 export function ProductsTable({ items }: { items: AccurateItem[] }) {
-  return <DataTable columns={columns} data={items} getKey={(i) => i.id} searchPlaceholder="Cari SKU / nama produk…" pageSize={25} />;
+  return <DataTable columns={columns} data={items} getKey={(i) => i.id} searchPlaceholder="Cari SKU / nama produk…" />;
 }

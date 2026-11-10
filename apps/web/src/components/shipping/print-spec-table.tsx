@@ -65,7 +65,6 @@ export function PrintSpecTable({ rows }: { rows: PrintSpecRow[] }) {
       data={filtered}
       getKey={(r) => r.id}
       searchPlaceholder="Cari jenis dokumen…"
-      pageSize={25}
       initialSort={{ id: "document_type", dir: "asc" }}
       toolbar={
         <FilterSelect

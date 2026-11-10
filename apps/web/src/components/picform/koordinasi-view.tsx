@@ -159,7 +159,6 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
             columns={kolomDivisi}
             data={graf.edges_divisi}
             getKey={(e) => `${e.from}→${e.to}`}
-            pageSize={25}
             searchPlaceholder="Cari divisi…"
           />
         </CardContent>
@@ -179,7 +178,6 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
             columns={kolomNode}
             data={graf.nodes}
             getKey={(n) => n.id}
-            pageSize={25}
             initialSort={{ id: "derajat", dir: "desc" }}
             searchPlaceholder="Cari node…"
           />
@@ -195,7 +193,6 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
             columns={kolomEdge}
             data={graf.edges}
             getKey={(e) => `${e.from}→${e.to}`}
-            pageSize={25}
             initialSort={{ id: "bobot", dir: "desc" }}
             searchPlaceholder="Cari posisi / pihak…"
           />

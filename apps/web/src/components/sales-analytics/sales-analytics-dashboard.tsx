@@ -462,7 +462,7 @@ function PerAmView({ data, onDrill }: { data: { rows: AmRow[]; scope: string }; 
     <Card>
       <CardHeader><CardTitle className="text-base">Performa per-AM {data.scope === "am" && <span className="text-muted-foreground text-xs font-normal">(peer dianonimkan)</span>}</CardTitle></CardHeader>
       <CardContent>
-        <DataTable data={data.rows} columns={amColumns(onDrill)} getKey={(r) => String(r.rank)} searchPlaceholder="Cari AM/cabang…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data AM." />
+        <DataTable data={data.rows} columns={amColumns(onDrill)} getKey={(r) => String(r.rank)} searchPlaceholder="Cari AM/cabang…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data AM." />
       </CardContent>
     </Card>
   );
@@ -481,7 +481,7 @@ const prodColumns: DataColumn<ProdRow>[] = [
 function PerProdukView({ data }: { data: { rows: ProdRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Portfolio Produk</CardTitle></CardHeader>
-      <CardContent><DataTable data={data.rows} columns={prodColumns} getKey={(r) => r.key} searchPlaceholder="Cari produk/kategori…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data produk." /></CardContent></Card>
+      <CardContent><DataTable data={data.rows} columns={prodColumns} getKey={(r) => r.key} searchPlaceholder="Cari produk/kategori…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data produk." /></CardContent></Card>
   );
 }
 
@@ -494,7 +494,7 @@ const pengadaanColumns: DataColumn<PengadaanRow>[] = [
 function PerPengadaanView({ data }: { data: { rows: PengadaanRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Per Pengadaan (kategori penjualan)</CardTitle></CardHeader>
-      <CardContent><DataTable data={data.rows} columns={pengadaanColumns} getKey={(r) => r.key} searchPlaceholder="Cari kategori…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data pengadaan." /></CardContent></Card>
+      <CardContent><DataTable data={data.rows} columns={pengadaanColumns} getKey={(r) => r.key} searchPlaceholder="Cari kategori…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data pengadaan." /></CardContent></Card>
   );
 }
 
@@ -511,7 +511,7 @@ const cabangColumns: DataColumn<CabangRow>[] = [
 function PerCabangView({ data }: { data: { rows: CabangRow[] } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Territory per-Cabang</CardTitle></CardHeader>
-      <CardContent><DataTable data={data.rows} columns={cabangColumns} getKey={(r) => r.cabang} searchPlaceholder="Cari cabang…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data cabang." /></CardContent></Card>
+      <CardContent><DataTable data={data.rows} columns={cabangColumns} getKey={(r) => r.cabang} searchPlaceholder="Cari cabang…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data cabang." /></CardContent></Card>
   );
 }
 
@@ -526,7 +526,7 @@ const custColumns: DataColumn<CustRow>[] = [
 function PerCustomerView({ data }: { data: { scope: string; customers: CustRow[]; summary?: Record<string, number> } }) {
   return (
     <Card><CardHeader><CardTitle className="text-base">Customer {data.scope === "am" && <span className="text-muted-foreground text-xs font-normal">(customer Anda)</span>}</CardTitle></CardHeader>
-      <CardContent><DataTable data={data.customers} columns={custColumns} getKey={(r) => r.id} searchPlaceholder="Cari customer…" initialSort={{ id: "total", dir: "desc" }} pageSize={25} empty="Tidak ada data customer." /></CardContent></Card>
+      <CardContent><DataTable data={data.customers} columns={custColumns} getKey={(r) => r.id} searchPlaceholder="Cari customer…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data customer." /></CardContent></Card>
   );
 }
 

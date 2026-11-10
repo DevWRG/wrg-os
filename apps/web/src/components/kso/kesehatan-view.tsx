@@ -96,7 +96,7 @@ export function KsoKesehatanPanel({ data }: { data: DataKesehatan | null }) {
             Pembelian KSO dicek untuk {bln(data.jendela.beli[0])}–{bln(data.jendela.beli[1])}; utilisasi = tes tertagih Accurate periode {bln(data.jendela.tes_tertagih[0])}–{bln(data.jendela.tes_tertagih[1])} dibanding target tes/bln
             {data.sheet_sampai ? ` (cadangan: data sheet, terakhir ${bln(data.sheet_sampai)})` : ""}. Klik nama faskes untuk briefing &amp; timeline.
           </p>
-          <DataTable columns={kolom} data={tampil} getKey={(f) => f.account_id} searchPlaceholder="Cari faskes…" pageSize={25}
+          <DataTable columns={kolom} data={tampil} getKey={(f) => f.account_id} searchPlaceholder="Cari faskes…"
             empty={data.faskes.length === 0 ? "Tidak ada faskes KSO dalam cakupan Anda." : "Tidak ada faskes dengan filter ini."}
             toolbar={<FilterSelect label="Cabang" value={cabang} onChange={setCabang} options={opsiCabang} />} />
         </CardContent>

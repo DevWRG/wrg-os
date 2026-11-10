@@ -179,7 +179,7 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
       <Card>
         <CardContent className="pt-6">
           <DataTable
-            columns={kolom} data={tampil} getKey={(r) => String(r.so_id)} pageSize={25}
+            columns={kolom} data={tampil} getKey={(r) => String(r.so_id)}
             searchPlaceholder="Cari nomor SO atau customer…" empty="Tidak ada transaksi pada filter ini."
             onRowClick={(r) => setBuka(r.so_id)} initialSort={{ id: "tanggal", dir: "desc" }}
           />

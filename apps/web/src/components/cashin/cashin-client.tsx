@@ -313,7 +313,6 @@ export function CashinClient({
                   data={statement}
                   getKey={(r) => r.id}
                   searchPlaceholder="Cari rekening…"
-                  pageSize={25}
                 />
               )}
             </CardContent>
@@ -341,7 +340,6 @@ export function CashinClient({
               data={accounts}
               getKey={(r) => r.id}
               searchPlaceholder="Cari rekening…"
-              pageSize={25}
             />
           </CardContent>
         </Card>

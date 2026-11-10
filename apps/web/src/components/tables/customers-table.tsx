@@ -41,5 +41,5 @@ const columns: DataColumn<Customer>[] = [
 ];
 
 export function CustomersTable({ customers }: { customers: Customer[] }) {
-  return <DataTable columns={columns} data={customers} getKey={(c) => c.customer_id} searchPlaceholder="Cari customer / AM / stage…" pageSize={25} />;
+  return <DataTable columns={columns} data={customers} getKey={(c) => c.customer_id} searchPlaceholder="Cari customer / AM / stage…" />;
 }

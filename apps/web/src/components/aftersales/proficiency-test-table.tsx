@@ -84,5 +84,5 @@ export function ProficiencyTestTable({ rows }: { rows: ProficiencyTestRow[] }) {
     { id: "aksi", header: "Aksi", align: "right", cell: (r) => <ProficiencyTestRowActions row={r} /> },
   ];
 
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari RS / uji profisiensi…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari RS / uji profisiensi…" />;
 }

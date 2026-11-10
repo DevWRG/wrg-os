@@ -223,7 +223,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
                 {" Terbitkan = status jadi Terbit (tak bisa disusun ulang, edit per baris), jadwal dikirim ke WA tiap teknisi bila saklar WA aktif, dan teknisi bisa melihatnya lewat #JADWAL."}
                 {data.status === "terbit" ? ` Terbit ${data.terbit_at ? new Date(data.terbit_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""}${data.terbit_oleh ? ` oleh ${data.terbit_oleh}` : ""} — perubahan sesudah terbit tidak dikirim ulang otomatis; teknisi bisa cek lewat #JADWAL.` : " Draft bisa diedit; terbitkan sebelum tanggal 1."}
               </p>
-              <DataTable columns={kolom} data={baris} getKey={(b) => b.id} searchPlaceholder="Cari faskes…" pageSize={50}
+              <DataTable columns={kolom} data={baris} getKey={(b) => b.id} searchPlaceholder="Cari faskes…"
                 empty={data.baris.length ? "Tidak ada baris dengan filter ini." : "Belum ada jadwal bulan ini — tekan Susun draft."}
                 toolbar={<>
                   <FilterSelect label="Teknisi" value={fTeknisi} onChange={setFTeknisi} options={[...opsiTek, { value: "__kosong", label: "(belum ada teknisi)" }]} />
@@ -237,13 +237,13 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       {tab === "wilayah" && wil && (
         <Card><CardContent className="space-y-2 pt-6">
           <p className="text-muted-foreground text-xs">Wilayah = area faskes. Tiap wilayah dipegang satu teknisi; faskes di wilayah tanpa teknisi tetap disusun tapi jadwal belum bisa diterbitkan sebelum teknisinya ditetapkan.</p>
-          <DataTable columns={kolomWil} data={wil.wilayah} getKey={(w) => w.wilayah} pageSize={50} searchPlaceholder="Cari wilayah…" empty="Tidak ada wilayah." />
+          <DataTable columns={kolomWil} data={wil.wilayah} getKey={(w) => w.wilayah} searchPlaceholder="Cari wilayah…" empty="Tidak ada wilayah." />
         </CardContent></Card>
       )}
       {tab === "frekuensi" && frek && (
         <Card><CardContent className="space-y-2 pt-6">
           <p className="text-muted-foreground text-xs">Seberapa sering tiap faskes dikunjungi rutin. Kosongkan untuk memakai default (alat per tes → tiap 2 bulan, beli reagen → tiap 3 bulan). Berlaku untuk penyusunan berikutnya.</p>
-          <DataTable columns={kolomFrek} data={frek} getKey={(f) => f.account_id} pageSize={50} searchPlaceholder="Cari faskes…" empty="Tidak ada faskes KSO." />
+          <DataTable columns={kolomFrek} data={frek} getKey={(f) => f.account_id} searchPlaceholder="Cari faskes…" empty="Tidak ada faskes KSO." />
         </CardContent></Card>
       )}
     </div>

@@ -103,7 +103,7 @@ export function KeaslianView({ data }: { data: KeaslianData }) {
             <b> Meragukan</b> bila tanpa kunjungan <i>dan</i> macet sekaligus, atau Won lebih dari {data.aturan.won_tunggu_hari} hari tanpa faktur Accurate. Dihitung otomatis dari data — bukan tuduhan, cek alasannya.
             {r.tak_tertaut > 0 && ` ${r.tak_tertaut} deal belum tertaut ke akun faskes (umumnya calon pelanggan) — kunjungannya dicocokkan lewat nama.`}
           </p>
-          <DataTable columns={kolomDeal} data={tampil} getKey={(d) => d.deal_id} searchPlaceholder="Cari faskes…" pageSize={25}
+          <DataTable columns={kolomDeal} data={tampil} getKey={(d) => d.deal_id} searchPlaceholder="Cari faskes…"
             empty={data.deals.length === 0 ? "Tidak ada deal dalam cakupan Anda." : "Tidak ada deal dengan filter ini."}
             toolbar={<>
               <FilterSelect label="AM" value={am} onChange={setAm} options={opsiAm} />

@@ -307,7 +307,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
       ) : (
         <Card>
           <CardContent className="pt-6">
-            <DataTable columns={kolom} data={data.bon} getKey={(b) => String(b.id)} searchPlaceholder="Cari teknisi / sparepart…" pageSize={25}
+            <DataTable columns={kolom} data={data.bon} getKey={(b) => String(b.id)} searchPlaceholder="Cari teknisi / sparepart…"
               empty="Belum ada bon — catat dengan tombol “+ Bon baru”." />
           </CardContent>
         </Card>

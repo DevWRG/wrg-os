@@ -44,5 +44,5 @@ const columns: DataColumn<InventoryItem>[] = [
 ];
 
 export function InventoryTable({ items }: { items: InventoryItem[] }) {
-  return <DataTable columns={columns} data={items} getKey={(i) => i.id} searchPlaceholder="Cari SKU / nama item…" pageSize={25} />;
+  return <DataTable columns={columns} data={items} getKey={(i) => i.id} searchPlaceholder="Cari SKU / nama item…" />;
 }

@@ -63,7 +63,7 @@ export function CnView({ pengajuan, ringkasan, kontrak, bolehBuat, bolehUbah, bo
         <TabsContent value="pengajuan">
           <Card><CardContent className="pt-6">
             <DataTable
-              columns={kolomCn} data={data} getKey={(r) => String(r.id)} pageSize={25}
+              columns={kolomCn} data={data} getKey={(r) => String(r.id)}
               searchPlaceholder="Cari kode / customer…" onRowClick={(r) => setBuka(r.id)}
               empty={pengajuan.length === 0 ? "Belum ada pengajuan CN. Buat kontrak lalu klik Ajukan CN." : "Tidak ada yang cocok dengan filter."}
               toolbar={<div className="flex gap-2">
@@ -128,7 +128,7 @@ function KontrakTab({ kontrak, bolehBuat, bolehKelola, onBaru }: { kontrak: Kont
     <Card><CardContent className="space-y-2 pt-6">
       {err && <p className="text-destructive text-sm">{err}</p>}
       <p className="text-muted-foreground text-xs">Kontrak baru berstatus draft; Direktur mengaktifkannya sebelum bisa dipakai mengajukan CN.</p>
-      <DataTable columns={kolom} data={kontrak} getKey={(r) => String(r.id)} pageSize={25} searchPlaceholder="Cari kode / customer…"
+      <DataTable columns={kolom} data={kontrak} getKey={(r) => String(r.id)} searchPlaceholder="Cari kode / customer…"
         empty="Belum ada kontrak CN."
         toolbar={bolehBuat ? <Button size="sm" onClick={onBaru}>Kontrak baru</Button> : undefined} />
     </CardContent></Card>
@@ -174,11 +174,11 @@ function LaporanTab() {
         <>
           <Card><CardContent className="pt-6">
             <div className="mb-2 text-sm font-medium">Laporan CN per customer</div>
-            <DataTable columns={kolom("Customer")} data={d.per_customer} getKey={(r) => r.kunci} pageSize={15} searchPlaceholder="Cari customer…" empty="Belum ada data CN." />
+            <DataTable columns={kolom("Customer")} data={d.per_customer} getKey={(r) => r.kunci} searchPlaceholder="Cari customer…" empty="Belum ada data CN." />
           </CardContent></Card>
           <Card><CardContent className="pt-6">
             <div className="mb-2 text-sm font-medium">Pembagian CN per sales</div>
-            <DataTable columns={kolom("Sales")} data={d.per_sales} getKey={(r) => r.kunci} pageSize={15} searchPlaceholder="Cari sales…" empty="Belum ada data CN." />
+            <DataTable columns={kolom("Sales")} data={d.per_sales} getKey={(r) => r.kunci} searchPlaceholder="Cari sales…" empty="Belum ada data CN." />
           </CardContent></Card>
         </>
       )}

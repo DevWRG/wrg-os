@@ -49,5 +49,5 @@ export function GaTicketCategoriesTable({ categories }: { categories: GaTicketCa
     { id: "aksi", header: "Aksi", align: "right", cell: (c) => <GaTicketCategoryRowActions category={c} /> },
   ];
 
-  return <DataTable columns={columns} data={categories} getKey={(c) => c.id} searchPlaceholder="Cari kategori…" pageSize={25} />;
+  return <DataTable columns={columns} data={categories} getKey={(c) => c.id} searchPlaceholder="Cari kategori…" />;
 }

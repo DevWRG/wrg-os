@@ -75,7 +75,6 @@ export function TodosTable({ todos }: { todos: TodoItem[] }) {
         data={filtered}
         getKey={(t) => t.id}
         searchPlaceholder="Cari AM / item…"
-        pageSize={25}
         onRowClick={(t) => setSelected(t)}
         toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="td" />}
       />

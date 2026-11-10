@@ -94,6 +94,6 @@ export function InstallationsTable({ units }: { units: InstallationUnit[] }) {
   ];
 
   return (
-    <DataTable columns={columns} data={units} getKey={(u) => u.id} searchPlaceholder="Cari alat / customer…" pageSize={25} />
+    <DataTable columns={columns} data={units} getKey={(u) => u.id} searchPlaceholder="Cari alat / customer…" />
   );
 }

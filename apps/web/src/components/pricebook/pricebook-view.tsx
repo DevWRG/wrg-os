@@ -367,7 +367,6 @@ function HargaTab({ rows }: { rows: PublishedRow[] }) {
           data={tampil}
           getKey={(r) => String(r.rowNo)}
           searchPlaceholder="Cari nama / brand / kode…"
-          pageSize={25}
           initialSort={{ id: "nama", dir: "asc" }}
           empty="Tidak ada harga yang cocok."
           toolbar={

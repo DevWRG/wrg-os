@@ -52,5 +52,5 @@ export function GaAssetCategoriesTable({ categories }: { categories: GaAssetCate
     { id: "aksi", header: "Aksi", align: "right", cell: (c) => <GaAssetCategoryRowActions category={c} /> },
   ];
 
-  return <DataTable columns={columns} data={categories} getKey={(c) => c.id} searchPlaceholder="Cari kategori…" pageSize={25} />;
+  return <DataTable columns={columns} data={categories} getKey={(c) => c.id} searchPlaceholder="Cari kategori…" />;
 }
