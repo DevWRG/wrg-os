@@ -785,12 +785,22 @@ export const SKOR_FASKES_MIRIP = 0.5;
 
 const normFaskes = (s: string | null | undefined) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
 
+const ROMAWI = new Set(["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]);
+/** Kunci angka pembeda di nama faskes (urut, digabung) — angka arab & romawi berdiri sendiri. */
+export function angkaPembeda(s: string): string {
+  return normFaskes(s).split(" ").filter((w) => /^\d+$/.test(w) || ROMAWI.has(w)).map((w) => (/^\d+$/.test(w) ? String(Number(w)) : w)).join(",");
+}
+
 /**
  * Kemiripan nama faskes yang DITULIS AM dengan satu nama faskes (master / faskes baru). Kata generik (RS, RSUD,
  * KLINIK, KOTA, …) dibuang dulu. Skor = maks(kemiripan huruf inti, porsi kata inti AM yang ada di nama itu × 0,9);
  * kata ≥ 4 huruf dengan selisih satu huruf dihitung sama (salah ketik "KELURGA" ~ "KELUARGA").
  */
 export function skorFaskes(teks: string, nama: string): number {
+  // Angka pembeda (arab atau romawi) yang berbeda = faskes lain, bukan salah ketik: "RS UJI COBA 2" ≠ "RS UJI COBA",
+  // "PUSKESMAS X I" ≠ "PUSKESMAS X II". Uji dev 10 Nov: tanpa ini AM yang menulis faskes baru bernomor ditawari
+  // faskes lama tanpa nomor.
+  if (angkaPembeda(teks) !== angkaPembeda(nama)) return 0;
   const q = tokenFaskes(teks);
   const c = [...new Set(tokenFaskes(nama))];
   if (!q.length || !c.length) return 0;
