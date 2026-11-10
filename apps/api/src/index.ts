@@ -7914,6 +7914,7 @@ app.post("/hitl/resolve", async (c) => {
     decision?: "approve" | "reject";
     chosen_deal_id?: string;
     approver_id?: string;
+    chosen_ref?: { kind: "deal" | "accurate_customer"; ref_id: string };
   };
   try {
     body = await c.req.json();
@@ -7927,6 +7928,7 @@ app.post("/hitl/resolve", async (c) => {
     decision: body.decision,
     chosen_deal_id: body.chosen_deal_id,
     approver_id: body.approver_id,
+    chosen_ref: body.chosen_ref,
   });
   return c.json(r, r.ok ? 200 : 400);
 });
