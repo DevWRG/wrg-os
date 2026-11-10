@@ -8,6 +8,8 @@ import { balasanKampanye, scopeDariPengirim } from "./campaign.js";
 import { balasanBrief } from "./customer-intel.js";
 import { balasanJadwal } from "./jadwal-teknisi.js";
 import { resolveSender } from "./master.js";
+import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
+import { matchTeknisi, createTeknisiReport } from "./readinessboard.js";
 import { balasanOrder } from "./order-wa.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -104,6 +106,10 @@ export type InboundKind =
   | "jadwal"
   | "order"
   | "revisi"
+  | "install"
+  | "servis"
+  | "training"
+  | "kalibrasi"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -114,6 +120,7 @@ export type InboundKind =
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
   "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order", "revisi",
+  "install", "servis", "training", "kalibrasi",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -147,6 +154,8 @@ const ORDER_LINE = /^\s*#\s*order\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
+// F8 — laporan lapangan Teknisi (Aftersales).
+const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 const SHIPPING_LINE = /^\s*#\s*(kirim|terima|bast|bukti)\b\s*(.*)$/i;
 
 function extractHashtagArg(body: string | null, lineRegex: RegExp): string {
@@ -181,6 +190,8 @@ export function detectKind(body: string | null): InboundKind {
       if (JADWAL_LINE.test(line)) return "jadwal";
       if (ORDER_LINE.test(line)) return "order";
       if (REVISI_LINE.test(line)) return "revisi";
+      const rd = line.match(READINESS_LINE);
+      if (rd) return rd[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
     }
   }
   return "none";
@@ -267,9 +278,20 @@ const wibDate = (): string => new Date(Date.now() + 7 * 3600 * 1000).toISOString
 function allowedGroups(): string[] {
   return (process.env.WA_INBOUND_GROUPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 }
+// F26 — grup komplain customer (Service Ticket Triage), gated env terpisah dari
+// WA_INBOUND_GROUPS krn bukan grup AM. Kosong-by-default (grup belum ada) →
+// jid === "" tak pernah cocok jid asli, no-op aman.
+function complaintGroupJid(): string {
+  return process.env.F26_COMPLAINT_GROUP_JID?.trim() || "";
+}
 function groupAllowed(jid: string): boolean {
   const g = allowedGroups();
-  return g.length === 0 || g.includes(jid);
+  return g.length === 0 || g.includes(jid) || jid === complaintGroupJid();
+}
+// F8 — #install/#servis/#training/#kalibrasi diproses hanya bila AFTERSALES_WA_ENABLED
+// persis "true" (rilis bertahap; menu web Aftersales tetap jalan). Mati = diam.
+function aftersalesWaAktif(): boolean {
+  return (process.env.AFTERSALES_WA_ENABLED ?? "").toLowerCase() === "true";
 }
 
 export interface WaRow {
@@ -1207,6 +1229,26 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return { id: row.id, kind: k, ...result };
   };
 
+  // F26 — grup komplain customer (Service Ticket Triage): dicek SEBELUM
+  // detectKind hashtag-based krn komplain biasa tanpa hashtag. Gated
+  // F26_COMPLAINT_GROUP_JID kosong-by-default (no-op selama grup belum ada).
+  const cg = complaintGroupJid();
+  if (cg && row.group_jid === cg) {
+    if (await isKnownTeknisiSender(row.sender_name)) return finish({ skipped: "teknisi-chatter" }, "complaint");
+    if (!row.body?.trim()) return finish({ skipped: "empty-body" }, "complaint");
+    const ticket = await createTicket({
+      source: "wa",
+      complaint_text: row.body,
+      customer_name: row.sender_name,
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    return finish(
+      { ticket_id: ticket.id, severity: ticket.severity, assigned: ticket.assigned_teknisi_name },
+      "complaint",
+    );
+  }
+
   // F170 Komite KSO — #KSO + lampiran PDF Simulator CPRR. Identitas AM dari PENGIRIM (ketat:
   // DM = nomor, grup = alias/pushname), tak pernah dari isi pesan. Mati selama
   // KSO_WA_ENABLED bukan "true" (diam, tanpa balasan — sama seperti fitur WA lain yang di-flag).
@@ -1289,6 +1331,47 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     // terisi tanpa ditulis AM"), dan WaSendResult sendiri tak membawa teksnya.
     return finish({ ...hasil, via: amKso.via, ...(lampiran ? { lampiran_message: lampiran.wa_message_id } : {}), balasan, reply,
                     ...(notifHod ? { notif_hod: notifHod } : {}) }, "kso");
+  }
+
+  // F8 — laporan lapangan Teknisi (#install/#servis/#training/#kalibrasi).
+  // Grup SAMA dgn #plan/#report Teknisi (bukan grup baru) — nebeng
+  // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisi
+  // (teknisi_capacity F8 — sejak 246 cermin master_user role Teknisi).
+  if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
+    if (!aftersalesWaAktif()) return finish({ skipped: "aftersales-wa-off" });
+    const teknisi = await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid });
+    if (!teknisi) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    // Isi laporan = body SETELAH hashtag-nya dibuang. Cek `!row.body?.trim()`
+    // saja tak pernah kena: body "#install" itu non-kosong, jadi laporan tanpa
+    // deskripsi apa pun tersimpan dan dibalas "✅ tercatat" — teknisi merasa
+    // sudah lapor padahal barisnya kosong. Pola strip-dulu-baru-cek ini sama
+    // dengan #HELPDESK. Pengirim sudah lolos gerbang roster, jadi dibalas
+    // (bukan silent-skip) supaya dia tahu formatnya.
+    const isiLaporan = stripInvisible(row.body ?? "")
+      .split(/\r?\n/)
+      .map((l) => l.replace(READINESS_LINE, "").trim())
+      .join(" ")
+      .trim();
+    if (!isiLaporan) {
+      const reply = await sendViaWaGateway(
+        row.group_jid,
+        `⚠️ #${kind.toUpperCase()} terdeteksi tapi teks kosong, ${teknisi.nama}. Format: #${kind} <apa yang dikerjakan>`,
+      );
+      return finish({ error: "empty-body", reply });
+    }
+    const report = await createTeknisiReport({
+      teknisi_id: teknisi.id,
+      report_type: kind,
+      // Simpan pesan ASLI (utuh, termasuk hashtag) sbg konteks laporan;
+      // isiLaporan cuma dipakai buat validasi di atas. Non-null di titik ini
+      // krn isiLaporan yang non-kosong menyiratkan body ada.
+      body: row.body ?? isiLaporan,
+      source: "wa",
+      group_jid: row.group_jid,
+      wa_message_id: row.message_id,
+    });
+    const reply = await sendViaWaGateway(row.group_jid, `✅ Laporan #${kind.toUpperCase()} tercatat — ${teknisi.nama}.`);
+    return finish({ report_id: report.id, teknisi: teknisi.nama, reply });
   }
 
   if (kind === "none") {
@@ -2048,7 +2131,8 @@ export async function processUnprocessed(
                    AND k.body ~* '#\\s*kso'
                    AND k.received_at BETWEEN wa_message.received_at - make_interval(mins => ${KSO_JENDELA_MENIT})
                                          AND wa_message.received_at + make_interval(mins => ${KSO_JENDELA_MENIT})
-               )))
+               ))
+           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];

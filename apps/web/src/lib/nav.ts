@@ -12,7 +12,7 @@ import { CalendarCheck,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, type LucideIcon,
+  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, Wrench, HardHat, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck, FileCheck2,
 } from "lucide-react";
 
@@ -310,6 +310,15 @@ export const NAV: NavGroup[] = [
       { title: "Resume", url: "/monitor/resume", icon: ScrollText },
       { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
       { title: "Members", url: "/monitor/members", icon: Users },
+    ],
+  },
+  {
+    label: "Aftersales",
+    items: [
+      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
+      { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
+      { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
     ],
   },
   {

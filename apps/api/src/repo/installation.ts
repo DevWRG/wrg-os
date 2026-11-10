@@ -1,0 +1,453 @@
+import { db } from "../db.js";
+import { isKodeAlat, KODE_ALAT_PREFIX } from "./accurateMirror.js";
+import { cariDoAccurateSegar } from "./shipment-tracking.js";
+
+// postgres.js parse kolom timestamptz jadi objek Date — String(dateObj) hasilnya
+// verbose ("Wed Aug 05 2026 …"), bukan ISO. new Date(x).toISOString() aman
+// dipanggil baik x sudah Date maupun masih string dari driver.
+const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
+
+// F22 — Instalasi Alat Lifecycle (AFTERSALES). Checklist 5 langkah SEKUENSIAL
+// per alat: po_control → sj → teknisi_assign → training → bast.
+//
+// SEJARAH PENTING: tabel installation_unit awalnya SENGAJA self-contained (lihat
+// 130_installation_lifecycle.sql — "CRM/HR off-limits utk fitur ini"), semua
+// identitas TEXT bebas. Keputusan itu DIUBAH Direktur 2026-08-28 setelah uji
+// jalur tulis memperlihatkan akibatnya: nama bisa diketik bebas → typo, duplikat
+// beda ejaan, tak bisa di-join. Sekarang alat & customer WAJIB dipilih dari
+// mirror Accurate, teknisi dari roster teknisi_capacity (F8).
+//
+// Pola: HYBRID FK + snapshot (migrasi 158). Kolom TEXT tetap ada dan tetap jadi
+// yang DITAMPILKAN — nilainya di-snapshot dari nama pilihan saat itu, jadi tampilan
+// historis tak berubah walau baris Accurate berubah/terhapus. Kolom FK yang jadi
+// sumber kebenaran untuk join.
+//
+// Kewajiban "pilih dari dropdown" ditegakkan DI SINI, bukan oleh constraint DB
+// (kolomnya nullable — baris lama NULL, dan expand-contract butuh migrasi bisa
+// naik lebih dulu dari kode). Jadi validasi di bawah adalah satu-satunya
+// penjaganya: jangan dilonggarkan tanpa mengganti penjaga lain.
+
+export interface InstallationInput {
+  product_id: number;
+  /** null = customer baru yang belum ada di Accurate (wajib `customer_baru`). */
+  account_id: number | null;
+  /** Nama customer baru (belum di Accurate). Diabaikan kalau account_id diisi. */
+  customer_baru?: string | null;
+  serial_number?: string | null;
+  cabang?: string | null;
+  po_number?: string | null;
+  created_by?: string | null;
+}
+
+export interface InstallationRow {
+  id: string;
+  product_id: number | null;
+  account_id: number | null;
+  teknisi_id: string | null;
+  alat_name: string;
+  serial_number: string | null;
+  customer_name: string;
+  cabang: string | null;
+  po_number: string | null;
+  po_control_done: boolean;
+  po_control_at: string | null;
+  sj_number: string | null;
+  sj_done: boolean;
+  sj_at: string | null;
+  teknisi_name: string | null;
+  teknisi_assign_done: boolean;
+  teknisi_assign_at: string | null;
+  training_notes: string | null;
+  training_done: boolean;
+  training_at: string | null;
+  bast_number: string | null;
+  bast_done: boolean;
+  bast_at: string | null;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRow(r: Record<string, unknown>): InstallationRow {
+  return {
+    id: String(r.id),
+    product_id: r.product_id == null ? null : Number(r.product_id),
+    account_id: r.account_id == null ? null : Number(r.account_id),
+    teknisi_id: r.teknisi_id ? String(r.teknisi_id) : null,
+    alat_name: String(r.alat_name),
+    serial_number: r.serial_number ? String(r.serial_number) : null,
+    customer_name: String(r.customer_name),
+    cabang: r.cabang ? String(r.cabang) : null,
+    po_number: r.po_number ? String(r.po_number) : null,
+    po_control_done: Boolean(r.po_control_done),
+    po_control_at: r.po_control_at ? toIsoTs(r.po_control_at) : null,
+    sj_number: r.sj_number ? String(r.sj_number) : null,
+    sj_done: Boolean(r.sj_done),
+    sj_at: r.sj_at ? toIsoTs(r.sj_at) : null,
+    teknisi_name: r.teknisi_name ? String(r.teknisi_name) : null,
+    teknisi_assign_done: Boolean(r.teknisi_assign_done),
+    teknisi_assign_at: r.teknisi_assign_at ? toIsoTs(r.teknisi_assign_at) : null,
+    training_notes: r.training_notes ? String(r.training_notes) : null,
+    training_done: Boolean(r.training_done),
+    training_at: r.training_at ? toIsoTs(r.training_at) : null,
+    bast_number: r.bast_number ? String(r.bast_number) : null,
+    bast_done: Boolean(r.bast_done),
+    bast_at: r.bast_at ? toIsoTs(r.bast_at) : null,
+    status: String(r.status),
+    created_by: r.created_by ? String(r.created_by) : null,
+    created_at: toIsoTs(r.created_at),
+    updated_at: toIsoTs(r.updated_at),
+  };
+}
+
+export type CreateInstallationResult = { ok: true; row: InstallationRow } | { ok: false; error: string };
+
+// Validasi id → snapshot nama → insert. Nama TIDAK diterima dari klien: kalau
+// klien boleh mengirim nama sendiri, seluruh gunanya memilih dari katalog hilang
+// (nama bisa dikarang lagi walau id-nya benar). Nama SELALU dibaca dari mirror.
+// Daftar cabang = cabang wilayah di area_kota (sumber yang sama dengan
+// area_customer(), jadi cabang isian otomatis selalu ada di daftar). DEMO bukan
+// cabang fisik.
+export async function listCabangInstalasi(): Promise<string[]> {
+  const rows = await db()<{ cabang: string }[]>`
+    SELECT DISTINCT upper(btrim(cabang)) AS cabang FROM area_kota
+    WHERE NULLIF(btrim(cabang), '') IS NOT NULL AND upper(btrim(cabang)) <> 'DEMO'
+    ORDER BY 1`;
+  return rows.map((r) => r.cabang);
+}
+
+/** Opsi form Instalasi: daftar cabang + cabang wilayah customer terpilih (kalau ada). */
+export async function installationOptions(accountId: number | null) {
+  const cabang = await listCabangInstalasi();
+  let cabangCustomer: string | null = null;
+  if (accountId != null) {
+    const [r] = await db()<{ area: string | null }[]>`SELECT area_customer(${accountId}::bigint) AS area`;
+    const a = r?.area ? r.area.trim().toUpperCase() : null;
+    cabangCustomer = a && cabang.includes(a) ? a : null;
+  }
+  return { cabang, cabang_customer: cabangCustomer };
+}
+
+// Saran SN untuk form Instalasi: SN di Populasi Alat (kso_asset) yang nama
+// alatnya terpetakan ke item terpilih (alat_item_map, migrasi 287). Item alat di
+// Accurate TIDAK ber-Serial Number, jadi stok gudang belum bisa jadi sumber.
+// Hanya saran — SN tetap boleh diketik (alat baru dari gudang belum di populasi).
+export interface SaranSn {
+  sn: string;
+  customer: string | null;
+  kota: string | null;
+  aktif: boolean;
+  /** SN ini sudah tercatat di unit Instalasi lain (akan ditolak sebagai duplikat). */
+  sudah_terpakai: boolean;
+}
+
+export async function saranSnInstalasi(productId: number): Promise<{ item_no: string | null; saran: SaranSn[] }> {
+  const sql = db();
+  const [item] = await sql<{ no: string | null }[]>`SELECT no FROM accurate_item WHERE id = ${productId}`;
+  const no = item?.no ? String(item.no).trim() : null;
+  if (!no) return { item_no: null, saran: [] };
+  const rows = await sql<{ sn: string; customer: string | null; kota: string | null; aktif: boolean; sudah_terpakai: boolean }[]>`
+    SELECT DISTINCT ON (lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key))))
+      btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key)) AS sn,
+      COALESCE(ac.name, k.customer_raw) AS customer,
+      k.kota,
+      k.aktif,
+      EXISTS (
+        SELECT 1 FROM installation_unit iu
+        WHERE lower(btrim(iu.serial_number)) = lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key)))
+      ) AS sudah_terpakai
+    FROM alat_item_map m
+    JOIN kso_asset k ON lower(btrim(k.nama_alat)) = m.nama_alat_key
+    LEFT JOIN accurate_customer ac ON ac.id = k.account_id
+    WHERE upper(m.item_no) = upper(${no})
+      AND NULLIF(btrim(COALESCE(k.sn_raw, k.sn_key)), '') IS NOT NULL
+    ORDER BY lower(btrim(COALESCE(NULLIF(btrim(k.sn_raw), ''), k.sn_key))), k.aktif DESC`;
+  return { item_no: no, saran: rows.map((r) => ({ ...r, sn: String(r.sn) })) };
+}
+
+export async function createInstallation(input: InstallationInput): Promise<CreateInstallationResult> {
+  const sql = db();
+
+  if (!Number.isInteger(input.product_id)) {
+    return { ok: false, error: "alat wajib dipilih dari katalog (product_id harus angka)" };
+  }
+  // Customer: dari mirror Accurate (account_id), ATAU customer baru yang belum
+  // ada di Accurate (keputusan user 7 Nov 2026 — instalasi bisa di customer baru).
+  // Customer baru disimpan account_id NULL = penanda "belum di Accurate".
+  const custBaru = input.account_id == null ? (input.customer_baru ?? "").trim().replace(/\s+/g, " ") : "";
+  if (input.account_id != null && !Number.isInteger(input.account_id)) {
+    return { ok: false, error: "account_id harus angka — customer dipilih dari katalog" };
+  }
+  if (input.account_id == null && (custBaru.length < 3 || custBaru.length > 200)) {
+    return { ok: false, error: "customer wajib: pilih dari katalog Accurate, atau isi nama customer baru (3–200 karakter)" };
+  }
+  const cabangList = await listCabangInstalasi();
+  const cabangIn = input.cabang?.trim().toUpperCase() || null;
+  if (cabangIn && !cabangList.includes(cabangIn)) {
+    return { ok: false, error: `cabang "${input.cabang}" tak dikenal — pilih dari daftar (${cabangList.join(", ")})` };
+  }
+
+  const [item] = await sql`SELECT id, no, name FROM accurate_item WHERE id = ${input.product_id}`;
+  if (!item) {
+    return {
+      ok: false,
+      error: `Alat id ${input.product_id} tak ada di katalog Accurate. Kalau ini barang baru, sinkronkan katalog dulu (menu Products → Sync).`,
+    };
+  }
+  if (!isKodeAlat(String(item.no ?? ""))) {
+    return {
+      ok: false,
+      error: `"${item.name}" (${item.no}) bukan alat — Instalasi hanya untuk item berkode ${KODE_ALAT_PREFIX.map((p) => p + ".").join("/")}, reagen & sparepart tidak dicatat di sini.`,
+    };
+  }
+  const [cust] = input.account_id == null
+    ? [null]
+    : await sql`SELECT id, no, name, area_customer(id) AS area FROM accurate_customer WHERE id = ${input.account_id}`;
+  if (input.account_id != null && !cust) {
+    return {
+      ok: false,
+      error: `Customer id ${input.account_id} tak ada di mirror Accurate. Kalau ini customer baru, pilih "Customer baru" di daftar.`,
+    };
+  }
+
+  // Nama mirror bisa berupa empty-string, bukan NULL — COALESCE saja tak cukup
+  // (jebakan yang sudah tercatat di CLAUDE.md untuk resolusi nama Accurate).
+  const alatName = String(item.name ?? "").trim() || String(item.no ?? "") || `Item #${input.product_id}`;
+  const custName = cust
+    ? String(cust.name ?? "").trim() || String(cust.no ?? "") || `Customer #${input.account_id}`
+    : custBaru;
+  // Cabang kosong → ikut wilayah customer (area_customer), sama dengan tiket servis.
+  const areaCust = cust?.area ? String(cust.area).trim().toUpperCase() : null;
+  const cabang = cabangIn ?? (areaCust && cabangList.includes(areaCust) ? areaCust : null);
+
+  // serial_number instrumen fisik semestinya unik (dicatat sejak QA 09-02
+  // sbg observasi, terbukti reproducible lewat curl 09-04) — dicek di sini
+  // (case-insensitive, kosong/NULL dilewati) supaya 2 unit tak pernah
+  // menunjuk alat fisik yang sama. Bukan constraint DB: field ini opsional
+  // & histori lama mungkin sudah punya baris kosong berulang.
+  const serial = input.serial_number?.trim();
+  // Kolomnya `text` tak berbatas — serial number instrumen fisik realistisnya
+  // tak pernah lebih dari 100 karakter; tanpa batas, input anomali (uji QA
+  // 2026-09-07) merusak tata letak tabel (SN memaksa horizontal-scroll,
+  // baris lain ikut ter-geser). UI sudah di-truncate juga, tapi akar
+  // masalahnya di sini — jangan biarkan data seburuk itu tersimpan.
+  if (serial && serial.length > 100) {
+    return { ok: false, error: "serial_number maksimal 100 karakter" };
+  }
+  // Cek duplikat + INSERT dalam SATU transaksi yang dikunci per SN (advisory
+  // lock). Tanpa kunci, create paralel dengan SN sama lolos semua: masing-masing
+  // mengecek sebelum yang lain sempat INSERT (uji dev 12 Okt 2026: 5 paralel →
+  // 3 baris). Pembandingnya `lower(btrim())` dan BUKAN ILIKE: ILIKE membaca `_`
+  // dan `%` di SN sebagai wildcard, jadi "UJI_AS-012" dianggap sama dengan
+  // "UJIXAS-012" dan unit sah ditolak sebagai duplikat.
+  const rows = await sql.begin(async (tx) => {
+    if (serial) {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`installation_unit.sn:${serial.toLowerCase()}`}))`;
+      const [dupe] = await tx`
+        SELECT id, alat_name FROM installation_unit
+        WHERE lower(btrim(serial_number)) = ${serial.toLowerCase()} LIMIT 1
+      `;
+      if (dupe) return { dupe: String(dupe.alat_name) };
+    }
+    return tx`
+      INSERT INTO installation_unit
+        (product_id, account_id, alat_name, serial_number, customer_name, cabang, po_number, created_by)
+      VALUES
+        (${input.product_id}, ${input.account_id}, ${alatName}, ${serial || null},
+         ${custName}, ${cabang}, ${input.po_number?.trim() || null}, ${input.created_by ?? null})
+      RETURNING *
+    `;
+  });
+  if ("dupe" in rows) {
+    return {
+      ok: false,
+      error: `serial_number "${serial}" sudah dipakai unit lain (${rows.dupe}) — instrumen fisik seharusnya unik`,
+    };
+  }
+  return { ok: true, row: mapRow(rows[0]) };
+}
+
+export async function listInstallations(
+  status?: string,
+  search?: string,
+  limit = 500,
+): Promise<InstallationRow[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT * FROM installation_unit
+    WHERE ${status ? sql`status = ${status}` : sql`true`}
+      AND ${
+        search
+          ? sql`(alat_name ILIKE ${`%${search}%`} OR customer_name ILIKE ${`%${search}%`} OR serial_number ILIKE ${`%${search}%`})`
+          : sql`true`
+      }
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapRow);
+}
+
+export async function getInstallationById(id: string): Promise<InstallationRow | null> {
+  const sql = db();
+  const rows = await sql`SELECT * FROM installation_unit WHERE id = ${id}`;
+  return rows.length ? mapRow(rows[0]) : null;
+}
+
+export interface InstallationActionResult {
+  ok: boolean;
+  error?: string;
+  status?: string;
+}
+
+// ── Transisi checklist — 5 fungsi eksplisit, urutan divalidasi manual per
+// langkah (bukan helper generik) — konsisten dgn gaya salesdoc.ts. ──
+//
+// Pola tiap langkah: SELECT dulu untuk pesan error yang jelas, lalu UPDATE
+// bersyarat (`langkah sebelumnya selesai AND langkah ini belum`) yang menjadi
+// penjaga sebenarnya. Dulu cuma SELECT-lalu-UPDATE polos: 10 POST paralel ke
+// /sj → 3 sukses dan nomor SJ saling menimpa (uji dev 12 Okt 2026). UPDATE
+// bersyarat membuat hanya satu yang menang; sisanya mendapat 0 baris.
+const KALAH_BALAPAN = "langkah ini baru saja diselesaikan permintaan lain — muat ulang halaman";
+
+// Nomor dokumen (PO/SJ/BAST): dipangkas, wajib berisi, maks 100 karakter. Route
+// cuma mengecek `!sj_number`, jadi "   " dulu lolos dan tersimpan sebagai
+// nomor kosong — langkahnya tercentang tanpa dokumen apa pun.
+function nomorDokumen(raw: string | null | undefined, label: string): { ok: true; v: string } | { ok: false; error: string } {
+  const v = String(raw ?? "").trim();
+  if (!v) return { ok: false, error: `${label} wajib diisi` };
+  if (v.length > 100) return { ok: false, error: `${label} maksimal 100 karakter` };
+  return { ok: true, v };
+}
+
+export async function markPoControl(id: string, po_number?: string): Promise<InstallationActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, po_number, po_control_done FROM installation_unit WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
+  if (rows[0].po_control_done) return { ok: false, error: "langkah PO control sudah selesai" };
+  // Unit boleh dibuat draft tanpa No. PO (belum tentu ada saat unit dicatat),
+  // TAPI gak boleh ditandai "PO Control selesai" tanpa PO beneran ada —
+  // baik yang sudah diisi saat create maupun yang baru diisi di langkah ini.
+  const po = nomorDokumen(po_number?.trim() ? po_number : (rows[0].po_number as string | null), "No. PO");
+  if (!po.ok) return { ok: false, error: "No. PO wajib diisi sebelum PO Control ditandai selesai" };
+  const done = await sql`
+    UPDATE installation_unit
+    SET po_number = ${po.v},
+        po_control_done = TRUE, po_control_at = now(),
+        status = 'po_control', updated_at = now()
+    WHERE id = ${id} AND NOT po_control_done
+    RETURNING id
+  `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
+  return { ok: true, status: "po_control" };
+}
+
+// No. SJ dirujuk ke DO Accurate (keputusan user 13 Okt 2026, sama dengan WA
+// #KIRIM): "SJK 6142", "SJK6142", opsional cabang, atau nomor lengkap. Harus
+// tepat SATU DO; yang tersimpan nomor lengkap Accurate, bukan ketikan user.
+export async function markSj(id: string, sj_number: string): Promise<InstallationActionResult & { sj_number?: string; customer_name?: string | null }> {
+  const sql = db();
+  const sj = nomorDokumen(sj_number, "No. SJ");
+  if (!sj.ok) return { ok: false, error: sj.error };
+  const rows = await sql`SELECT id, po_control_done, sj_done FROM installation_unit WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
+  if (!rows[0].po_control_done) {
+    return { ok: false, error: "PO control belum selesai — selesaikan langkah sebelumnya dulu" };
+  }
+  if (rows[0].sj_done) return { ok: false, error: "langkah SJ sudah selesai" };
+  const dos = await cariDoAccurateSegar(sj.v);
+  if (dos.length === 0) {
+    return { ok: false, error: `SJ "${sj.v}" tidak ditemukan di DO Accurate 90 hari terakhir — cek jenis & nomornya (mis. SJK 6142) atau pakai nomor lengkap` };
+  }
+  if (dos.length > 1) {
+    return { ok: false, error: `"${sj.v}" cocok dengan ${dos.length} SJ (${dos.map((d) => d.number).join(", ")}) — pakai nomor lengkap` };
+  }
+  const nomor = dos[0].number;
+  const done = await sql`
+    UPDATE installation_unit
+    SET sj_number = ${nomor}, sj_done = TRUE, sj_at = now(),
+        status = 'sj', updated_at = now()
+    WHERE id = ${id} AND po_control_done AND NOT sj_done
+    RETURNING id
+  `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
+  return { ok: true, status: "sj", sj_number: nomor, customer_name: dos[0].customer_name };
+}
+
+// Teknisi dipilih dari roster teknisi_capacity (F8), BUKAN diketik bebas —
+// konfirmasi eksplisit Direktur 2026-08-28. Catatan: teknisi bukan data Accurate;
+// preseden FK ke tabel yang sama sudah ada di install_schedule.
+//
+// `aktif = true` diwajibkan: menugaskan teknisi nonaktif itu diam-diam salah —
+// barisnya tersimpan wajar, tapi orangnya sudah tak di roster.
+export async function markTeknisiAssign(id: string, teknisi_id: string): Promise<InstallationActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, sj_done, teknisi_assign_done FROM installation_unit WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
+  if (!rows[0].sj_done) {
+    return { ok: false, error: "SJ belum selesai — selesaikan langkah sebelumnya dulu" };
+  }
+  if (rows[0].teknisi_assign_done) return { ok: false, error: "langkah assign teknisi sudah selesai" };
+  if (!teknisi_id?.trim()) {
+    return { ok: false, error: "teknisi wajib dipilih dari roster (teknisi_id kosong)" };
+  }
+  // Kolomnya uuid — id ngawur bikin Postgres melempar 22P02, bukan "tak ketemu"
+  // yang rapi. Disaring dulu supaya pesannya bisa dibaca orang.
+  if (!/^[0-9a-f-]{36}$/i.test(teknisi_id.trim())) {
+    return { ok: false, error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" };
+  }
+  const [tek] = await sql`
+    SELECT id, nama, aktif FROM teknisi_capacity WHERE id = ${teknisi_id.trim()}`;
+  if (!tek) return { ok: false, error: "teknisi tak ada di roster" };
+  if (!tek.aktif) return { ok: false, error: `teknisi "${String(tek.nama)}" sudah nonaktif — pilih yang aktif` };
+  const done = await sql`
+    UPDATE installation_unit
+    SET teknisi_id = ${teknisi_id.trim()}, teknisi_name = ${String(tek.nama)},
+        teknisi_assign_done = TRUE, teknisi_assign_at = now(),
+        status = 'teknisi_assign', updated_at = now()
+    WHERE id = ${id} AND sj_done AND NOT teknisi_assign_done
+    RETURNING id
+  `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
+  return { ok: true, status: "teknisi_assign" };
+}
+
+export async function markTrainingDone(id: string, training_notes?: string): Promise<InstallationActionResult> {
+  const sql = db();
+  const rows = await sql`SELECT id, teknisi_assign_done, training_done FROM installation_unit WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
+  if (!rows[0].teknisi_assign_done) {
+    return { ok: false, error: "Assign teknisi belum selesai — selesaikan langkah sebelumnya dulu" };
+  }
+  if (rows[0].training_done) return { ok: false, error: "langkah training sudah selesai" };
+  const done = await sql`
+    UPDATE installation_unit
+    SET training_notes = ${training_notes?.trim() || null}, training_done = TRUE, training_at = now(),
+        status = 'training', updated_at = now()
+    WHERE id = ${id} AND teknisi_assign_done AND NOT training_done
+    RETURNING id
+  `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
+  return { ok: true, status: "training" };
+}
+
+export async function markBast(id: string, bast_number: string): Promise<InstallationActionResult> {
+  const sql = db();
+  const bast = nomorDokumen(bast_number, "No. BAST");
+  if (!bast.ok) return { ok: false, error: bast.error };
+  const rows = await sql`SELECT id, training_done, bast_done FROM installation_unit WHERE id = ${id}`;
+  if (rows.length === 0) return { ok: false, error: "unit instalasi tidak ditemukan" };
+  if (!rows[0].training_done) {
+    return { ok: false, error: "Training belum selesai — selesaikan langkah sebelumnya dulu" };
+  }
+  if (rows[0].bast_done) return { ok: false, error: "langkah BAST sudah selesai" };
+  const done = await sql`
+    UPDATE installation_unit
+    SET bast_number = ${bast.v}, bast_done = TRUE, bast_at = now(),
+        status = 'bast', updated_at = now()
+    WHERE id = ${id} AND training_done AND NOT bast_done
+    RETURNING id
+  `;
+  if (done.length === 0) return { ok: false, error: KALAH_BALAPAN };
+  return { ok: true, status: "bast" };
+}

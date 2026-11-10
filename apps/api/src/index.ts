@@ -307,6 +307,43 @@ import {
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
+import {
+  createInstallation,
+  listInstallations,
+  getInstallationById,
+  markPoControl,
+  markSj,
+  markTeknisiAssign,
+  markTrainingDone,
+  markBast,
+  installationOptions,
+  saranSnInstalasi,
+} from "./repo/installation.js";
+import {
+  listTeknisi,
+  createTicket,
+  listTickets,
+  getTicketById,
+  resolveTicket,
+  assignTicketManual,
+} from "./repo/serviceticket.js";
+import {
+  createSchedule,
+  listSchedules,
+  getScheduleById,
+  listEligibleUnits,
+  markDone,
+} from "./repo/maintenance.js";
+import {
+  listTeknisiCapacity,
+  updateTeknisiCapacity,
+  getReadinessBoard,
+  createInstallSchedule,
+  listInstallSchedule,
+  updateScheduleStatus,
+  createTeknisiReport,
+  listTeknisiReports,
+} from "./repo/readinessboard.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { GalatKso, berkasLampiran, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
@@ -4315,6 +4352,372 @@ app.post("/kas-station/rekap/:id/realisasi", (c) => kasStationJalankan(c, async 
   return row ? c.json(row) : c.json({ error: "tidak ditemukan" }, 404);
 }));
 
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.post("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Alat & customer kini dipilih dari katalog: yang diterima product_id +
+  // account_id, BUKAN nama. Nama di-snapshot server-side dari mirror (lihat
+  // createInstallation) supaya klien tak bisa mengarang nama utk id yang benar.
+  let body: {
+    product_id?: number;
+    account_id?: number | null;
+    customer_baru?: string;
+    serial_number?: string;
+    cabang?: string;
+    po_number?: string;
+    created_by?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (body.product_id == null || (body.account_id == null && !body.customer_baru?.trim())) {
+    return c.json({ error: "product_id + (account_id ATAU customer_baru) wajib — alat dari katalog, customer dari katalog atau customer baru" }, 400);
+  }
+  if (!body.serial_number?.trim()) {
+    return c.json({ error: "serial_number wajib" }, 400);
+  }
+  const r = await createInstallation({
+    product_id: Number(body.product_id),
+    account_id: body.account_id == null ? null : Number(body.account_id),
+    customer_baru: body.customer_baru ?? null,
+    serial_number: body.serial_number,
+    cabang: body.cabang,
+    po_number: body.po_number,
+    created_by: body.created_by,
+  });
+  if (!r.ok) return c.json({ error: r.error }, 400);
+  return c.json(r.row, 201);
+});
+
+// Opsi form Instalasi (daftar cabang + cabang wilayah customer). Didaftarkan
+// SEBELUM /installations/:id supaya "options" tak dibaca sebagai id.
+app.get("/installations/options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = c.req.query("account_id");
+  const acc = raw && /^\d+$/.test(raw) ? Number(raw) : null;
+  return c.json(await installationOptions(acc));
+});
+
+// Saran SN dari Populasi Alat untuk item terpilih (migrasi 287). Sebelum /:id.
+app.get("/installations/sn-options", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const raw = c.req.query("product_id");
+  if (!raw || !/^\d+$/.test(raw)) return c.json({ error: "product_id wajib angka" }, 400);
+  return c.json(await saranSnInstalasi(Number(raw)));
+});
+
+app.get("/installations", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listInstallations(c.req.query("status") || undefined, c.req.query("q") || undefined);
+  return c.json({ count: units.length, units });
+});
+
+app.get("/installations/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = await getInstallationById(c.req.param("id"));
+  return u ? c.json(u) : c.json({ error: "unit instalasi tidak ditemukan" }, 404);
+});
+
+app.post("/installations/:id/po-control", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { po_number?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // po_number opsional di langkah ini
+  }
+  const r = await markPoControl(c.req.param("id"), body.po_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/sj", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { sj_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.sj_number) return c.json({ error: "sj_number wajib" }, 400);
+  const r = await markSj(c.req.param("id"), body.sj_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/assign-teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Teknisi dipilih dari roster: yang diterima teknisi_id (uuid
+  // teknisi_capacity), bukan nama. Nama di-snapshot di markTeknisiAssign.
+  let body: { teknisi_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib — teknisi dipilih dari roster" }, 400);
+  const r = await markTeknisiAssign(c.req.param("id"), body.teknisi_id);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/training", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { training_notes?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // training_notes opsional
+  }
+  const r = await markTrainingDone(c.req.param("id"), body.training_notes);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/installations/:id/bast", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bast_number?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.bast_number) return c.json({ error: "bast_number wajib" }, 400);
+  const r = await markBast(c.req.param("id"), body.bast_number);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-roster", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisi();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.post("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { complaint_text?: string; customer_id?: number | string | null; customer_name?: string; area?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.complaint_text?.trim()) return c.json({ error: "complaint_text wajib" }, 400);
+  // customer_id SENGAJA opsional — tiket boleh tanpa customer (lihat migrasi
+  // 163). Tapi kalau diisi dan tak sah, createTicket melempar → 400: "id
+  // ngawur" itu salah input, dan tiketnya TIDAK boleh diam-diam tersimpan
+  // tanpa tautan seolah user tak memilih apa pun.
+  try {
+    const ticket = await createTicket({
+      complaint_text: body.complaint_text,
+      customer_id: body.customer_id ?? null,
+      customer_name: body.customer_name,
+      area: body.area,
+      source: "manual",
+    });
+    return c.json(ticket, 201);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "gagal membuat tiket" }, 400);
+  }
+});
+
+app.get("/service-tickets", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tickets = await listTickets(c.req.query("status") || undefined);
+  return c.json({ count: tickets.length, tickets });
+});
+
+app.get("/service-tickets/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const t = await getTicketById(c.req.param("id"));
+  return t ? c.json(t) : c.json({ error: "ticket tidak ditemukan" }, 404);
+});
+
+// Penugasan manual (E7): tiket perlu review / ganti teknisi. by = nama pelaku dari BFF.
+app.post("/service-tickets/:id/assign", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; by?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.teknisi_id) return c.json({ error: "teknisi_id wajib" }, 400);
+  const r = await assignTicketManual(c.req.param("id"), body.teknisi_id, body.by ?? null);
+  return r.ok ? c.json(r.ticket) : c.json({ error: r.error }, r.error === "ticket tidak ditemukan" ? 404 : 400);
+});
+
+app.post("/service-tickets/:id/resolve", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { note?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // note opsional
+  }
+  const r = await resolveTicket(c.req.param("id"), body.note);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/maintenance/eligible-units", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const units = await listEligibleUnits();
+  return c.json({ count: units.length, units });
+});
+
+app.post("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: {
+    installation_unit_id?: string;
+    interval_bulan?: number;
+    reference_date?: string;
+    teknisi_id?: string;
+    teknisi_name?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.interval_bulan || body.interval_bulan <= 0) {
+    return c.json({ error: "installation_unit_id + interval_bulan (>0) wajib" }, 400);
+  }
+  const r = await createSchedule({
+    installation_unit_id: body.installation_unit_id,
+    interval_bulan: body.interval_bulan,
+    reference_date: body.reference_date,
+    teknisi_id: body.teknisi_id,
+    teknisi_name: body.teknisi_name,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/maintenance", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const schedules = await listSchedules(c.req.query("status") || undefined);
+  return c.json({ count: schedules.length, schedules });
+});
+
+app.get("/maintenance/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const s = await getScheduleById(c.req.param("id"));
+  return s ? c.json(s) : c.json({ error: "schedule tidak ditemukan" }, 404);
+});
+
+app.post("/maintenance/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { catatan?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    // catatan opsional
+  }
+  const r = await markDone(c.req.param("id"), body.catatan);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// ── Instalasi Alat Lifecycle (F22, AFTERSALES) — checklist 5 langkah sekuensial:
+// PO control → SJ → Teknisi assign → Training done → BAST. ──
+app.get("/teknisi-capacity", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const teknisi = await listTeknisiCapacity();
+  return c.json({ count: teknisi.length, teknisi });
+});
+
+app.patch("/teknisi-capacity/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Roster dari master_user (246): di sini cuma kapasitas yang bisa diubah.
+  let body: { max_concurrent_jobs?: number; nama?: unknown; wa_number?: unknown; wilayah?: unknown; aktif?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateTeknisiCapacity(c.req.param("id"), body);
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 200);
+});
+
+app.get("/readiness-board", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const board = await getReadinessBoard();
+  return c.json({ count: board.length, board });
+});
+
+app.post("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { installation_unit_id?: string; teknisi_id?: string; scheduled_date?: string; note?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.installation_unit_id || !body.scheduled_date) {
+    return c.json({ error: "installation_unit_id + scheduled_date wajib" }, 400);
+  }
+  const r = await createInstallSchedule({
+    installation_unit_id: body.installation_unit_id,
+    teknisi_id: body.teknisi_id,
+    scheduled_date: body.scheduled_date,
+    note: body.note,
+  });
+  return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
+});
+
+app.get("/install-schedule", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listInstallSchedule(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
+app.post("/install-schedule/:id/done", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "done");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/install-schedule/:id/cancel", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await updateScheduleStatus(c.req.param("id"), "cancelled");
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { teknisi_id?: string; report_type?: string; body?: string; installation_unit_id?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.report_type || !body.body?.trim()) return c.json({ error: "report_type + body wajib" }, 400);
+  if (!["install", "servis", "training", "kalibrasi"].includes(body.report_type)) {
+    return c.json({ error: "report_type harus install|servis|training|kalibrasi" }, 400);
+  }
+  // Kolomnya uuid — id kosong/ngawur bikin Postgres melempar 22P02 mentah
+  // (bukan crash, tapi pesannya beda dgn pre-check serupa di F22 assign-teknisi).
+  // Disaring dulu supaya pesannya konsisten & bisa dibaca orang (QA 2026-09-07).
+  const teknisiId = body.teknisi_id?.trim() || null;
+  if (teknisiId && !/^[0-9a-f-]{36}$/i.test(teknisiId)) {
+    return c.json({ error: "teknisi_id bukan uuid yang sah — pilih dari daftar, jangan diketik" }, 400);
+  }
+  const r = await createTeknisiReport({
+    teknisi_id: teknisiId,
+    report_type: body.report_type,
+    body: body.body,
+    source: "manual",
+    installation_unit_id: body.installation_unit_id,
+  });
+  return c.json(r, 201);
+});
+
+app.get("/teknisi-reports", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
+  return c.json({ count: rows.length, rows });
+});
+
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
 
 // F150 tahap 1 — revenue netto per area (cabang + region) vs periode sebelumnya.
@@ -5088,7 +5491,8 @@ app.get("/accurate/:entity", async (c) => {
   const limit = Math.min(Math.max(Number(c.req.query("limit")) || 100, 1), 10000);
   // ?q= → cari by no/nama DI DB (sumber dropdown pilih-dari-katalog, mis. form SPH).
   // Tanpa q, perilaku lama dipertahankan: potongan terbaru by last_synced_at.
-  const rows = await listMirror(entity, limit, c.req.query("q") || undefined);
+  // ?jenis=alat → hanya item berkode alat (IDS./ADR.) — pengisi Instalasi Alat.
+  const rows = await listMirror(entity, limit, c.req.query("q") || undefined, { hanyaAlat: c.req.query("jenis") === "alat" });
   return c.json({ entity, count: rows.length, rows });
 });
 
