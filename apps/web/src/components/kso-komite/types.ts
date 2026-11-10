@@ -110,6 +110,8 @@ export interface IsianCprr {
 export interface Lampiran {
   id: number; wa_message_id: string | null; lolos: boolean; cocok: Record<string, CocokIsian> | null; isian: IsianCprr | null;
   galat: string | null; ok: boolean; peringatan: string[] | null; tanggal: string | null; dibuat_at: string; ada_berkas: boolean;
+  /** 305: PDF tidak disimpan sesudah dibaca — kapan diunggah (= dibuat_at), kapan dibaca final, berkas sudah dihapus. */
+  diunggah_at?: string | null; dibaca_at?: string | null; berkas_dihapus?: boolean;
 }
 
 export interface ItemKurang { kunci: string; teks: string; contoh: string }

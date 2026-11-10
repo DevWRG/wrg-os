@@ -33,6 +33,8 @@ import {
   type ItemKurang, type SaranAlat, type SaranFaskes,
 } from "./kso-format.js";
 import { NAMA_GERBANG, alasanGerbang } from "./kso-saring.js";
+import { bereskanBerkasLampiran, lampiranTerbaca } from "./kso-lampiran-berkas.js";
+import { mediaRootWa } from "../media-akses.js";
 
 // "*#KSO YA*" disalin dari balasan bot yang ditebalkan WhatsApp: tanda format di awal baris diabaikan.
 export const KSO_LINE = /^\s*[*_~]*\s*#\s*kso\b/i;
@@ -396,13 +398,15 @@ function contohPdf(d: Pick<DraftTampil, "lampiran">, ref: string): string {
  */
 export function formatBalasanGerbang(
   d: DraftTampil,
-  o: { tanpaTipe?: string[]; catatan?: string[]; diajukan?: string; belumBisaKirim?: boolean; alatPdf?: string } = {},
+  o: { tanpaTipe?: string[]; catatan?: string[]; diajukan?: string; belumBisaKirim?: boolean; alatPdf?: string; lampiranDiterima?: boolean } = {},
 ): string {
   const ref = `D${d.id}`;
   const gs = gerbangUntukAm(d);
   const out: string[] = [
     `*${ref} · ${namaTampilFaskes(d.faskes)}${d.faskes_baru ? " (faskes baru)" : ""} · ${d.alat_kode}*`,
-    `${gs.filter((g) => g.hijau).length} dari 7 gerbang hijau`, "",
+    `${gs.filter((g) => g.hijau).length} dari 7 gerbang hijau`,
+    // 305: PDF terbaca (atau pasti tak terpakai) = sudah diunggah; tanpa angka, tanpa kabar berkas dihapus
+    ...(o.lampiranDiterima ? ["Lampiran simulator diterima ✅"] : []), "",
   ];
   for (const g of [...gs.filter((x) => x.hijau), ...gs.filter((x) => !x.hijau)]) {
     const alasan = g.alasan ? ALASAN_WA[g.alasan] ?? g.alasan : null;
@@ -667,7 +671,8 @@ async function bacaLampiran(l: LampiranWa): Promise<OcrLampiran> {
   try {
     buf = await readFile(l.media_path);
   } catch {
-    return { lampiran: l, hasil: { ok: false, galat: "pdf-rusak" }, sha256: null };
+    // berkas belum/tidak ada di MEDIA_ROOT — gagal teknis (305: tak dianggap terunggah, bisa dibaca ulang)
+    return { lampiran: l, hasil: { ok: false, galat: "berkas-tidak-ada" }, sha256: null };
   }
   const sha256 = createHash("sha256").update(buf).digest("hex");
   const r = await callAi("/kso/ocr-cprr", { pdf_base64: buf.toString("base64") }, { timeoutMs: 120_000 });
@@ -735,7 +740,8 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
   const alias = await aliasAnalyzer();
   const nama = await namaPengirim(k.am_id, k);
   if (k.perintah.nama) nama.unshift(k.perintah.nama);
-  return sebagaiBot(async (tx) => {
+  let lampiranId: number | null = null;
+  const r = await sebagaiBot(async (tx): Promise<Hasil> => {
     const katalog = await muatKatalog(tx, alias);
     const awal = await bacaDraft(tx, id);
     if (!awal) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", rencana_id: id } };
@@ -748,9 +754,10 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
     let lampiranHasil: Record<string, unknown> | undefined;
     if (o.ocr) {
       const cek = cocokkanLampiran(o.ocr.hasil, bahan(awal), katalog);
-      await tx`select kso.app_bot_catat_lampiran(${id}, ${k.am_id}, ${o.ocr.lampiran.wa_message_id}, ${o.ocr.lampiran.media_path}, ${o.ocr.sha256},
+      const [c] = await tx`select kso.app_bot_catat_lampiran(${id}, ${k.am_id}, ${o.ocr.lampiran.wa_message_id}, ${o.ocr.lampiran.media_path}, ${o.ocr.sha256},
                  ${tx.json(o.ocr.hasil as never)}, ${tx.json(cek.cocok as never)}, ${cek.lolos}, ${cek.hari_kerja},
-                 ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
+                 ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})::int as id`;
+      lampiranId = c?.id == null ? null : Number(c.id);
       // cek.info (peringatan hitungan OCR, harga pesaing) tidak dikirim ke AM — balasan hanya gerbang + kurang
       lampiranHasil = { lolos: cek.lolos, beda: cek.beda.length };
       // 303/304: faskes baru tanpa kota ATAU kota masih default area AM → kota dari PDF Simulator (nama faskes PDF sudah
@@ -791,7 +798,8 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
     }
     const catatan = [...(o.baru && d.faskes_baru ? catatanFaskesBaru(d) : []), ...(o.catatan ?? [])];
     if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
-    const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan, alatPdf: o.alatPdf });
+    const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan, alatPdf: o.alatPdf,
+                                              lampiranDiterima: !!o.ocr && lampiranTerbaca(o.ocr.hasil) });
     return {
       balasan,
       hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci), ...(d.faskes_baru ? { faskes_baru: d.faskes_id } : {}),
@@ -800,6 +808,20 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
                ...(galatAjukan ? { galat_ajukan: galatAjukan.slice(0, 200) } : {}) },
     };
   });
+  // 305: PDF Simulator tidak disimpan — sesudah hasil baca TERSIMPAN (commit), berkas yang bacaannya final dihapus
+  if (o.ocr) {
+    const b = await bersihkanSesudahCatat(k.am_id, lampiranId, o.ocr);
+    if (b.aksi === "hapus") r.hasil = { ...r.hasil, berkas_lampiran: b.ditandai ? "dihapus" : b.berkas };
+  }
+  return r;
+}
+
+/** 305: hapus berkas PDF yang sudah dibaca + tandai di DB. Tak pernah melempar. */
+async function bersihkanSesudahCatat(amId: string, lampiranId: number | null, ocr: OcrLampiran) {
+  return bereskanBerkasLampiran(
+    { lampiranId, media_path: ocr.lampiran.media_path, sha256: ocr.sha256, hasil: ocr.hasil },
+    { root: mediaRootWa(), tandai: (lid) => sebagaiBot((tx) => tx`select kso.app_bot_tandai_berkas_dihapus(${lid}, ${amId})`) },
+  );
 }
 
 /** PDF yang datang terpisah (sesudah draftnya ada) — dipanggil inbound dari baris dokumen. */
@@ -1272,10 +1294,16 @@ async function lengkapi(k: KsoKonteks, x: IsianFormat, ref: string, tidakTerbaca
   }
 }
 
-/** Pesan PDF (wa_message.message_id) yang sudah tercatat sebagai lampiran usulan mana pun — supaya satu PDF diproses sekali. */
-export async function lampiranSudahDicatat(waIds: string[]): Promise<Set<string>> {
+/**
+ * Pesan PDF (wa_message.message_id) yang sudah tercatat sebagai lampiran usulan mana pun — supaya satu PDF diproses sekali.
+ * hanyaDibaca (305): hanya yang sudah terbaca final — PDF yang gagal teknis (berkas disimpan) boleh dipasangkan lagi
+ * oleh "#KSO D12" berikutnya, jadi bisa dibaca ulang.
+ */
+export async function lampiranSudahDicatat(waIds: string[], o: { hanyaDibaca?: boolean } = {}): Promise<Set<string>> {
   if (!waIds.length) return new Set();
-  const rows = await sebagaiBot((tx) => tx`select distinct wa_message_id from kso.rencana_lampiran where wa_message_id = any(${waIds})`);
+  const hanya = o.hanyaDibaca === true;
+  const rows = await sebagaiBot((tx) => tx`select distinct wa_message_id from kso.rencana_lampiran
+                                            where wa_message_id = any(${waIds}) and (${!hanya} or dibaca_at is not null)`);
   return new Set(rows.map((r) => String(r.wa_message_id)));
 }
 

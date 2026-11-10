@@ -176,6 +176,36 @@ tanpa LLM). Jalur teks bebas (`/kso/ekstrak`) dan voice note dimatikan di API (a
   `lampiran_terakhir`, `lampiran[]`, `kurang[]`; berkas PDF `GET /kso-komite/:tab/rencana/:id/lampiran/:lid` (izin tab + RLS).
 - Uji: `scripts/qa/kso-komite/918_uji_fee_lampiran.sql`, `apps/api/src/repo/kso-format.test.ts`.
 
+### PDF lampiran tidak disimpan (migrasi 305, 10 Nov 2026)
+
+Keputusan product owner: *"PDF lampiran simulator gk perlu simpan, cukup baca aja pakai tesseract, dan tandai kalo
+lampiran simulator udah di upload — biar server gk penuh."* Bridge openclaw menulis PDF WA ke `MEDIA_ROOT`
+(`~/.openclaw/media/inbound/…`); sesudah dibaca `/kso/ocr-cprr` dan hasilnya TERSIMPAN (commit), API
+(`kso-lampiran-berkas.ts`, dipanggil dari `selesaikan` di `kso-intake.ts`) memutuskan:
+
+| Hasil baca | Berkas | DB |
+|---|---|---|
+| `ok = true` | dihapus | `dibaca_at` terisi (= sudah diunggah) → `berkas_dihapus_at` |
+| `pdf-rusak` · `bukan-cprr` · `cprr-tidak-terbaca` (pasti tak terpakai) | dihapus | sama |
+| `ocr-tidak-tersedia` · `render-tidak-tersedia` · `ocr-timeout` · `ocr-gagal` · `ai-tak-terjangkau` (HTTP/timeout) · `dry-run` · `berkas-tidak-ada` · galat tak dikenal | **disimpan** | baris tercatat, `dibaca_at` kosong — PDF yang sama boleh dipasangkan lagi oleh `#KSO D12` berikutnya (dibaca ulang) |
+
+- Pagar hapus (semua wajib, kalau tidak berkas dibiarkan + peringatan log): ekstensi `.pdf`, bukan symlink, berkas biasa,
+  `realpath` di dalam `realpath(MEDIA_ROOT)` (root sama dengan rute baca lampiran, `mediaRootWa()`), sha256 isi = sha256 yang
+  barusan dibaca. ENOENT = sudah tak ada (ditandai). Tak pernah melempar ke alur balasan WA.
+- `media_path` dibiarkan (jejak audit); "ada berkas" = `media_path is not null and berkas_dihapus_at is null`.
+  `wa_message.media_path` juga dibiarkan: baris PDF sudah diproses (`processed_at`) dan satu PDF dicatat sekali per
+  `wa_message_id`, jadi tak ada pengambilan ulang. `app_bot_catat_lampiran` tidak menimpa bacaan final dengan gagal teknis.
+- Fungsi: `kso.lampiran_terbaca(jsonb)`, `kso.app_bot_catat_lampiran` (isi 302 + `dibaca_at`),
+  `kso.app_bot_tandai_berkas_dihapus(lampiran, am)` (peran `bot_wa`, milik AM, hanya lampiran terbaca, idempoten).
+- WA: PDF terbaca → baris "Lampiran simulator diterima ✅" di bawah hitungan gerbang (tanpa angka, tanpa kabar hapus).
+- Dashboard: `lampiran[]` memuat `ada_berkas` (false sesudah dihapus), `berkas_dihapus`, `diunggah_at` (= `dibuat_at`),
+  `dibaca_at`. Rute berkas → **410** + pesan ramah bila sudah dihapus. Layar: tombol "Buka PDF" hanya bila berkas masih ada;
+  selain itu lencana "Lampiran simulator sudah diunggah · dibaca <tanggal jam>" + perbandingan PDF vs WA dari hasil baca.
+- Bersih-bersih PDF lama (sekali jalan, di Mac mini): `bash scripts/ops/kso-hapus-berkas-lampiran.sh` (dry-run bawaan,
+  daftar saja) → `--apply` (hapus + tandai lewat `kso.app_bot_tandai_berkas_dihapus`). Hanya baris `dibaca_at` terisi
+  (diisi migrasi 305 dari `hasil_ocr`), pagar sama. Env `DB` (bawaan `wrg_os_prod`), `MEDIA_ROOT`.
+- Uji: `scripts/qa/kso-komite/921_uji_lampiran_tanpa_simpan.sql`, `apps/api/src/repo/kso-lampiran-berkas.test.ts`.
+
 ## Balasan WA = 7 gerbang · margin & HPP tak terlihat di luar yang berhak (10 Nov 2026)
 
 Keputusan product owner. **A.** Semua balasan WA ke AM yang menunjukkan keadaan draft (baru, susulan, lampiran
