@@ -18,7 +18,7 @@
 
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
-import { GalatKso, bacaPengguna, type PenggunaKso } from "./kso-komite.js";
+import { GalatKso, bacaPengguna, bottomLineTerbatas, konteksAngka, type KonteksAngka, type PenggunaKso } from "./kso-komite.js";
 import { master as ksoMaster } from "./kso.js";
 
 export const FITUR_BOTTOMLINE = "kso-komite-bottomline";
@@ -28,7 +28,13 @@ export const KEPUTUSAN = ["Setuju", "Ubah", "Tahan penempatan baru", "Tarik / re
 
 export interface IzinBottomLine { lihat: boolean; putus: boolean; angka: boolean; realLihat: boolean; realCatat: boolean }
 
-export function izinBottomLine(u: PenggunaKso, eff: Effective): IzinBottomLine {
+const TANPA_IZIN: IzinBottomLine = { lihat: false, putus: false, angka: false, realLihat: false, realCatat: false };
+
+/**
+ * `k` (keputusan product owner 10 Nov): AM, HOD Sales, dan Admin Sales TIDAK melihat Bottom Line (biaya, HPP, GPM) walau
+ * grupnya dicentang kso-komite-bottomline lihat — ditegakkan di kode, tidak bergantung pada isi Akses Grup.
+ */
+export function izinBottomLine(u: PenggunaKso, eff: Effective, k?: KonteksAngka): IzinBottomLine {
   const lama = u.role === "direktur" && eff.groups.length > 0;
   const boleh = (f: string, a: Action) => {
     if (eff.superuser) return true;
@@ -39,6 +45,7 @@ export function izinBottomLine(u: PenggunaKso, eff: Effective): IzinBottomLine {
   const angka = boleh(FITUR_ANGKA, "edit");
   const realLihat = boleh(FITUR_REAL, "view");
   const realCatat = boleh(FITUR_REAL, "edit");
+  if (k && bottomLineTerbatas({ ...k, pengisiAngka: k.pengisiAngka || angka || realLihat || realCatat })) return { ...TANPA_IZIN };
   return {
     lihat: boleh(FITUR_BOTTOMLINE, "view") || angka || realLihat || realCatat,
     putus: boleh(FITUR_BOTTOMLINE, "edit"),
@@ -151,7 +158,8 @@ const n = (v: unknown): number | null => (v == null || v === "" ? null : Number.
 async function izin(userId: string) {
   const u = await bacaPengguna(userId);
   if (!u) throw new GalatKso(401, "Sesi tidak dikenal.");
-  const i = izinBottomLine(u, await effectivePermissions(userId));
+  const eff = await effectivePermissions(userId);
+  const i = izinBottomLine(u, eff, await konteksAngka(u, eff));
   if (!i.lihat) throw new GalatKso(403, "Tidak punya akses ke Bottom Line Alat.");
   return { u, ...i };
 }
@@ -159,8 +167,9 @@ async function izin(userId: string) {
 /** Izin tab ini — dipakai halaman untuk menampilkan tab (API tetap menentukan tiap permintaan). */
 export async function aksesBottomLine(userId: string): Promise<IzinBottomLine> {
   const u = await bacaPengguna(userId);
-  if (!u) return { lihat: false, putus: false, angka: false, realLihat: false, realCatat: false };
-  return izinBottomLine(u, await effectivePermissions(userId));
+  if (!u) return { ...TANPA_IZIN };
+  const eff = await effectivePermissions(userId);
+  return izinBottomLine(u, eff, await konteksAngka(u, eff));
 }
 
 interface Param { tenor: number; zona: Zona; hariKerja: number }

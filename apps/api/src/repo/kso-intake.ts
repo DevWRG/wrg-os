@@ -26,10 +26,11 @@ import { callAi } from "../ai.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { cariAkun } from "./interaction.js";
 import {
-  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bentukNama, cariAlat, cocokkanLampiran, daftarKurang, isianLengkapiDariFormat,
+  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bedaDariCocok, bentukNama, cariAlat, cocokkanLampiran, daftarKurang, isianLengkapiDariFormat,
   namaCocok, teksGalatOcr,
   type AlatKatalog, type CocokIsian, type DataKurang, type HasilAlat, type HasilOcrCprr, type IsianFormat, type ItemKurang, type SaranAlat,
 } from "./kso-format.js";
+import { NAMA_GERBANG, alasanGerbang } from "./kso-saring.js";
 
 export const KSO_LINE = /^\s*#\s*kso\b/i;
 export const KSO_BOT_USER = "bot-wa";
@@ -113,10 +114,10 @@ export const KSO_BANTUAN =
   "6. FEE : 5% (tulis 0 bila tidak ada fee)\n" +
   "7. KOMPETITOR : MEREK-MODEL-HARGA (atau TIDAK ADA)\n" +
   "8. KLAUSUL : TIDAK (atau ADA - isi klausulnya)\n" +
-  "9. LAMPIRAN : ADA — kirim PDF Simulator KSO (KSO CPRR) di chat ini dalam 10 menit\n" +
+  "9. LAMPIRAN : ADA — kirim PDF Simulator KSO di chat ini dalam 10 menit\n" +
   "Boleh ditambah di pesan yang sama: PENDUKUNG: dr. Contoh, kepala instalasi lab · " +
   "STATUS UNIT: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal · HARI KERJA: 26 · JUMLAH: 1 · " +
-  "ALASAN: alasan strategis (wajib bila GPM zona Direktur)\n\n" +
+  "ALASAN: alasan strategis (wajib bila diminta bot)\n\n" +
   "Melengkapi/koreksi: #KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)\n" +
   "PDF menyusul: kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit.\n" +
   "Data lengkap + PDF cocok → diajukan otomatis. Mengajukan manual: #KSO kirim D12\n" +
@@ -148,7 +149,7 @@ export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/GRUP_DIBEKUKAN/.test(pesan)) return "Grup faskes ini sedang dibekukan Direksi (SK Pasal 14) — belum bisa diproses.";
   if (/TRANSISI_TIDAK_SAH/.test(pesan)) return `Aksi itu tidak berlaku untuk status ${ref} sekarang.`;
   if (/ALASAN_STRATEGIS_WAJIB/.test(pesan))
-    return `GPM di bawah batas Forum (zona Direktur) — tulis alasan strategisnya dulu.\nJawab: #KSO ${ref} ALASAN: ISI ALASAN`;
+    return `Usulan ini wajib alasan strategis — tulis dulu.\nJawab: #KSO ${ref} ALASAN: ISI ALASAN`;
   return "Maaf, permintaan belum bisa diproses. Coba lagi, atau hubungi admin.";
 }
 
@@ -207,40 +208,11 @@ export interface AngkaGpm {
   harga_am: number | null; harga_hod: number | null; harga_forum: number | null; volume_min_forum: number | null;
 }
 
-const persen = (x: number) => `${(x * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
-const bulat = (x: number) => Math.ceil(x / 100) * 100;
-const angkaFee = (f: number) => f.toLocaleString("id-ID", { maximumFractionDigits: 2 });
 
 /** Harga bersih sesudah fee (302): harga × (1 − fee/100). */
 export function hargaBersih(harga: number | null | undefined, fee: number | null | undefined): number | null {
   if (harga == null) return null;
   return harga * (1 - (fee ?? 0) / 100);
-}
-
-/** Blok hitungan GPM untuk balasan draft (Pedoman: AM menerima zona SEBELUM menekan kirim). */
-export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harga_per_test"> & { fee_persen?: number | null }): string[] {
-  const a = d.angka;
-  if (!a) return [];
-  if (a.hd) return ["\nHitungan: Hemodialisa dihitung dengan Kalkulator HD — selalu diputus Direktur."];
-  if (a.gpm == null) return [`\nHitungan GPM belum bisa: ${a.catatan ?? "data belum lengkap"}.`];
-  const fee = d.fee_persen ?? 0;
-  const out = [`\nGPM deal ${persen(a.gpm)}${a.biaya_per_tes != null ? ` (biaya ${rp(a.biaya_per_tes)}/tes termasuk cicilan alat)` : ""}` +
-    (fee > 0 ? ` — dihitung dari harga bersih sesudah fee ${angkaFee(fee)}%` : "")];
-  if (a.harga_am != null && a.harga_hod != null && a.harga_forum != null && d.volume_estimasi)
-    out.push(`· Harga minimum di ${d.volume_estimasi} tes/bln${fee > 0 ? ` (harga diminta, sudah termasuk fee ${angkaFee(fee)}%)` : ""}: ` +
-      `AM ${rp(bulat(a.harga_am))} · 2 HOD ${rp(bulat(a.harga_hod))} · Forum ${rp(bulat(a.harga_forum))}`);
-  if (d.harga_per_test != null) {
-    const v = a.volume_min_forum, vol = d.volume_estimasi ?? 0;
-    // Harga yang nyaris sama dengan biaya reagen membuat penyebut rumus mendekati nol → volume
-    // minimum meledak (mis. 75.139 tes/bln). Di atas 10× volume usulan ditulis "tidak realistis",
-    // sama dengan layar detail rencana (rencana-dialog.tsx HargaZona).
-    out.push(v == null
-      ? `· Di ${rp(d.harga_per_test)} zona Forum tidak tercapai di volume berapa pun — biaya reagen terlalu tinggi`
-      : vol > 0 && v > vol * 10
-        ? `· Di ${rp(d.harga_per_test)} zona Forum baru tercapai di atas 10× volume usulan — tidak realistis; naikkan harga atau turunkan biaya`
-        : `· Volume minimum zona Forum di ${rp(d.harga_per_test)}: ${Math.ceil(v)} tes/bln`);
-  }
-  return out;
 }
 
 /** Label zona jalur forum di balasan "#KSO kirim". Usulan zona dasar Forum yang naik ke Direktur HANYA karena
@@ -263,19 +235,21 @@ export function volumeDariTeks(t: string): number | null {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
-const LABEL_ZONA_BOT: Record<string, string> = { am: "AM", hod: "2 HOD", forum: "Forum", direktur: "Direktur" };
-
-/** Balasan kso.volume_turun (278): toleransi · dihitung ulang · ditarik ke forum. Murni — diuji tanpa DB. */
+/**
+ * Balasan kso.volume_turun (278): toleransi · dihitung ulang · ditarik ke forum. Murni — diuji tanpa DB.
+ * Ke AM: TANPA harga mandat / GPM (keputusan 10 Nov) — angka mandat baru dipegang Sekretariat/Admin Sales yang
+ * menerbitkan penawaran. Yang dibacakan hanya volume (angka AM sendiri) dan masa berlaku.
+ */
 export function balasanVolumeTurun(ref: string, h: Record<string, unknown>): string {
   const n = (k: string) => (h[k] == null ? null : Number(h[k]));
   const tes = (v: number | null) => (v == null ? "—" : v.toLocaleString("id-ID"));
   if (h.hasil === "toleransi")
-    return `${ref}: volume ${tes(n("volume_baru"))} tes/bln masih dalam toleransi (≥ ${tes(n("volume_batas"))}, 80% dari ${tes(n("volume_dasar"))}). Mandat tetap.`;
-  const turun = `${ref}: volume turun dari ${tes(n("volume_dasar"))} ke ${tes(n("volume_baru"))} tes/bln (> 20%)`;
+    return `${ref}: volume ${tes(n("volume_baru"))} tes/bln masih dalam toleransi (batas ${tes(n("volume_batas"))} tes/bln). Mandat tetap.`;
+  const turun = `${ref}: volume turun dari ${tes(n("volume_dasar"))} ke ${tes(n("volume_baru"))} tes/bln (melewati batas toleransi)`;
   if (h.hasil === "dihitung_ulang")
-    return `${turun} — mandat dihitung ulang. Berlaku s/d ${String(h.berlaku_sampai)}: harga pembuka ${rp(n("pembuka"))}, target ${rp(n("target"))}, `
-      + `batas bawah ${rp(n("lantai"))}/test, volume minimum ${tes(n("volume_minimum"))} tes/bln. Penawaran berikutnya pakai angka ini.`;
-  return `${turun} — ${h.tanpa_angka ? "angka GPM belum lengkap, mandat tak bisa dihitung ulang" : `GPM turun ke zona ${LABEL_ZONA_BOT[String(h.zona)] ?? String(h.zona)}`}. `
+    return `${turun} — mandat dihitung ulang, berlaku s/d ${String(h.berlaku_sampai)}. `
+      + "Penawaran berikutnya diterbitkan Sekretariat/Admin Sales dengan mandat baru — jangan pakai harga lama.";
+  return `${turun} — ${h.tanpa_angka ? "mandat tak bisa dihitung ulang otomatis" : "usulan perlu diputus ulang"}. `
     + "Mandat lama gugur; usulan masuk agenda forum berikutnya. Jangan lanjutkan penawaran dengan harga lama.";
 }
 
@@ -293,25 +267,6 @@ export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "k
   return LEVEL[lv];
 }
 
-const TEKS_ZONA: Record<"am" | "hod" | "forum" | "direktur", string> = {
-  am: "ZONA AM: lolos tanpa forum, mandat otomatis terbit",
-  hod: "ZONA 2 HOD: jalur cepat, dua HOD memutus maks. 1 hari kerja",
-  forum: "ZONA FORUM: agenda forum Selasa/Kamis, Direktur memutus",
-  direktur: "ZONA DIREKTUR: lewat forum, Direktur memutus — wajib alasan strategis",
-};
-
-const IKON: Record<string, string> = { hijau: "✅", merah: "❌", belum: "❔" };
-const LABEL_KLAUSUL: Record<string, string> = {
-  eksklusivitas: "eksklusivitas",
-  jaminan_volume: "jaminan volume",
-  alat_jatuh: "alat jadi milik RS",
-  tanpa_eskalasi: "tanpa eskalasi harga",
-  tanpa_lapor: "tanpa lapor test",
-  tanpa_denda: "tanpa denda",
-  draft_rs: "draft PKS dari RS",
-  lainnya: "klausul lain",
-};
-
 /** Data "Belum lengkap" dari draft yang tampil (satu sumber dengan dashboard). */
 export function kurangDraft(d: DraftTampil): ItemKurang[] {
   const x: DataKurang = { ...d, angka: d.angka ? { hd: d.angka.hd } : null,
@@ -319,78 +274,84 @@ export function kurangDraft(d: DraftTampil): ItemKurang[] {
   return daftarKurang(x, `D${d.id}`);
 }
 
-/** Balasan draft: nomor · isian · dari sistem · GPM · gerbang · belum lengkap (atau hasil pengajuan otomatis). */
-export function formatBalasanDraft(
+/** Nama pendek isian kurang untuk baris "Kurang:" (kunci = ItemKurang.kunci). */
+const KURANG_PENDEK: Record<string, string> = {
+  tes: "tes/bulan", masa: "masa KSO", harga: "permintaan harga", fee: "fee", kompetitor: "kompetitor", klausul: "klausul",
+  lampiran: "lampiran PDF", pendukung: "pendukung", status_unit: "status unit", sumber: "sumber volume", alasan: "alasan",
+};
+
+/** Satu baris gerbang di balasan WA: biner HIJAU / MERAH + alasan tanpa angka. */
+export interface BarisGerbangWa { no: number; nama: string; hijau: boolean; alasan: string | null }
+
+/** Tujuh gerbang untuk AM: 'belum' = MERAH; KLAUSUL belum dijawab = gerbang 7 MERAH. Tak pernah memuat angka. */
+export function gerbangUntukAm(d: Pick<DraftTampil, "gerbang" | "kolom_dinyatakan">): BarisGerbangWa[] {
+  const klausulBelum = !d.kolom_dinyatakan.includes("klausul");
+  return [1, 2, 3, 4, 5, 6, 7].map((no) => {
+    const g = d.gerbang.find((x) => Number(x.no) === no);
+    if (no === 7 && klausulBelum) return { no, nama: NAMA_GERBANG[no], hijau: false, alasan: "belum dijawab" };
+    if (!g) return { no, nama: NAMA_GERBANG[no], hijau: false, alasan: "belum ada data" };
+    const hijau = g.status === "hijau";
+    return { no, nama: NAMA_GERBANG[no], hijau, alasan: hijau ? null : alasanGerbang(no, g.status, g.nilai) };
+  });
+}
+
+/**
+ * Balasan WA ke AM untuk semua keadaan draft (baru, lengkapi/susulan, lampiran diproses, "#KSO D62", kirim belum
+ * lengkap). Bentuk disetujui product owner 10 Nov:
+ *
+ *   D63 · RS CONTOH · Z50 · 4/7 HIJAU
+ *
+ *   1. GPM deal              ❌ MERAH
+ *   2. Volume terbukti       ❌ MERAH (belum ada bukti)
+ *   …
+ *   Kurang: lampiran PDF, pendukung, status unit, alasan
+ *   (contoh: #KSO D63 PENDUKUNG: ...)
+ *
+ * TANPA angka margin/HPP/harga mandat (keputusan B 10 Nov). Diajukan otomatis → baris Kurang diganti hasil jalur.
+ */
+export function formatBalasanGerbang(
   d: DraftTampil,
-  o: { baru: boolean; nama: string; tanpaTipe?: string[]; catatan?: string[]; alatTeks?: string; infoLampiran?: string[]; diajukan?: string },
+  o: { tanpaTipe?: string[]; catatan?: string[]; diajukan?: string; belumBisaKirim?: boolean } = {},
 ): string {
   const ref = `D${d.id}`;
-  const out: string[] = [];
-  out.push(`Draft ${ref} ${o.baru ? "dibuat" : "diperbarui"}, ${o.nama}.`);
+  const gs = gerbangUntukAm(d);
+  const out: string[] = [`${ref} · ${d.faskes} · ${d.alat_kode} · ${gs.filter((g) => g.hijau).length}/7 HIJAU`, ""];
+  for (const g of gs)
+    out.push(`${`${g.no}. ${g.nama}`.padEnd(25)}${g.hijau ? "✅ HIJAU" : `❌ MERAH${g.alasan ? ` (${g.alasan})` : ""}`}`);
+  out.push("");
 
-  out.push("\nIsian (periksa, kamu yang bertanggung jawab atas isinya):");
-  out.push(`· Faskes: ${d.faskes}${d.cabang ? ` (${d.cabang})` : ""}`);
-  const asal = o.alatTeks && o.alatTeks.trim().toUpperCase() !== d.alat_kode.toUpperCase()
-    ? ` (dari "${o.alatTeks.trim()}" → ${d.alat_kode}, ${d.kategori})` : "";
-  out.push(`· Alat: ${d.jumlah} × ${d.alat}${asal}${d.kolom_dinyatakan.includes("jumlah") ? "" : ` — dianggap ${d.jumlah} unit (koreksi: #KSO ${ref} JUMLAH: 2)`}`);
-  if (d.volume_estimasi != null) out.push(`· Tes: ${d.volume_estimasi} test/bulan`);
-  if (d.volume_sumber) out.push(`· Sumber volume: "${d.volume_sumber}"`);
-  if (d.tenor_bulan != null) out.push(`· Masa KSO: ${d.tenor_bulan} bulan`);
-  if (d.harga_per_test != null) out.push(`· Permintaan harga: ${rp(d.harga_per_test)}/test`);
-  if (d.fee_persen != null)
-    out.push(d.fee_persen > 0
-      ? `· Fee: ${angkaFee(d.fee_persen)}% → harga bersih ${rp(hargaBersih(d.harga_per_test, d.fee_persen))}/test (dasar GPM)`
-      : "· Fee: tidak ada");
-  if (d.kolom_dinyatakan.includes("kompetitor_alat"))
-    out.push(`· Kompetitor: ${d.kompetitor_alat ?? "-"}${d.harga_pesaing != null ? ` (${rp(d.harga_pesaing)}/test)` : ""}`);
-  if (d.kolom_dinyatakan.includes("klausul"))
-    out.push(`· Klausul: ${d.klausul.length ? `ada — ${d.klausul_detail ?? d.klausul.map((k) => LABEL_KLAUSUL[k] ?? k).join(", ")}` : "tidak ada"}`);
-  else if (d.klausul_ada) out.push("· Klausul: ada — isinya belum ditulis");
-  out.push(`· Lampiran: ${!d.lampiran ? "belum ada PDF" : d.lampiran.lolos
-    ? `✅ PDF Simulator cocok${d.lampiran.tanggal ? ` (${d.lampiran.tanggal})` : ""}` : "❌ PDF belum cocok (lihat di bawah)"}`);
-  // 282: hari kerja ikut menentukan GPM (reagen harian × hari kerja) — selalu dibacakan supaya AM bisa koreksi
-  if (d.hari_kerja != null) out.push(`· Hari kerja alat: ${d.hari_kerja} hari/bulan`);
-  else if (d.hari_kerja_default != null)
-    out.push(`· Hari kerja alat: ${d.hari_kerja_default} hari/bulan (default — koreksi: #KSO ${ref} HARI KERJA: 26)`);
-  if (d.unit_status) out.push(`· Status unit: ${d.unit_status.replace(/_/g, " ")}`);
-  for (const p of d.pendukung) out.push(`· Pendukung: ${p.nama} (${p.tipe.replace(/_/g, " ")})`);
-  if (d.alasan_strategis) out.push(`· Alasan strategis: ${d.alasan_strategis}`);
-
-  const g = (no: number) => d.gerbang.find((x) => x.no === no);
-  const sistem = [g(1), g(3), g(5)].filter((x) => x?.nilai);
-  if (sistem.length) {
-    out.push("\nDari sistem:");
-    const label: Record<number, string> = { 1: "GPM deal", 3: "Relokasi", 5: "Piutang faskes" };
-    for (const x of sistem) out.push(`· ${label[x!.no]}: ${x!.nilai}`);
-  }
-
-  out.push(...blokGpm(d));
-
-  const hijau = d.gerbang.filter((x) => x.status === "hijau").length;
-  const klausulBelum = !d.kolom_dinyatakan.includes("klausul");
-  out.push(`\nGerbang: ${hijau} dari 7 hijau → ${TEKS_ZONA[perkiraanZona(d)]} (perkiraan; final saat diajukan)`);
-  for (const x of d.gerbang)
-    if (x.status !== "hijau" || (x.no === 7 && klausulBelum))
-      out.push(`${x.no === 7 && klausulBelum ? IKON.belum : IKON[x.status] ?? "❔"} ${x.no}. ${x.nama}: ${x.no === 7 && klausulBelum ? "belum dijawab" : x.nilai ?? "-"}`);
-  if (d.kursi_hod < 2 && perkiraanZona({ ...d, kursi_hod: 2 }) === "hod") out.push(`ℹ️ Cabang ini tanpa HOD Area — usulan masuk forum.`);
-  for (const c of o.infoLampiran ?? []) out.push(`ℹ️ ${c}`);
-  for (const c of o.catatan ?? []) out.push(`ℹ️ ${c}`);
-  for (const n of o.tanpaTipe ?? []) out.push(`ℹ️ Peran ${n} belum jelas — tulis: #KSO ${ref} PENDUKUNG: ${n}, kepala instalasi lab (atau dokter user / manajemen / analis / pengadaan)`);
-
-  if (o.diajukan) {
-    out.push(`\nLengkap ✅ — diajukan otomatis.\n${o.diajukan}`);
-    return out.join("\n");
-  }
   const q = kurangDraft(d);
-  if (q.length) {
-    out.push(`\nBelum lengkap (${q.length}):`);
-    q.forEach((t, i) => out.push(`${i + 1}. ${t.teks}`));
-    out.push("\nJawab satu label per baris, mis.:");
-    for (const t of q.slice(0, 3)) out.push(t.contoh);
+  if (o.diajukan) out.push(o.diajukan);
+  else if (q.length) {
+    const lampiranBeda = d.lampiran && !d.lampiran.lolos;
+    const nama = q.map((t) => (t.kunci === "lampiran" && lampiranBeda ? "lampiran PDF belum cocok" : KURANG_PENDEK[t.kunci] ?? t.kunci));
+    out.push(`${o.belumBisaKirim ? "Belum bisa diajukan. " : ""}Kurang: ${nama.join(", ")}`);
+    if (lampiranBeda) {
+      const b = d.lampiran!.galat ? [teksGalatOcr(d.lampiran!.galat)] : bedaDariCocok(d.lampiran!.cocok);
+      if (b.length) out.push(`PDF belum cocok: ${b.join("; ")}`);
+    }
+    out.push(`(contoh: ${q[0].contoh})`);
   } else if (d.status === "DRAFT" || d.status === "DITAHAN") {
-    out.push(`\nBalas "#KSO kirim ${ref}" untuk mengajukan.`);
+    out.push(`Lengkap — balas "#KSO kirim ${ref}" untuk mengajukan.`);
+  } else {
+    out.push(`Sudah diajukan${d.nomor ? ` (${d.nomor})` : ""} — status ${d.status.replace(/_/g, " ").toLowerCase()}.`);
   }
+  for (const c of o.catatan ?? []) out.push(`ℹ️ ${c}`);
+  for (const n of o.tanpaTipe ?? []) out.push(`ℹ️ Peran ${n} belum jelas — tulis: #KSO ${ref} PENDUKUNG: ${n}, kepala instalasi lab`);
   return out.join("\n");
+}
+
+/** Hasil "#KSO kirim" / pengajuan otomatis untuk AM — jalur & zona dalam kata, TANPA GPM / harga mandat. */
+export function teksHasilAjukan(x: {
+  nomor: string; jalur: string; zona: string | null; zona_dasar: string | null; alasan_forum: string | null; belum_hijau: number[]; gerbang2: string | null;
+}): string {
+  if (x.jalur === "AM")
+    return `${x.nomor} diajukan → ZONA AM: lolos tanpa forum, mandat terbit otomatis; penawaran diterbitkan Sekretariat/Admin Sales.\n` +
+      `RS minta harga lebih rendah → #KSO kelonggaran ${x.nomor} ALASAN`;
+  if (x.jalur === "CEPAT") return `${x.nomor} diajukan → ZONA 2 HOD: dua HOD memutus maksimal 1 hari kerja.`;
+  const zf = teksZonaForum(x);
+  return `${x.nomor} diajukan → ${zf.label}${x.alasan_forum ? ` (${x.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya ` +
+    `(batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`;
 }
 
 /** Balasan saat alat belum pasti: 3 saran + cara memilih. */
@@ -543,7 +504,7 @@ async function bacaLampiran(l: LampiranWa): Promise<OcrLampiran> {
 }
 
 function sumberDariLampiran(tanggal: string | null): string {
-  return `Lampiran Simulator CPRR ${tanggal ?? new Date().toISOString().slice(0, 10)}`;
+  return `Lampiran Simulator KSO ${tanggal ?? new Date().toISOString().slice(0, 10)}`;
 }
 
 // ---------------------------------------------------------------- handler
@@ -566,23 +527,15 @@ type Hasil = { balasan: string; hasil: Record<string, unknown> };
 async function ajukanDraft(tx: Tx, id: number, k: Pick<KsoKonteks, "am_id" | "nama">): Promise<Hasil> {
   const [j] = await tx`select kso.app_bot_ajukan(${id}, ${k.am_id})::text as jalur`;
   const [r] = await tx`select nomor, alasan_forum from kso.rencana_kso where id = ${id}`;
-  const [z] = await tx`select r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
-                              m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai,
+  // hanya zona & status gerbang — angka GPM dan harga mandat TIDAK dibaca untuk balasan AM (keputusan 10 Nov)
+  const [z] = await tx`select r.zona, r.zona_dasar,
                               coalesce((select array_agg(g.no order by g.no) from kso.gerbang_hasil g
                                          where g.rencana_id = r.id and g.no between 2 and 7 and g.status <> 'hijau'), '{}') as belum_hijau,
                               (select g.status::text from kso.gerbang_hasil g where g.rencana_id = r.id and g.no = 2) as gerbang2
-                         from kso.rencana_kso r left join kso.mandat m on m.rencana_id = r.id where r.id = ${id}`;
-  const zf = teksZonaForum({ zona: z?.zona ?? null, zona_dasar: z?.zona_dasar ?? null, alasan_forum: r.alasan_forum ?? null,
-                             belum_hijau: (z?.belum_hijau ?? []).map(Number), gerbang2: z?.gerbang2 ?? null });
-  const gpm = z?.gpm != null ? ` (GPM ${(Number(z.gpm) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%)` : "";
+                         from kso.rencana_kso r where r.id = ${id}`;
   return {
-    balasan:
-      `${r.nomor} diajukan, ${k.nama}.\n` +
-      (j.jalur === "AM"
-        ? `→ ZONA AM${gpm}: lolos tanpa forum, kamu memutus sendiri. Mandat berlaku s/d ${z.sampai}: harga pembuka ${rp(z.pembuka)}, target ${rp(z.target)}, batas bawah ${rp(z.lantai)}/test. Di bawah batas bawah → #KSO kelonggaran.`
-        : j.jalur === "CEPAT"
-          ? `→ ZONA 2 HOD${gpm}: dua HOD memutus maksimal 1 hari kerja.`
-          : `→ ${zf.label}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`),
+    balasan: teksHasilAjukan({ nomor: String(r.nomor), jalur: String(j.jalur), zona: z?.zona ?? null, zona_dasar: z?.zona_dasar ?? null,
+                               alasan_forum: r.alasan_forum ?? null, belum_hijau: (z?.belum_hijau ?? []).map(Number), gerbang2: z?.gerbang2 ?? null }),
     hasil: { aksi: "kirim", rencana_id: id, nomor: r.nomor, jalur: j.jalur },
   };
 }
@@ -607,7 +560,6 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
   if (k.perintah.nama) nama.unshift(k.perintah.nama);
   return sebagaiBot(async (tx) => {
     const katalog = await muatKatalog(tx, alias);
-    const infoLampiran: string[] = [];
     const awal = await bacaDraft(tx, id);
     if (!awal) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", rencana_id: id } };
     const bahan = (d: DraftTampil) => ({
@@ -622,7 +574,7 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
       await tx`select kso.app_bot_catat_lampiran(${id}, ${k.am_id}, ${o.ocr.lampiran.wa_message_id}, ${o.ocr.lampiran.media_path}, ${o.ocr.sha256},
                  ${tx.json(o.ocr.hasil as never)}, ${tx.json(cek.cocok as never)}, ${cek.lolos}, ${cek.hari_kerja},
                  ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
-      infoLampiran.push(...cek.info);
+      // cek.info (peringatan hitungan OCR, harga pesaing) tidak dikirim ke AM — balasan hanya gerbang + kurang
       lampiranHasil = { lolos: cek.lolos, beda: cek.beda.length };
       if (terkunci)
         return { balasan: `PDF untuk ${awal.nomor ?? `D${id}`} dicatat sebagai arsip — usulannya sudah diajukan, isiannya tidak berubah.`,
@@ -655,8 +607,7 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
     }
     const catatan = [...(o.catatan ?? [])];
     if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
-    const balasan = formatBalasanDraft(d, { baru: o.baru, nama: k.nama, tanpaTipe: o.tanpaTipe, catatan, alatTeks: o.alatTeks,
-                                            infoLampiran, diajukan: diajukan?.balasan });
+    const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan });
     return {
       balasan,
       hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci),
@@ -761,7 +712,7 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
 
   if (p.aksi === "kirim" || p.aksi === "kelonggaran" || p.aksi === "kalah") {
     if (!ref) return { balasan: `Sebutkan nomornya, mis. "#KSO ${p.aksi} D12".`, hasil: { error: "tanpa-ref" } };
-    if (p.aksi !== "kirim" && !p.isi) return { balasan: `Sebutkan alasannya, mis. "#KSO ${p.aksi} ${ref} RS minta harga di bawah lantai".`, hasil: { error: "tanpa-alasan" } };
+    if (p.aksi !== "kirim" && !p.isi) return { balasan: `Sebutkan alasannya, mis. "#KSO ${p.aksi} ${ref} RS minta harga lebih rendah".`, hasil: { error: "tanpa-alasan" } };
     try {
       return await sebagaiBot(async (tx) => {
         const id = await idDariNomor(tx, p);
@@ -773,7 +724,7 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
             const q = kurangDraft(d);
             if (q.length)
               return {
-                balasan: `${ref} belum bisa diajukan, ${k.nama}. Belum lengkap (${q.length}):\n${q.map((t, i) => `${i + 1}. ${t.teks}`).join("\n")}\n\nJawab satu label per baris, mis.:\n${q.slice(0, 3).map((t) => t.contoh).join("\n")}`,
+                balasan: formatBalasanGerbang(d, { belumBisaKirim: true }),
                 hasil: { aksi: "kirim", rencana_id: id, error: "belum-lengkap", kurang: q.map((t) => t.kunci) },
               };
           }

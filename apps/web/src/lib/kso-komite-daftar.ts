@@ -51,8 +51,8 @@ export const LABEL_LAMPIRAN: Record<StatusLampiran, string> = {
 const GALAT_OCR: Record<string, string> = {
   "dry-run": "pembaca PDF sedang mode uji",
   "pdf-rusak": "berkas PDF rusak / tidak bisa dibuka",
-  "bukan-cprr": "PDF bukan cetakan Simulator KSO (judul \"KSO CPRR\")",
-  "cprr-tidak-terbaca": "angka CPRR di PDF tidak terbaca — cetak ulang dari Simulator",
+  "bukan-cprr": "PDF bukan cetakan Simulator KSO",
+  "cprr-tidak-terbaca": "angka di PDF tidak terbaca — cetak ulang dari Simulator",
 };
 export function teksGalatOcr(g: string | null | undefined): string {
   return GALAT_OCR[String(g)] ?? "pembaca PDF sedang gangguan — kirim ulang PDF-nya beberapa menit lagi";

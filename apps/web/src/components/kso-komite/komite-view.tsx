@@ -178,7 +178,8 @@ function PitaAlur({ r }: { r: Ringkasan }) {
     ["Ditahan", r.ditahan, "data kurang", "text-red-700 dark:text-red-400"],
   ];
   return (
-    <div className="bg-card grid grid-cols-2 overflow-hidden rounded-xl border shadow-[var(--shadow-card)] sm:grid-cols-3 lg:grid-cols-6">
+    <div className={cn("bg-card grid grid-cols-2 overflow-hidden rounded-xl border shadow-[var(--shadow-card)] sm:grid-cols-3",
+      r.capex_disetujui == null ? "lg:grid-cols-5" : "lg:grid-cols-6")}>
       {isi.map(([l, v, ket, warna]) => (
         <div key={l} className="border-border border-b p-3 sm:p-4 lg:border-r lg:border-b-0">
           <div className={cn("text-2xl font-bold tabular-nums", Number(v) === 0 ? "text-muted-foreground" : warna)}>{v}</div>
@@ -186,11 +187,14 @@ function PitaAlur({ r }: { r: Ringkasan }) {
           <div className="text-muted-foreground text-xs">{ket}</div>
         </div>
       ))}
-      <div className="border-border col-span-2 border-b p-3 sm:col-span-1 sm:p-4 lg:border-b-0">
-        <div className="text-2xl font-bold tabular-nums">{rpJt(Number(r.capex_disetujui))}</div>
-        <div className="mt-0.5 text-sm font-medium">Capex disetujui</div>
-        <div className="text-muted-foreground text-xs">jalur cepat + Direksi</div>
-      </div>
+      {/* capex = HPP alat: tidak dikirim API untuk AM / HOD Sales / Admin Sales / Teknik (10 Nov) */}
+      {r.capex_disetujui != null && (
+        <div className="border-border col-span-2 border-b p-3 sm:col-span-1 sm:p-4 lg:border-b-0">
+          <div className="text-2xl font-bold tabular-nums">{rpJt(Number(r.capex_disetujui))}</div>
+          <div className="mt-0.5 text-sm font-medium">Capex disetujui</div>
+          <div className="text-muted-foreground text-xs">jalur cepat + Direksi</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -248,7 +252,7 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
                   <PolaGerbang pola={b.pola_gerbang} />
                   <span className="text-muted-foreground">{b.alat_nama}</span>
-                  <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>
+                  {b.capex != null && <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>}
                   <LabelStatus status={b.status} />
                   {b.zona && (
                     <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums", ZONA_CLS[b.zona])}>

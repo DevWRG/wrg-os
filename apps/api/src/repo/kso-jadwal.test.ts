@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { forumBerikutnya, hariForum, pesanAgenda, pesanHod, pesanPendapatForum, tanggalManusia, tanggalWib } from "./kso-jadwal.js";
+import { forumBerikutnya, hariForum, pesanAgenda, pesanDaftar, pesanHod, pesanPendapatForum, tanggalManusia, tanggalWib } from "./kso-jadwal.js";
 
 const wib = (s: string) => new Date(`${s}+07:00`);
 
@@ -57,6 +57,17 @@ test("HOD forum: satu pesan berisi semua usulan yang menunggu pendapatnya", () =
   assert.match(t, /\(2 usulan\)/);
   assert.match(t, /1\. KSO-2026-0036[\s\S]*2\. KSO-2026-0037/);
   assert.match(t, /bukan putusan/);
+});
+
+test("10 Nov: kursi HOD Sales & Admin Sales tanpa capex (HPP alat); HOD Business & Sekretariat tetap", () => {
+  const r = { nomor: "KSO-2026-0003", faskes_nama: "RS X", alat_nama: "Z3", capex: 53_400_000 };
+  assert.match(pesanHod("putusan", "HOD Uji", r, "Jumat 23 Okt 15.00"), /Z3 · Rp 53,4 jt/);
+  for (const t of [pesanHod("putusan", "HOD Uji", r, "Jumat", false), pesanHod("pendapat", "HOD Uji", r, "Selasa", false),
+    pesanPendapatForum("HOD Uji", "2026-10-20", [r], false), pesanDaftar("Penawaran KSO siap", [r], "Penutup", false)]) {
+    assert.doesNotMatch(t, /Rp|jt/, t);
+    assert.match(t, /KSO-2026-0003 · RS X · Z3\n/);
+  }
+  assert.match(pesanDaftar("Penawaran KSO siap", [r], "Penutup"), /Rp 53,4 jt/);
 });
 
 test("agenda menampilkan Ketua & Sekretaris dari Susunan Komite; jabatan kosong tidak ditulis", () => {
