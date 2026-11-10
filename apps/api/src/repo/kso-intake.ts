@@ -1,29 +1,42 @@
-// F170 Komite KSO — intake WhatsApp #KSO (Tahap 3).
+// F170 Komite KSO — intake WhatsApp #KSO.
 //
 // AM mengirim rencana KSO lewat bot WA yang sudah ada (keputusan 16 Okt: nomor bot sekarang,
-// semua perintah lewat #KSO supaya tak bentrok dengan #KIRIM dan konfirmasi "kirim R12"):
-//   #KSO <rencana>                    → draft baru (teks, atau voice note dalam ±10 menit)
-//   #KSO D12 <jawaban>                → melengkapi draft
-//   #KSO kirim D12                    → mengajukan (DRAFT → DIAJUKAN → jalur cepat/forum)
-//   #KSO kelonggaran KSO-2026-0012 …  → minta kelonggaran (penawaran sudah terbit)
-//   #KSO kalah KSO-2026-0012 …        → catat kalah
+// semua perintah lewat #KSO supaya tak bentrok dengan #KIRIM dan konfirmasi "kirim R12").
+// Sejak 10 Nov 2026 (keputusan product owner) usulan baru HANYA lewat format sembilan isian
+// (lihat kso-format.ts), diurai DETERMINISTIK — jalur teks bebas (LLM /kso/ekstrak) dan voice note dimatikan:
+//   #KSO BUDI + 9 baris berlabel       → draft baru (nama di kepala = nama pengirim)
+//   #KSO D12 LABEL: isi                → melengkapi / mengoreksi draft (PENDUKUNG, STATUS UNIT, ALASAN, KLAUSUL, …)
+//   #KSO D12 (+ PDF ≤ 10 menit)        → lampiran PDF Simulator CPRR untuk D12
+//   #KSO ALAT 1 / #KSO ALAT: Z50       → memilih alat untuk isian yang tertunda (alat tak pasti di katalog)
+//   #KSO kirim D12                     → mengajukan (DRAFT → DIAJUKAN → zona AM / 2 HOD / forum)
+//   #KSO kelonggaran KSO-2026-0012 …   → minta kelonggaran (penawaran sudah terbit)
+//   #KSO kalah KSO-2026-0012 …         → catat kalah
+//   #KSO D12 volume 900                → volume RS turun sesudah mandat terbit
+// Data lengkap + lampiran PDF cocok → diajukan OTOMATIS (sama dengan "#KSO kirim").
 //
 // Semua tulis lewat kso.app_bot_* dengan peran bot_wa (GUC wrg.kso_user di transaksi yang
 // sama) — bukan akses tabel langsung. AM ditentukan dari pengirim (resolveSender ketat),
-// TIDAK PERNAH dari isi pesan. Ekstraksi LLM disaring ulang di services/ai (kso_intake.py):
-// kolom yang tak diucapkan AM = null → bot bertanya, tak ada nilai bawaan.
+// TIDAK PERNAH dari isi pesan; nama di kepala pesan hanya DICOCOKKAN dengan pengirim.
 
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { callAi } from "../ai.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { cariAkun } from "./interaction.js";
+import {
+  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bentukNama, cariAlat, cocokkanLampiran, daftarKurang, isianLengkapiDariFormat,
+  namaCocok, teksGalatOcr,
+  type AlatKatalog, type CocokIsian, type DataKurang, type HasilAlat, type HasilOcrCprr, type IsianFormat, type ItemKurang, type SaranAlat,
+} from "./kso-format.js";
 
 export const KSO_LINE = /^\s*#\s*kso\b/i;
 export const KSO_BOT_USER = "bot-wa";
-/** Jendela pemasangan voice note ↔ pesan #KSO di chat yang sama. */
-export const KSO_JENDELA_SUARA_MENIT = 10;
+/** Jendela pemasangan lampiran PDF ↔ pesan #KSO di chat yang sama (pengirim sama, urutan bebas). */
+export const KSO_JENDELA_MENIT = 10;
+/** Nama lama (dipakai pemasangan voice note sebelum 10 Nov) — kini jendela lampiran PDF. */
+export const KSO_JENDELA_SUARA_MENIT = KSO_JENDELA_MENIT;
 
 export function ksoWaAktif(): boolean {
   return (process.env.KSO_WA_ENABLED ?? "").toLowerCase() === "true";
@@ -37,6 +50,8 @@ export interface KsoPerintah {
   draftId?: number;
   nomor?: string;
   isi: string;
+  /** Nama di kepala "#KSO BUDI" (usulan baru) — dicocokkan dengan pengirim, bukan penentu identitas. */
+  nama?: string;
 }
 
 const REF = /^(?:D\s*(\d{1,7})|(KSO-\d{4}-\d{3,}))\b[\s:,-]*/i;
@@ -64,9 +79,18 @@ export function parseKsoPerintah(body: string | null): KsoPerintah {
     kepala = kepala.slice(ref[0].length);
     if (aksi === "baru") aksi = "lengkapi";
   }
+  let nama: string | undefined;
+  if (aksi === "baru" && kepala) {
+    if (/^(?:bantuan|format|help|template|\?)$/i.test(kepala)) return { aksi: "kosong", isi: "" };
+    // "#KSO BUDI" = nama; "#KSO ALAT 1" = label (bukan nama); kalimat bebas tetap jadi isi (→ dibalas format)
+    if (!bacaBarisLabel(kepala) && bentukNama(kepala)) {
+      nama = kepala.trim();
+      kepala = "";
+    }
+  }
   const isi = [kepala.trim(), sisa].filter(Boolean).join("\n").trim();
   if (aksi === "baru" && !isi) aksi = "kosong";
-  return { aksi, draftId, nomor, isi };
+  return { aksi, draftId, nomor, isi, ...(nama ? { nama } : {}) };
 }
 
 // ---------------------------------------------------------------- teks balasan (murni)
@@ -77,34 +101,44 @@ export function rp(n: number | null | undefined): string {
   return `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 }
 
+// Tanpa kurung sudut: WhatsApp membuang teks "<...>" (memori: placeholder hilang) — pakai huruf besar.
 export const KSO_BANTUAN =
-  "Format #KSO (tujuh isian Pedoman Komite KSO + pendukung):\n" +
-  "#KSO\n1. Faskes: RSUD ... (kota)\n2. Alat: Zybio Z52 (baru / relokasi idle / tambah unit)\n" +
-  "3. Harga deal per tes: Rp 12.000 (harga pesaing: Rp 10.500, merek ...)\n4. Volume per bulan: 1.200 sampel\n" +
-  "5. Bukti volume: rekap LIS 6 bulan / PO reagen RS / surat RS\n6. Tenor & klausul: 36 bulan, tanpa klausul khusus\n" +
-  "   (opsional) Hari kerja alat: 26 hari/bulan — tak disebut = default Bottom Line\n" +
-  "7. Alasan strategis: (kosongkan bila tidak ada)\nPendukung: dr. Rina SpPK, kepala instalasi lab\n\n" +
-  "Perkiraan lisan tidak diterima sebagai bukti volume untuk zona Forum. Sistem membalas GPM & zona sebelum kamu kirim.\n" +
-  `Boleh juga kirim "#KSO" lalu voice note dalam ${KSO_JENDELA_SUARA_MENIT} menit.\n` +
-  "Melengkapi: #KSO D12 <jawaban> · Mengajukan: #KSO kirim D12\n" +
-  "Volume RS turun sesudah mandat terbit: #KSO D12 volume 900 (turun > 20% → mandat dihitung ulang)";
+  "Format #KSO (usulan baru — satu pesan, nama kamu sendiri di baris pertama):\n" +
+  "#KSO BUDI\n" +
+  "1. FASKES : RS CONTOH SEJAHTERA\n" +
+  "2. ALAT : ZYBIO Z50\n" +
+  "3. TES : 700 TEST/BULAN\n" +
+  "4. MASA KSO : 36 BULAN\n" +
+  "5. PERMINTAAN HARGA : 11.800/TEST\n" +
+  "6. FEE : 5% (tulis 0 bila tidak ada fee)\n" +
+  "7. KOMPETITOR : MEREK-MODEL-HARGA (atau TIDAK ADA)\n" +
+  "8. KLAUSUL : TIDAK (atau ADA - isi klausulnya)\n" +
+  "9. LAMPIRAN : ADA — kirim PDF Simulator KSO (KSO CPRR) di chat ini dalam 10 menit\n" +
+  "Boleh ditambah di pesan yang sama: PENDUKUNG: dr. Contoh, kepala instalasi lab · " +
+  "STATUS UNIT: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal · HARI KERJA: 26 · JUMLAH: 1 · " +
+  "ALASAN: alasan strategis (wajib bila GPM zona Direktur)\n\n" +
+  "Melengkapi/koreksi: #KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)\n" +
+  "PDF menyusul: kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit.\n" +
+  "Data lengkap + PDF cocok → diajukan otomatis. Mengajukan manual: #KSO kirim D12\n" +
+  "Volume RS turun sesudah mandat terbit: #KSO D12 volume 900 (turun lebih dari 20% → mandat dihitung ulang)\n" +
+  "Voice note tidak diproses untuk #KSO.";
 
 /** Terjemahan galat fungsi kso.* ke bahasa manusia. Tak pernah menampilkan nama fungsi/kode. */
 export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/SUMBER_VOLUME_KOSONG/.test(pesan))
-    return `Volume — dari mana angkanya? Boleh "catatan lisan", boleh "belum ada", tapi tidak boleh kosong.\nJawab: #KSO ${ref} sumber <dari mana>`;
+    return `Bukti volume belum ada — kirim PDF Simulator KSO, atau tulis: #KSO ${ref} SUMBER: rekap LIS 3 bulan`;
   const kurang = pesan.match(/KOLOM_WAJIB_KOSONG:\s*(.+)/);
   if (kurang) {
     const label: Record<string, string> = {
-      volume_estimasi: "estimasi volume test per bulan",
-      harga_per_test: "harga per test",
-      tenor_bulan: "tenor (bulan, sejak serah terima)",
-      "pendukung (min 1)": "minimal satu pendukung di RS",
-      jumlah: "jumlah unit",
-      klausul: 'klausul khusus (jawab "tidak ada" kalau tidak ada)',
+      volume_estimasi: "TES per bulan",
+      harga_per_test: "PERMINTAAN HARGA",
+      tenor_bulan: "MASA KSO (bulan)",
+      "pendukung (min 1)": "minimal satu PENDUKUNG di RS",
+      jumlah: "JUMLAH unit",
+      klausul: "KLAUSUL (ADA/TIDAK)",
     };
     const daftar = kurang[1].split(",").map((s) => label[s.trim()] ?? s.trim());
-    return `Belum bisa diajukan, masih kurang: ${daftar.join("; ")}.\nJawab: #KSO ${ref} <jawaban>`;
+    return `Belum bisa diajukan, masih kurang: ${daftar.join("; ")}.\nJawab: #KSO ${ref} LABEL: ISI`;
   }
   if (/BUKAN_MILIK_PENGIRIM|RENCANA_TIDAK_ADA/.test(pesan)) return "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.";
   if (/DRAFT_TERKUNCI|TIDAK_BISA_DIAJUKAN/.test(pesan)) return `Rencana ${ref} sudah diajukan — isiannya tidak bisa diubah lagi lewat WA.`;
@@ -114,8 +148,18 @@ export function terjemahGalatKso(pesan: string, ref: string): string {
   if (/GRUP_DIBEKUKAN/.test(pesan)) return "Grup faskes ini sedang dibekukan Direksi (SK Pasal 14) — belum bisa diproses.";
   if (/TRANSISI_TIDAK_SAH/.test(pesan)) return `Aksi itu tidak berlaku untuk status ${ref} sekarang.`;
   if (/ALASAN_STRATEGIS_WAJIB/.test(pesan))
-    return `GPM di bawah batas Forum (zona Direktur) — tulis alasan strategisnya dulu.\nJawab: #KSO ${ref} alasan strategis <alasan>`;
+    return `GPM di bawah batas Forum (zona Direktur) — tulis alasan strategisnya dulu.\nJawab: #KSO ${ref} ALASAN: ISI ALASAN`;
   return "Maaf, permintaan belum bisa diproses. Coba lagi, atau hubungi admin.";
+}
+
+export interface LampiranTampil {
+  id: number;
+  lolos: boolean;
+  cocok: Record<string, CocokIsian> | null;
+  galat: string | null;
+  tanggal: string | null;
+  wa_message_id: string | null;
+  dibuat_at: string | null;
 }
 
 export interface DraftTampil {
@@ -145,10 +189,15 @@ export interface DraftTampil {
   /** F170 v2 (266): zona dari GPM saja + GPM deal — null bila data GPM belum lengkap. */
   zona_dasar: "am" | "hod" | "forum" | "direktur" | null;
   gpm_deal: number | null;
-  /** F170 v2 (267): isian 3 & 7 template Pedoman. */
+  /** F170 v2 (267): isian template Pedoman. */
   harga_pesaing?: number | null;
   kompetitor_alat?: string | null;
   alasan_strategis?: string | null;
+  /** 302: fee ke RS/perantara (%), jawaban KLAUSUL, lampiran PDF terakhir. */
+  fee_persen?: number | null;
+  klausul_ada?: boolean | null;
+  klausul_detail?: string | null;
+  lampiran?: LampiranTampil | null;
   /** Angka GPM per zona (kso.app_bot_angka_gpm) — null bila belum dihitung. */
   angka?: AngkaGpm | null;
 }
@@ -160,16 +209,26 @@ export interface AngkaGpm {
 
 const persen = (x: number) => `${(x * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
 const bulat = (x: number) => Math.ceil(x / 100) * 100;
+const angkaFee = (f: number) => f.toLocaleString("id-ID", { maximumFractionDigits: 2 });
+
+/** Harga bersih sesudah fee (302): harga × (1 − fee/100). */
+export function hargaBersih(harga: number | null | undefined, fee: number | null | undefined): number | null {
+  if (harga == null) return null;
+  return harga * (1 - (fee ?? 0) / 100);
+}
 
 /** Blok hitungan GPM untuk balasan draft (Pedoman: AM menerima zona SEBELUM menekan kirim). */
-export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harga_per_test">): string[] {
+export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harga_per_test"> & { fee_persen?: number | null }): string[] {
   const a = d.angka;
   if (!a) return [];
   if (a.hd) return ["\nHitungan: Hemodialisa dihitung dengan Kalkulator HD — selalu diputus Direktur."];
   if (a.gpm == null) return [`\nHitungan GPM belum bisa: ${a.catatan ?? "data belum lengkap"}.`];
-  const out = [`\nGPM deal ${persen(a.gpm)}${a.biaya_per_tes != null ? ` (biaya ${rp(a.biaya_per_tes)}/tes termasuk cicilan alat)` : ""}`];
+  const fee = d.fee_persen ?? 0;
+  const out = [`\nGPM deal ${persen(a.gpm)}${a.biaya_per_tes != null ? ` (biaya ${rp(a.biaya_per_tes)}/tes termasuk cicilan alat)` : ""}` +
+    (fee > 0 ? ` — dihitung dari harga bersih sesudah fee ${angkaFee(fee)}%` : "")];
   if (a.harga_am != null && a.harga_hod != null && a.harga_forum != null && d.volume_estimasi)
-    out.push(`· Harga minimum di ${d.volume_estimasi} tes/bln: AM ${rp(bulat(a.harga_am))} · 2 HOD ${rp(bulat(a.harga_hod))} · Forum ${rp(bulat(a.harga_forum))}`);
+    out.push(`· Harga minimum di ${d.volume_estimasi} tes/bln${fee > 0 ? ` (harga diminta, sudah termasuk fee ${angkaFee(fee)}%)` : ""}: ` +
+      `AM ${rp(bulat(a.harga_am))} · 2 HOD ${rp(bulat(a.harga_hod))} · Forum ${rp(bulat(a.harga_forum))}`);
   if (d.harga_per_test != null) {
     const v = a.volume_min_forum, vol = d.volume_estimasi ?? 0;
     // Harga yang nyaris sama dengan biaya reagen membuat penyebut rumus mendekati nol → volume
@@ -184,11 +243,6 @@ export function blokGpm(d: Pick<DraftTampil, "angka" | "volume_estimasi" | "harg
   return out;
 }
 
-/**
- * Perkiraan jalur sebelum dikirim — cermin kso.ajukan (266): level zona GPM, satu gerbang 2–7 tidak hijau
- * (atau klausul belum dijawab) = naik satu level, routing HOD < 2 kursi di level HOD = forum.
- * Aturan grup mitra tidak terlihat di draft — final tetap saat dikirim.
- */
 /** Label zona jalur forum di balasan "#KSO kirim". Usulan zona dasar Forum yang naik ke Direktur HANYA karena
  *  bukti volume (gerbang 2) belum diperiksa Sekretaris disebut Zona Forum + catatan: sejak migrasi 269 zonanya
  *  dihitung ulang dan kembali ke Forum begitu buktinya disahkan. Gerbang lain tak hijau / aturan grup = Direktur. */
@@ -225,6 +279,11 @@ export function balasanVolumeTurun(ref: string, h: Record<string, unknown>): str
     + "Mandat lama gugur; usulan masuk agenda forum berikutnya. Jangan lanjutkan penawaran dengan harga lama.";
 }
 
+/**
+ * Perkiraan jalur sebelum dikirim — cermin kso.ajukan (266): level zona GPM, satu gerbang 2–7 tidak hijau
+ * (atau klausul belum dijawab) = naik satu level, routing HOD < 2 kursi di level HOD = forum.
+ * Aturan grup mitra tidak terlihat di draft — final tetap saat dikirim.
+ */
 export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "kursi_hod" | "kolom_dinyatakan">): "am" | "hod" | "forum" | "direktur" {
   const LEVEL = ["am", "hod", "forum", "direktur"] as const;
   let lv = d.zona_dasar ? LEVEL.indexOf(d.zona_dasar) : 2;
@@ -235,7 +294,7 @@ export function perkiraanZona(d: Pick<DraftTampil, "zona_dasar" | "gerbang" | "k
 }
 
 const TEKS_ZONA: Record<"am" | "hod" | "forum" | "direktur", string> = {
-  am: "ZONA AM: kamu memutus sendiri, mandat otomatis terbit",
+  am: "ZONA AM: lolos tanpa forum, mandat otomatis terbit",
   hod: "ZONA 2 HOD: jalur cepat, dua HOD memutus maks. 1 hari kerja",
   forum: "ZONA FORUM: agenda forum Selasa/Kamis, Direktur memutus",
   direktur: "ZONA DIREKTUR: lewat forum, Direktur memutus — wajib alasan strategis",
@@ -250,64 +309,50 @@ const LABEL_KLAUSUL: Record<string, string> = {
   tanpa_lapor: "tanpa lapor test",
   tanpa_denda: "tanpa denda",
   draft_rs: "draft PKS dari RS",
+  lainnya: "klausul lain",
 };
 
-/** Pertanyaan untuk kolom yang masih kosong — urut dari yang menghentikan pengajuan. */
-export function pertanyaanKurang(d: DraftTampil, tanpaTipe: string[] = []): string[] {
-  const q: string[] = [];
-  if (!d.volume_sumber?.trim())
-    q.push(
-      `Volume${d.volume_estimasi != null ? ` ${d.volume_estimasi} test/bulan` : ""} — dari mana angkanya? Boleh "catatan lisan", boleh "belum ada", tapi tidak boleh kosong.`,
-    );
-  if (d.volume_estimasi == null) q.push("Berapa estimasi volume test per bulan?");
-  // jumlah tak disebut = 1 unit (keputusan 31 Okt) — ditampilkan di ringkasan, tidak ditanyakan
-  if (d.harga_per_test == null)
-    q.push(
-      d.harga_standar != null
-        ? `Harga per test? Daftar standar ${d.kategori.toLowerCase()} ${rp(d.harga_standar)}/test — pakai harga daftar, atau sebut angka lain?`
-        : "Berapa harga per test yang diusulkan?",
-    );
-  if (d.tenor_bulan == null) q.push("Tenor berapa bulan (dihitung sejak serah terima)?");
-  if (!d.kolom_dinyatakan.includes("klausul"))
-    q.push(
-      `Ada permintaan klausul khusus dari RS (${Object.values(LABEL_KLAUSUL).join(", ")})? Jawab "tidak ada" kalau tidak ada.`,
-    );
-  for (const n of tanpaTipe)
-    q.push(`Apa peran ${n}? (manajemen / dokter user / kepala instalasi / analis-perawat / pengadaan)`);
-  if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alasan_strategis?.trim())
-    q.push("GPM di bawah batas Forum (zona Direktur). Apa alasan strategisnya? Tanpa alasan tertulis, usulan tidak bisa dikirim.");
-  if (d.pendukung.length === 0 && tanpaTipe.length === 0)
-    q.push("Siapa pendukung di RS? Satu orang per baris: nama, peran (manajemen / dokter user / kepala instalasi / analis-perawat / pengadaan).");
-  return q;
+/** Data "Belum lengkap" dari draft yang tampil (satu sumber dengan dashboard). */
+export function kurangDraft(d: DraftTampil): ItemKurang[] {
+  const x: DataKurang = { ...d, angka: d.angka ? { hd: d.angka.hd } : null,
+    lampiran: d.lampiran ? { lolos: d.lampiran.lolos, cocok: d.lampiran.cocok, galat: d.lampiran.galat } : null };
+  return daftarKurang(x, `D${d.id}`);
 }
 
-/** Balasan empat bagian (spesifikasi bab 2.3): nomor draft · isian & dari sistem · HASIL GERBANG · yang kurang. */
+/** Balasan draft: nomor · isian · dari sistem · GPM · gerbang · belum lengkap (atau hasil pengajuan otomatis). */
 export function formatBalasanDraft(
   d: DraftTampil,
-  o: { baru: boolean; nama: string; transkrip?: string; tanpaTipe?: string[]; catatan?: string[] },
+  o: { baru: boolean; nama: string; tanpaTipe?: string[]; catatan?: string[]; alatTeks?: string; infoLampiran?: string[]; diajukan?: string },
 ): string {
   const ref = `D${d.id}`;
   const out: string[] = [];
   out.push(`Draft ${ref} ${o.baru ? "dibuat" : "diperbarui"}, ${o.nama}.`);
-  if (o.transkrip) out.push(`\nTranskrip voice note:\n«${o.transkrip}»`);
 
   out.push("\nIsian (periksa, kamu yang bertanggung jawab atas isinya):");
   out.push(`· Faskes: ${d.faskes}${d.cabang ? ` (${d.cabang})` : ""}`);
-  out.push(`· Alat: ${d.jumlah} × ${d.alat}${d.kolom_dinyatakan.includes("jumlah") ? "" : ` (dianggap ${d.jumlah} unit — koreksi: #KSO ${ref} 2 unit)`}`);
-  if (d.volume_estimasi != null) out.push(`· Volume: ${d.volume_estimasi} test/bulan`);
+  const asal = o.alatTeks && o.alatTeks.trim().toUpperCase() !== d.alat_kode.toUpperCase()
+    ? ` (dari "${o.alatTeks.trim()}" → ${d.alat_kode}, ${d.kategori})` : "";
+  out.push(`· Alat: ${d.jumlah} × ${d.alat}${asal}${d.kolom_dinyatakan.includes("jumlah") ? "" : ` — dianggap ${d.jumlah} unit (koreksi: #KSO ${ref} JUMLAH: 2)`}`);
+  if (d.volume_estimasi != null) out.push(`· Tes: ${d.volume_estimasi} test/bulan`);
   if (d.volume_sumber) out.push(`· Sumber volume: "${d.volume_sumber}"`);
-  if (d.harga_per_test != null) {
-    const pesaing = [d.harga_pesaing != null ? rp(d.harga_pesaing) : null, d.kompetitor_alat].filter(Boolean).join(", ");
-    out.push(`· Harga: ${rp(d.harga_per_test)}/test${pesaing ? ` (pesaing ${pesaing})` : ""}`);
-  }
-  if (d.tenor_bulan != null) out.push(`· Tenor: ${d.tenor_bulan} bulan`);
+  if (d.tenor_bulan != null) out.push(`· Masa KSO: ${d.tenor_bulan} bulan`);
+  if (d.harga_per_test != null) out.push(`· Permintaan harga: ${rp(d.harga_per_test)}/test`);
+  if (d.fee_persen != null)
+    out.push(d.fee_persen > 0
+      ? `· Fee: ${angkaFee(d.fee_persen)}% → harga bersih ${rp(hargaBersih(d.harga_per_test, d.fee_persen))}/test (dasar GPM)`
+      : "· Fee: tidak ada");
+  if (d.kolom_dinyatakan.includes("kompetitor_alat"))
+    out.push(`· Kompetitor: ${d.kompetitor_alat ?? "-"}${d.harga_pesaing != null ? ` (${rp(d.harga_pesaing)}/test)` : ""}`);
+  if (d.kolom_dinyatakan.includes("klausul"))
+    out.push(`· Klausul: ${d.klausul.length ? `ada — ${d.klausul_detail ?? d.klausul.map((k) => LABEL_KLAUSUL[k] ?? k).join(", ")}` : "tidak ada"}`);
+  else if (d.klausul_ada) out.push("· Klausul: ada — isinya belum ditulis");
+  out.push(`· Lampiran: ${!d.lampiran ? "belum ada PDF" : d.lampiran.lolos
+    ? `✅ PDF Simulator cocok${d.lampiran.tanggal ? ` (${d.lampiran.tanggal})` : ""}` : "❌ PDF belum cocok (lihat di bawah)"}`);
   // 282: hari kerja ikut menentukan GPM (reagen harian × hari kerja) — selalu dibacakan supaya AM bisa koreksi
   if (d.hari_kerja != null) out.push(`· Hari kerja alat: ${d.hari_kerja} hari/bulan`);
   else if (d.hari_kerja_default != null)
-    out.push(`· Hari kerja alat: ${d.hari_kerja_default} hari/bulan (default — koreksi: #KSO ${ref} hari kerja 26)`);
+    out.push(`· Hari kerja alat: ${d.hari_kerja_default} hari/bulan (default — koreksi: #KSO ${ref} HARI KERJA: 26)`);
   if (d.unit_status) out.push(`· Status unit: ${d.unit_status.replace(/_/g, " ")}`);
-  if (d.kolom_dinyatakan.includes("klausul"))
-    out.push(`· Klausul khusus: ${d.klausul.length ? d.klausul.map((k) => LABEL_KLAUSUL[k] ?? k).join(", ") : "tidak ada"}`);
   for (const p of d.pendukung) out.push(`· Pendukung: ${p.nama} (${p.tipe.replace(/_/g, " ")})`);
   if (d.alasan_strategis) out.push(`· Alasan strategis: ${d.alasan_strategis}`);
 
@@ -323,22 +368,49 @@ export function formatBalasanDraft(
 
   const hijau = d.gerbang.filter((x) => x.status === "hijau").length;
   const klausulBelum = !d.kolom_dinyatakan.includes("klausul");
-  out.push(`\nGerbang: ${hijau} dari 7 hijau → ${TEKS_ZONA[perkiraanZona(d)]} (perkiraan; final saat dikirim)`);
+  out.push(`\nGerbang: ${hijau} dari 7 hijau → ${TEKS_ZONA[perkiraanZona(d)]} (perkiraan; final saat diajukan)`);
   for (const x of d.gerbang)
     if (x.status !== "hijau" || (x.no === 7 && klausulBelum))
       out.push(`${x.no === 7 && klausulBelum ? IKON.belum : IKON[x.status] ?? "❔"} ${x.no}. ${x.nama}: ${x.no === 7 && klausulBelum ? "belum dijawab" : x.nilai ?? "-"}`);
   if (d.kursi_hod < 2 && perkiraanZona({ ...d, kursi_hod: 2 }) === "hod") out.push(`ℹ️ Cabang ini tanpa HOD Area — usulan masuk forum.`);
+  for (const c of o.infoLampiran ?? []) out.push(`ℹ️ ${c}`);
   for (const c of o.catatan ?? []) out.push(`ℹ️ ${c}`);
+  for (const n of o.tanpaTipe ?? []) out.push(`ℹ️ Peran ${n} belum jelas — tulis: #KSO ${ref} PENDUKUNG: ${n}, kepala instalasi lab (atau dokter user / manajemen / analis / pengadaan)`);
 
-  const q = pertanyaanKurang(d, o.tanpaTipe);
+  if (o.diajukan) {
+    out.push(`\nLengkap ✅ — diajukan otomatis.\n${o.diajukan}`);
+    return out.join("\n");
+  }
+  const q = kurangDraft(d);
   if (q.length) {
-    out.push(`\n${q.length === 1 ? "Kurang satu" : `Kurang ${q.length}`}:`);
-    q.forEach((t, i) => out.push(q.length === 1 ? t : `${i + 1}. ${t}`));
-    out.push(`\nJawab: #KSO ${ref} <jawaban>`);
-  } else {
+    out.push(`\nBelum lengkap (${q.length}):`);
+    q.forEach((t, i) => out.push(`${i + 1}. ${t.teks}`));
+    out.push("\nJawab satu label per baris, mis.:");
+    for (const t of q.slice(0, 3)) out.push(t.contoh);
+  } else if (d.status === "DRAFT" || d.status === "DITAHAN") {
     out.push(`\nBalas "#KSO kirim ${ref}" untuk mengajukan.`);
   }
   return out.join("\n");
+}
+
+/** Balasan saat alat belum pasti: 3 saran + cara memilih. */
+export function balasanSaranAlat(nama: string, alatTeks: string, h: Extract<HasilAlat, { kind: "saran" }>, ref: string | null, semuaKode: string[]): string {
+  const awal = ref
+    ? `Alat "${alatTeks}" untuk ${ref} belum pasti — alat ${ref} tidak diubah.`
+    : `Alat "${alatTeks}" belum cocok pasti ke katalog KSO, ${nama}. Draft BELUM dibuat — isian lain sudah disimpan, tinggal pilih alatnya.`;
+  const saran = h.saran.length
+    ? `${h.ambigu ? "Cocok ke beberapa tipe" : "Mungkin maksudnya"}:\n${h.saran.map((s, i) => `${i + 1}. ${s.kode} — ${s.nama}${s.kategori ? ` (${s.kategori})` : ""}`).join("\n")}`
+    : `Tidak ada yang mirip. Pilihan katalog: ${semuaKode.join(", ")}.`;
+  const cara = ref
+    ? `Balas: #KSO ${ref} ALAT 1${h.saran.length > 1 ? ` (atau ${h.saran.map((_, i) => i + 1).join("/")})` : ""}, atau #KSO ${ref} ALAT: KODE`
+    : `Balas: #KSO ALAT 1${h.saran.length > 1 ? ` (atau ${h.saran.map((_, i) => i + 1).join("/")})` : ""}, atau #KSO ALAT: KODE — berlaku 24 jam.`;
+  return `${awal}\n${saran}\n${cara}`;
+}
+
+/** Balasan pesan #KSO yang tidak sesuai format (teks bebas tidak lagi diproses). */
+export function balasanFormatSalah(x: IsianFormat | null): string {
+  const kurang = x ? (["faskes", "alat"] as const).filter((k) => !x.label.includes(k)).map((k) => NAMA_LABEL[k]) : [];
+  return `Format #KSO belum sesuai${kurang.length ? ` (${kurang.join(" dan ")} wajib ada)` : ""} — usulan BELUM dicatat. Teks bebas dan voice note tidak diproses lagi.\n\n${KSO_BANTUAN}`;
 }
 
 // ---------------------------------------------------------------- DB (sebagai bot_wa)
@@ -365,7 +437,13 @@ async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
            coalesce((select json_agg(json_build_object('nama', nama, 'tipe', tipe) order by id) from kso.rencana_pendukung where rencana_id = r.id), '[]') as pendukung,
            coalesce((select json_agg(json_build_object('no', no, 'nama', nama, 'status', status, 'nilai', nilai) order by no) from kso.gerbang_hasil where rencana_id = r.id), '[]') as gerbang,
            (select count(*)::int from kso.hod_untuk(r.id)) as kursi_hod, r.zona_dasar, r.gpm_deal::float8 as gpm_deal,
-           r.harga_pesaing::float8 as harga_pesaing, r.kompetitor_alat, r.alasan_strategis
+           r.harga_pesaing::float8 as harga_pesaing, r.kompetitor_alat, r.alasan_strategis,
+           r.fee_persen::float8 as fee_persen, r.klausul_ada, r.klausul_detail,
+           (select json_build_object('id', l.id, 'lolos', l.lolos, 'cocok', l.cocok, 'wa_message_id', l.wa_message_id, 'dibuat_at', l.dibuat_at,
+                                     'tanggal', l.hasil_ocr->'isian'->>'tanggal',
+                                     'galat', case when coalesce((l.hasil_ocr->>'ok')::boolean, false) then null
+                                                   else coalesce(l.hasil_ocr->>'galat', 'tidak-terbaca') end)
+              from kso.rencana_lampiran l where l.rencana_id = r.id order by l.dibuat_at desc, l.id desc limit 1) as lampiran
       from kso.rencana_kso r join kso.faskes f on f.id = r.faskes_id
       join kso.alat a on a.kode = r.alat_kode join kso.kategori k on k.kode = a.kategori
      where r.id = ${id}`;
@@ -394,17 +472,78 @@ async function cocokFaskes(tx: Tx, teks: string): Promise<Cocok<string>> {
   return rows.length === 0 ? { kind: "none" } : { kind: "ambiguous", names: rows.slice(0, 3).map((r) => String(r.nama)) };
 }
 
-/** Alat dari katalog kso.alat: kode yang disebut sebagai kata utuh ("Z3", "EXZ8000", "DN-X6"). Ambigu → 2–3 pilihan. */
-export function pilihAlat(teks: string, katalog: { kode: string; nama: string }[]): Cocok<string> {
-  const t = ` ${teks.toUpperCase().replace(/[^A-Z0-9]+/g, " ")} `;
-  const kena = katalog.filter((a) => {
-    const k = a.kode.toUpperCase().replace(/[^A-Z0-9]+/g, "");
-    const n = a.nama.toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
-    return t.includes(` ${k} `) || (k.length >= 4 && t.replace(/ /g, "").includes(k)) || (n.length >= 4 && t.includes(` ${n} `));
-  });
-  if (kena.length === 1) return { kind: "one", nilai: kena[0].kode, nama: kena[0].nama };
-  if (kena.length > 1) return { kind: "ambiguous", names: kena.slice(0, 3).map((a) => a.kode) };
-  return { kind: "none" };
+/** Kompatibilitas lama: kode yang pasti → "one"; beberapa yang yakin → "ambiguous"; selain itu "none". */
+export function pilihAlat(teks: string, katalog: { kode: string; nama: string; kategori?: string | null }[]): Cocok<string> {
+  const h = cariAlat(teks, katalog);
+  if (h.kind === "one") return { kind: "one", nilai: h.kode, nama: h.nama };
+  return h.ambigu ? { kind: "ambiguous", names: h.saran.map((s) => s.kode) } : { kind: "none" };
+}
+
+// label/merek/nama Price Book dari Simulator (public.kso_analyzer) — alias pencarian alat. Cache 10 menit;
+// dibaca di koneksi biasa (bukan tx bot) supaya tabel yang tak ada di lingkungan uji tak membatalkan transaksi.
+let cacheAlias: { at: number; peta: Map<string, string[]> } | null = null;
+async function aliasAnalyzer(): Promise<Map<string, string[]>> {
+  if (cacheAlias && Date.now() - cacheAlias.at < 600_000) return cacheAlias.peta;
+  const peta = new Map<string, string[]>();
+  try {
+    const rows = await db()`select kode, to_jsonb(a) as j from public.kso_analyzer a`;
+    for (const r of rows) {
+      const j = (r.j ?? {}) as Record<string, unknown>;
+      const v = ["label", "brand", "pricebook_nama", "pricebook_kode"].map((k) => j[k]).filter((x): x is string => typeof x === "string" && !!x.trim());
+      peta.set(String(r.kode), [...(peta.get(String(r.kode)) ?? []), ...v]);
+    }
+  } catch { /* tanpa alias — katalog kso.alat saja */ }
+  cacheAlias = { at: Date.now(), peta };
+  return peta;
+}
+
+async function muatKatalog(tx: Tx, alias: Map<string, string[]>): Promise<AlatKatalog[]> {
+  const rows = await tx`select a.kode, a.nama, k.label as kategori from kso.alat a join kso.kategori k on k.kode = a.kategori order by a.kode`;
+  return rows.map((r) => ({ kode: String(r.kode), nama: String(r.nama), kategori: r.kategori ? String(r.kategori) : null, alias: alias.get(String(r.kode)) ?? [] }));
+}
+
+/** Kandidat nama pengirim untuk dicocokkan dengan "#KSO NAMA": nama AM master + panggilan + pushname WA. */
+async function namaPengirim(amId: string, k: KsoKonteks): Promise<string[]> {
+  const out = [k.nama, k.pushname ?? null];
+  try {
+    const [r] = await db()`select nama, panggilan from master_user where am_id = ${amId}`;
+    if (r) out.push(r.nama ? String(r.nama) : null, r.panggilan ? String(r.panggilan) : null);
+  } catch { /* master_user tak terbaca → nama resolveSender + pushname saja */ }
+  return out.filter((x): x is string => !!x && !!x.trim());
+}
+
+// ---------------------------------------------------------------- lampiran PDF
+
+export interface LampiranWa {
+  /** wa_message.message_id pesan PDF. */
+  wa_message_id: string | null;
+  media_path: string;
+}
+interface OcrLampiran {
+  lampiran: LampiranWa;
+  hasil: HasilOcrCprr;
+  sha256: string | null;
+}
+
+/** Baca PDF lewat services/ai /kso/ocr-cprr (di LUAR transaksi — bisa puluhan detik). Tak pernah melempar. */
+async function bacaLampiran(l: LampiranWa): Promise<OcrLampiran> {
+  let buf: Buffer;
+  try {
+    buf = await readFile(l.media_path);
+  } catch {
+    return { lampiran: l, hasil: { ok: false, galat: "pdf-rusak" }, sha256: null };
+  }
+  const sha256 = createHash("sha256").update(buf).digest("hex");
+  const r = await callAi("/kso/ocr-cprr", { pdf_base64: buf.toString("base64") }, { timeoutMs: 120_000 });
+  if (r.status >= 400) return { lampiran: l, hasil: { ok: false, galat: "ai-tak-terjangkau" }, sha256 };
+  const hasil = r.data as HasilOcrCprr;
+  // teks OCR utuh bisa panjang; cukup potongan untuk audit
+  if (typeof hasil.teks_ocr === "string" && hasil.teks_ocr.length > 20_000) hasil.teks_ocr = hasil.teks_ocr.slice(0, 20_000);
+  return { lampiran: l, hasil, sha256 };
+}
+
+function sumberDariLampiran(tanggal: string | null): string {
+  return `Lampiran Simulator CPRR ${tanggal ?? new Date().toISOString().slice(0, 10)}`;
 }
 
 // ---------------------------------------------------------------- handler
@@ -412,76 +551,205 @@ export function pilihAlat(teks: string, katalog: { kode: string; nama: string }[
 export interface KsoKonteks {
   am_id: string;
   nama: string;
-  /** Teks rencana: isi pesan #KSO, atau transkrip voice note. */
-  teks: string;
+  /** Pushname WA pengirim — kandidat nama untuk "#KSO NAMA". */
+  pushname?: string | null;
   perintah: KsoPerintah;
-  transkrip?: string;
   wa_message_id: string | null;
+  /** PDF di pesan ini (caption #KSO) atau pasangannya dalam jendela 10 menit. */
+  lampiran?: LampiranWa | null;
+  /** Cari PDF dekat pesan #KSO lain (dipakai saat isian tertunda akhirnya jadi draft). */
+  cariLampiranDekat?: (waMessageId: string) => Promise<LampiranWa | null>;
 }
+type Hasil = { balasan: string; hasil: Record<string, unknown> };
 
-interface Isian {
-  faskes_teks?: string | null;
-  alat_teks?: string | null;
-  jumlah?: number | null;
-  volume_estimasi?: number | null;
-  volume_sumber?: string | null;
-  harga_per_test?: number | null;
-  pakai_harga_daftar?: boolean | null;
-  tenor_bulan?: number | null;
-  hari_kerja?: number | null;
-  unit_status?: string | null;
-  biaya_instalasi?: number | null;
-  klausul_khusus?: string[] | null;
-  pendukung?: { nama: string; tipe: string | null; tanggal: string | null; cara: string | null }[];
-  kompetitor_alat?: string | null;
-  kompetitor_kontrak_habis?: string | null;
-  risiko_catatan?: string | null;
-  lead_asal?: string | null;
-  harga_pesaing?: number | null;
-  alasan_strategis?: string | null;
-}
-
-async function ekstrak(teks: string): Promise<Isian | null> {
-  const r = await callAi("/kso/ekstrak", { teks }, { timeoutMs: 60_000 });
-  if (r.status >= 400 || r.data.galat) return null;
-  return (r.data.isian as Isian) ?? null;
-}
-
-export async function transkripSuara(mediaPath: string): Promise<string | null> {
-  let b64: string;
-  try {
-    b64 = (await readFile(mediaPath)).toString("base64");
-  } catch {
-    return null;
-  }
-  const fmt = (mediaPath.split(".").pop() ?? "ogg").toLowerCase();
-  const r = await callAi("/transkrip", { audio_b64: b64, format: fmt }, { timeoutMs: 90_000 });
-  if (r.status >= 400 || r.data.galat) return null;
-  const t = String(r.data.teks ?? "").trim();
-  return t || null;
-}
-
-/** Ubah hasil ekstraksi jadi p_isian lengkapi_draft: HANYA kunci yang bernilai. */
-function isianLengkapi(x: Isian, hargaStandar: number | null): Record<string, unknown> {
-  const o: Record<string, unknown> = {};
-  const salin = ["jumlah", "volume_estimasi", "volume_sumber", "harga_per_test", "tenor_bulan", "hari_kerja", "unit_status", "biaya_instalasi",
-    "kompetitor_alat", "kompetitor_kontrak_habis", "risiko_catatan", "lead_asal", "harga_pesaing", "alasan_strategis"] as const;
-  for (const k of salin) if (x[k] != null) o[k] = x[k];
-  if (o.harga_per_test == null && x.pakai_harga_daftar === true && hargaStandar != null) o.harga_per_test = hargaStandar;
-  if (Array.isArray(x.klausul_khusus)) o.klausul = x.klausul_khusus;
-  return o;
-}
-
-function pendukungLengkap(x: Isian) {
-  const ok = (x.pendukung ?? []).filter((p) => p.tipe);
+/** Ajukan satu draft (= "#KSO kirim") dan susun teks hasil zona. Dipakai juga oleh pengajuan otomatis. */
+async function ajukanDraft(tx: Tx, id: number, k: Pick<KsoKonteks, "am_id" | "nama">): Promise<Hasil> {
+  const [j] = await tx`select kso.app_bot_ajukan(${id}, ${k.am_id})::text as jalur`;
+  const [r] = await tx`select nomor, alasan_forum from kso.rencana_kso where id = ${id}`;
+  const [z] = await tx`select r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
+                              m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai,
+                              coalesce((select array_agg(g.no order by g.no) from kso.gerbang_hasil g
+                                         where g.rencana_id = r.id and g.no between 2 and 7 and g.status <> 'hijau'), '{}') as belum_hijau,
+                              (select g.status::text from kso.gerbang_hasil g where g.rencana_id = r.id and g.no = 2) as gerbang2
+                         from kso.rencana_kso r left join kso.mandat m on m.rencana_id = r.id where r.id = ${id}`;
+  const zf = teksZonaForum({ zona: z?.zona ?? null, zona_dasar: z?.zona_dasar ?? null, alasan_forum: r.alasan_forum ?? null,
+                             belum_hijau: (z?.belum_hijau ?? []).map(Number), gerbang2: z?.gerbang2 ?? null });
+  const gpm = z?.gpm != null ? ` (GPM ${(Number(z.gpm) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%)` : "";
   return {
-    json: ok.map((p) => ({ nama: p.nama, tipe: p.tipe, ...(p.tanggal ? { tanggal: p.tanggal } : {}), ...(p.cara ? { cara: p.cara } : {}) })),
-    tanpaTipe: (x.pendukung ?? []).filter((p) => !p.tipe).map((p) => p.nama),
+    balasan:
+      `${r.nomor} diajukan, ${k.nama}.\n` +
+      (j.jalur === "AM"
+        ? `→ ZONA AM${gpm}: lolos tanpa forum, kamu memutus sendiri. Mandat berlaku s/d ${z.sampai}: harga pembuka ${rp(z.pembuka)}, target ${rp(z.target)}, batas bawah ${rp(z.lantai)}/test. Di bawah batas bawah → #KSO kelonggaran.`
+        : j.jalur === "CEPAT"
+          ? `→ ZONA 2 HOD${gpm}: dua HOD memutus maksimal 1 hari kerja.`
+          : `→ ${zf.label}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`),
+    hasil: { aksi: "kirim", rencana_id: id, nomor: r.nomor, jalur: j.jalur },
   };
 }
 
+interface OpsiSelesai {
+  baru: boolean;
+  catatan?: string[];
+  tanpaTipe?: string[];
+  alatTeks?: string;
+  faskesTeks?: string;
+  ocr?: OcrLampiran | null;
+  hasil?: Record<string, unknown>;
+}
+
+/**
+ * Langkah akhir semua jalur draft: catat lampiran baru (atau cocokkan ulang lampiran terakhir dengan isian sekarang),
+ * baca draft, hitung "Belum lengkap"; lengkap → ajukan otomatis (savepoint: gagal mengajukan tak membatalkan isian).
+ */
+async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Hasil> {
+  const alias = await aliasAnalyzer();
+  const nama = await namaPengirim(k.am_id, k);
+  if (k.perintah.nama) nama.unshift(k.perintah.nama);
+  return sebagaiBot(async (tx) => {
+    const katalog = await muatKatalog(tx, alias);
+    const infoLampiran: string[] = [];
+    const awal = await bacaDraft(tx, id);
+    if (!awal) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", rencana_id: id } };
+    const bahan = (d: DraftTampil) => ({
+      namaAm: nama, faskes: [d.faskes, o.faskesTeks], alat_kode: d.alat_kode, alat_nama: d.alat,
+      volume_estimasi: d.volume_estimasi, tenor_bulan: d.tenor_bulan, kompetitor_alat: d.kompetitor_alat ?? null,
+      harga_pesaing: d.harga_pesaing ?? null, harga_per_test: d.harga_per_test,
+    });
+    const terkunci = !["DRAFT", "DITAHAN"].includes(awal.status);
+    let lampiranHasil: Record<string, unknown> | undefined;
+    if (o.ocr) {
+      const cek = cocokkanLampiran(o.ocr.hasil, bahan(awal), katalog);
+      await tx`select kso.app_bot_catat_lampiran(${id}, ${k.am_id}, ${o.ocr.lampiran.wa_message_id}, ${o.ocr.lampiran.media_path}, ${o.ocr.sha256},
+                 ${tx.json(o.ocr.hasil as never)}, ${tx.json(cek.cocok as never)}, ${cek.lolos}, ${cek.hari_kerja},
+                 ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
+      infoLampiran.push(...cek.info);
+      lampiranHasil = { lolos: cek.lolos, beda: cek.beda.length };
+      if (terkunci)
+        return { balasan: `PDF untuk ${awal.nomor ?? `D${id}`} dicatat sebagai arsip — usulannya sudah diajukan, isiannya tidak berubah.`,
+                 hasil: { aksi: "lampiran", rencana_id: id, lampiran: lampiranHasil } };
+    } else if (!terkunci) {
+      // isian berubah → lampiran terakhir dicocokkan ulang (AM cukup mengoreksi isian, tak perlu kirim PDF lagi)
+      const [l] = await tx`select wa_message_id, media_path, sha256, hasil_ocr, cocok, lolos from kso.rencana_lampiran
+                            where rencana_id = ${id} order by dibuat_at desc, id desc limit 1`;
+      const h = l?.hasil_ocr as HasilOcrCprr | undefined;
+      if (l && l.wa_message_id && h?.ok) {
+        const cek = cocokkanLampiran(h, bahan(awal), katalog);
+        if (cek.lolos !== Boolean(l.lolos) || JSON.stringify(cek.cocok) !== JSON.stringify(l.cocok)) {
+          await tx`select kso.app_bot_catat_lampiran(${id}, ${k.am_id}, ${String(l.wa_message_id)}, ${l.media_path ?? null}, ${l.sha256 ?? null},
+                     ${tx.json(h as never)}, ${tx.json(cek.cocok as never)}, ${cek.lolos}, ${cek.hari_kerja},
+                     ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
+          lampiranHasil = { lolos: cek.lolos, dicek_ulang: true };
+        }
+      }
+    }
+    const d = (await bacaDraft(tx, id))!;
+    const kurang = kurangDraft(d);
+    let diajukan: Hasil | null = null;
+    let galatAjukan: string | null = null;
+    if (!kurang.length && (d.status === "DRAFT" || d.status === "DITAHAN")) {
+      try {
+        diajukan = await tx.savepoint(async (sp) => ajukanDraft(sp as unknown as Tx, id, k));
+      } catch (e) {
+        galatAjukan = (e as Error).message;
+      }
+    }
+    const catatan = [...(o.catatan ?? [])];
+    if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
+    const balasan = formatBalasanDraft(d, { baru: o.baru, nama: k.nama, tanpaTipe: o.tanpaTipe, catatan, alatTeks: o.alatTeks,
+                                            infoLampiran, diajukan: diajukan?.balasan });
+    return {
+      balasan,
+      hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci),
+               ...(lampiranHasil ? { lampiran: lampiranHasil } : {}),
+               ...(diajukan ? { diajukan: true, nomor: diajukan.hasil.nomor, jalur: diajukan.hasil.jalur } : {}),
+               ...(galatAjukan ? { galat_ajukan: galatAjukan.slice(0, 200) } : {}) },
+    };
+  });
+}
+
+/** PDF yang datang terpisah (sesudah draftnya ada) — dipanggil inbound dari baris dokumen. */
+export async function prosesLampiranKso(
+  k: Pick<KsoKonteks, "am_id" | "nama" | "pushname" | "wa_message_id">, rencanaId: number, lampiran: LampiranWa,
+): Promise<Hasil> {
+  const ocr = await bacaLampiran(lampiran);
+  const ks: KsoKonteks = { ...k, perintah: { aksi: "lengkapi", draftId: rencanaId, isi: "" } };
+  try {
+    const r = await selesaikan(ks, rencanaId, { baru: false, ocr, hasil: { aksi: "lampiran" } });
+    return r;
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, `D${rencanaId}`), hasil: { aksi: "lampiran", error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+}
+
+/** "#KSO ALAT 1" / "#KSO ALAT: Z50" (tanpa D) atau "#KSO D62 ALAT 2": pilih alat untuk isian tertunda. */
+async function pilihAlatTertunda(k: KsoKonteks, alatTeks: string, rencanaId: number | null): Promise<Hasil | null> {
+  const alias = await aliasAnalyzer();
+  const t = await sebagaiBot(async (tx) => {
+    const katalog = await muatKatalog(tx, alias);
+    const [row] = await tx`select id::int, faskes_id, isian, saran, wa_message_id from kso.intake_tertunda
+                            where am_id = ${k.am_id} and selesai_at is null and rencana_id is not distinct from ${rencanaId}
+                              and dibuat_at > now() - interval '24 hours'
+                            order by dibuat_at desc limit 1`;
+    return { katalog, row };
+  });
+  const angka = /^\s*(\d)\s*$/.exec(alatTeks);
+  if (!t.row) {
+    if (rencanaId != null && !angka) return null; // koreksi alat biasa untuk draft — jalur lengkapi
+    return {
+      balasan: rencanaId != null
+        ? `Tidak ada daftar pilihan alat yang terbuka untuk D${rencanaId}. Tulis kodenya: #KSO D${rencanaId} ALAT: KODE`
+        : `Tidak ada usulan yang menunggu pilihan alat, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`,
+      hasil: { error: "tanpa-tertunda" },
+    };
+  }
+  const saran = (t.row.saran as SaranAlat[]) ?? [];
+  let pilih: { kode: string; nama: string } | null = null;
+  if (angka) {
+    const s = saran[Number(angka[1]) - 1];
+    if (!s) return { balasan: `Nomor ${angka[1]} tidak ada di daftar (1–${saran.length}).`, hasil: { error: "nomor-alat-salah" } };
+    pilih = s;
+  } else {
+    const h = cariAlat(alatTeks, t.katalog);
+    if (h.kind === "one") pilih = { kode: h.kode, nama: h.nama };
+    else {
+      await sebagaiBot((tx) => tx`select kso.app_bot_simpan_tertunda(${k.am_id}, ${rencanaId}, ${t.row.faskes_id ?? null}, ${tx.json(t.row.isian as never)},
+                                    ${alatTeks}, ${tx.json(h.saran as never)}, ${t.row.wa_message_id ?? null})`);
+      return { balasan: balasanSaranAlat(k.nama, alatTeks, h, rencanaId != null ? `D${rencanaId}` : null, t.katalog.map((c) => c.kode)),
+               hasil: { aksi: "pilih-alat", error: "alat-belum-pasti", saran: h.saran.map((s) => s.kode) } };
+    }
+  }
+  const isian = { ...(t.row.isian as Record<string, unknown>) };
+  let id: number;
+  try {
+    id = await sebagaiBot(async (tx) => {
+      if (rencanaId != null) {
+        await tx`select kso.app_bot_lengkapi_draft(${rencanaId}, ${k.am_id}, ${tx.json({ alat_kode: pilih!.kode } as never)})`;
+        await tx`select kso.app_bot_tutup_tertunda(${t.row.id}, ${k.am_id})`;
+        return rencanaId;
+      }
+      const [b] = await tx`
+        select kso.app_bot_buat_draft(${k.am_id}, ${t.row.faskes_id}, ${pilih!.kode}, ${(isian.jumlah as number) ?? null},
+          ${(isian.volume_estimasi as number) ?? null}, null, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[],
+          '[]'::jsonb, ${t.row.wa_message_id ?? k.wa_message_id}, null, null)::int as id`;
+      await tx`select kso.app_bot_lengkapi_draft(${b.id}, ${k.am_id}, ${tx.json(isian as never)})`;
+      await tx`select kso.app_bot_tutup_tertunda(${t.row.id}, ${k.am_id})`;
+      return Number(b.id);
+    });
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, rencanaId != null ? `D${rencanaId}` : "D?"), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+  // PDF yang dikirim bersama pesan #KSO aslinya (menunggu karena draft belum ada) ikut diproses sekarang
+  let lampiran = k.lampiran ?? null;
+  if (!lampiran && rencanaId == null && t.row.wa_message_id && k.cariLampiranDekat) lampiran = await k.cariLampiranDekat(String(t.row.wa_message_id));
+  const ocr = lampiran ? await bacaLampiran(lampiran) : null;
+  return selesaikan(k, id, { baru: rencanaId == null, ocr, alatTeks: angka ? undefined : alatTeks,
+                             hasil: { aksi: rencanaId == null ? "baru" : "lengkapi", dari_tertunda: t.row.id, alat: pilih.kode } });
+}
+
 /** Kerjakan satu perintah #KSO. Mengembalikan teks balasan + ringkasan untuk processed_result. */
-export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil: Record<string, unknown> }> {
+export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
   const p = k.perintah;
   const ref = p.nomor ?? (p.draftId ? `D${p.draftId}` : "");
 
@@ -499,27 +767,17 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
         const id = await idDariNomor(tx, p);
         if (!id) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", ref } };
         if (p.aksi === "kirim") {
-          const [j] = await tx`select kso.app_bot_ajukan(${id}, ${k.am_id})::text as jalur`;
-          const [r] = await tx`select nomor, alasan_forum from kso.rencana_kso where id = ${id}`;
-          const [z] = await tx`select r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm, m.harga_pembuka::float8 as pembuka, m.harga_target::float8 as target,
-                                      m.harga_lantai::float8 as lantai, m.berlaku_sampai::text as sampai,
-                                      coalesce((select array_agg(g.no order by g.no) from kso.gerbang_hasil g
-                                                 where g.rencana_id = r.id and g.no between 2 and 7 and g.status <> 'hijau'), '{}') as belum_hijau,
-                                      (select g.status::text from kso.gerbang_hasil g where g.rencana_id = r.id and g.no = 2) as gerbang2
-                                 from kso.rencana_kso r left join kso.mandat m on m.rencana_id = r.id where r.id = ${id}`;
-          const zf = teksZonaForum({ zona: z?.zona ?? null, zona_dasar: z?.zona_dasar ?? null, alasan_forum: r.alasan_forum ?? null,
-                                     belum_hijau: (z?.belum_hijau ?? []).map(Number), gerbang2: z?.gerbang2 ?? null });
-          const gpm = z?.gpm != null ? ` (GPM ${(Number(z.gpm) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%)` : "";
-          return {
-            balasan:
-              `${r.nomor} diajukan, ${k.nama}.\n` +
-              (j.jalur === "AM"
-                ? `→ ZONA AM${gpm}: kamu memutus sendiri. Mandat berlaku s/d ${z.sampai}: harga pembuka ${rp(z.pembuka)}, target ${rp(z.target)}, batas bawah ${rp(z.lantai)}/test. Di bawah batas bawah → #KSO kelonggaran.`
-                : j.jalur === "CEPAT"
-                  ? `→ ZONA 2 HOD${gpm}: dua HOD memutus maksimal 1 hari kerja.`
-                  : `→ ${zf.label}${gpm}${r.alasan_forum ? ` (${r.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya (batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`),
-            hasil: { aksi: "kirim", rencana_id: id, nomor: r.nomor, jalur: j.jalur },
-          };
+          // syarat format baru (fee, kompetitor, lampiran PDF cocok, …) berlaku juga untuk pengajuan manual
+          const d = await bacaDraft(tx, id);
+          if (d && (d.status === "DRAFT" || d.status === "DITAHAN")) {
+            const q = kurangDraft(d);
+            if (q.length)
+              return {
+                balasan: `${ref} belum bisa diajukan, ${k.nama}. Belum lengkap (${q.length}):\n${q.map((t, i) => `${i + 1}. ${t.teks}`).join("\n")}\n\nJawab satu label per baris, mis.:\n${q.slice(0, 3).map((t) => t.contoh).join("\n")}`,
+                hasil: { aksi: "kirim", rencana_id: id, error: "belum-lengkap", kurang: q.map((t) => t.kunci) },
+              };
+          }
+          return ajukanDraft(tx, id, k);
         }
         if (p.aksi === "kelonggaran") await tx`select kso.app_bot_minta_kelonggaran(${id}, ${k.am_id}, ${p.isi})`;
         else await tx`select kso.app_bot_catat_kalah(${id}, ${k.am_id}, ${p.isi})`;
@@ -535,8 +793,8 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
   }
 
   // "#KSO D12 volume 900" untuk usulan yang SUDAH memegang mandat → volume turun (Pedoman: > 20% = mandat dihitung
-  // ulang; keputusan user 5 Nov: dilaporkan AM lewat #KSO). Deterministik, tanpa LLM. Draft → alur lengkapi biasa.
-  const volBaru = p.aksi === "lengkapi" ? volumeDariTeks(k.teks) : null;
+  // ulang; keputusan user 5 Nov: dilaporkan AM lewat #KSO). Deterministik. Draft → alur lengkapi biasa (TES).
+  const volBaru = p.aksi === "lengkapi" ? volumeDariTeks(p.isi) : null;
   if (volBaru != null && ref) {
     try {
       const hasilVol = await sebagaiBot(async (tx) => {
@@ -555,82 +813,154 @@ export async function prosesKso(k: KsoKonteks): Promise<{ balasan: string; hasil
     }
   }
 
-  // baru / lengkapi: ekstraksi LLM dulu (di luar transaksi — bisa 10–60 detik)
-  if (!k.teks.trim()) return { balasan: `Isinya kosong. ${p.aksi === "lengkapi" ? `Jawab: #KSO ${ref} <jawaban>` : KSO_BANTUAN}`, hasil: { error: "isi-kosong" } };
-  const x = await ekstrak(k.teks);
-  if (!x) return { balasan: "Maaf, pesan belum bisa dibaca sistem (AI sedang gangguan). Coba kirim ulang beberapa menit lagi.", hasil: { error: "ekstraksi-gagal" } };
+  const x = bacaIsianFormat(p.isi);
+  const tidakTerbaca = x.tidakTerbaca.map((t) => `${NAMA_LABEL[t.label]} "${t.nilai}" tidak terbaca — ${t.sebab}.`);
+  const tanpaTipe = x.pendukung.filter((q) => !q.tipe).map((q) => q.nama);
 
+  if (p.aksi === "lengkapi") return lengkapi(k, x, ref, tidakTerbaca, tanpaTipe);
+
+  // ---- baru
+  // pilih alat untuk isian tertunda: "#KSO ALAT 1" (tanpa nama, tanpa faskes)
+  if (!p.nama && x.alat && !x.faskes) return (await pilihAlatTertunda(k, x.alat, null))!;
+  if (!x.faskes || !x.alat) return { balasan: balasanFormatSalah(x), hasil: { error: "format-tidak-sesuai", label: x.label } };
+  const kandidat = await namaPengirim(k.am_id, k);
+  if (!p.nama)
+    return { balasan: `Nama kamu belum ditulis di baris #KSO, ${k.nama}. Usulan BELUM dicatat — tulis baris pertama: #KSO ${k.nama.split(/\s+/)[0].toUpperCase()}`,
+             hasil: { error: "nama-kosong" } };
+  if (!namaCocok(p.nama, kandidat))
+    return {
+      balasan: `Maaf, nama di baris #KSO ("${p.nama}") tidak sama dengan pengirim pesan (${k.nama}). Usulan BELUM dicatat.\n` +
+        `Usulan KSO hanya bisa dikirim oleh AM-nya sendiri — tulis nama kamu sendiri: #KSO ${k.nama.split(/\s+/)[0].toUpperCase()}`,
+      hasil: { error: "nama-tidak-cocok", nama_kepala: p.nama },
+    };
+
+  const alias = await aliasAnalyzer();
+  let tahap1: Hasil | { id: number; alatTeks: string };
   try {
-    return await sebagaiBot(async (tx) => {
-      const catatan: string[] = [];
-      const { json: pendukung, tanpaTipe } = pendukungLengkap(x);
-
-      if (p.aksi === "lengkapi") {
-        const id = await idDariNomor(tx, p);
-        if (!id) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", ref } };
-        const awal = await bacaDraft(tx, id);
-        const isian = isianLengkapi(x, awal?.harga_standar ?? null);
-        if (x.alat_teks) {
-          const katalog = (await tx`select kode, nama from kso.alat`) as unknown as { kode: string; nama: string }[];
-          const a = pilihAlat(x.alat_teks, katalog);
-          if (a.kind === "one") isian.alat_kode = a.nilai;
-          else catatan.push(`Alat "${x.alat_teks}" ${a.kind === "none" ? "tidak ada di katalog" : `ambigu (${a.names.join(" / ")})`} — alat tidak diubah.`);
-        }
-        if (x.faskes_teks && awal && !awal.faskes.toLowerCase().includes(x.faskes_teks.toLowerCase()))
-          catatan.push("Faskes tidak bisa diganti di draft yang sama — kirim #KSO baru untuk faskes lain.");
-        if (pendukung.length) isian.pendukung = pendukung;
-        if (Object.keys(isian).length === 0 && tanpaTipe.length === 0)
-          return {
-            balasan: `Tidak ada isian baru yang terbaca dari jawabanmu untuk ${ref}. Tulis langsung, mis. "#KSO ${ref} tenor 36 bulan".`,
-            hasil: { aksi: "lengkapi", rencana_id: id, kosong: true },
-          };
-        await tx`select kso.app_bot_lengkapi_draft(${id}, ${k.am_id}, ${tx.json(isian as never)})`;
-        const d = await bacaDraft(tx, id);
-        return {
-          balasan: formatBalasanDraft(d!, { baru: false, nama: k.nama, transkrip: k.transkrip, tanpaTipe, catatan }),
-          hasil: { aksi: "lengkapi", rencana_id: id, kunci: Object.keys(isian) },
-        };
-      }
-
-      // baru
-      if (!x.faskes_teks)
-        return { balasan: `Faskesnya belum disebut, ${k.nama}. Tulis "Faskes: <nama RS/klinik>, <kota>" lalu kirim ulang #KSO.`, hasil: { error: "faskes-kosong" } };
-      const f = await cocokFaskes(tx, x.faskes_teks);
+    tahap1 = await sebagaiBot(async (tx): Promise<Hasil | { id: number; alatTeks: string }> => {
+      const f = await cocokFaskes(tx, x.faskes!);
       if (f.kind === "none")
-        return { balasan: `Faskes "${x.faskes_teks}" tidak ketemu di master, ${k.nama}. Draft BELUM dibuat — cek ejaan nama faskes lalu kirim ulang #KSO.`, hasil: { error: "faskes-tidak-ada", q: x.faskes_teks } };
+        return { balasan: `Faskes "${x.faskes}" tidak ketemu di master, ${k.nama}. Draft BELUM dibuat — cek ejaan nama faskes lalu kirim ulang #KSO.`, hasil: { error: "faskes-tidak-ada", q: x.faskes } };
       if (f.kind === "ambiguous")
         return {
-          balasan: `Faskes "${x.faskes_teks}" ada beberapa, ${k.nama}:\n${f.names.map((n, i) => `${i + 1}. ${n}`).join("\n")}\nKirim ulang #KSO dengan nama faskes yang lebih lengkap. Draft BELUM dibuat.`,
+          balasan: `Faskes "${x.faskes}" ada beberapa, ${k.nama}:\n${f.names.map((n, i) => `${i + 1}. ${n}`).join("\n")}\nKirim ulang #KSO dengan nama faskes yang lebih lengkap. Draft BELUM dibuat.`,
           hasil: { error: "faskes-ambigu", kandidat: f.names },
         };
-      const katalog = (await tx`select kode, nama from kso.alat`) as unknown as { kode: string; nama: string }[];
-      const a = x.alat_teks ? pilihAlat(x.alat_teks, katalog) : ({ kind: "none" } as const);
-      if (a.kind !== "one")
-        return {
-          balasan:
-            (a.kind === "ambiguous"
-              ? `Alat "${x.alat_teks}" cocok ke beberapa tipe: ${a.names.join(" / ")}.`
-              : `Alat${x.alat_teks ? ` "${x.alat_teks}"` : ""} ${x.alat_teks ? "tidak ada di katalog KSO" : "belum disebut"}.`) +
-            `\nPilihan: ${katalog.map((c) => c.kode).join(", ")}. Kirim ulang #KSO dengan tipe alatnya. Draft BELUM dibuat.`,
-          hasil: { error: a.kind === "ambiguous" ? "alat-ambigu" : "alat-tidak-ada", q: x.alat_teks },
-        };
-
-      const [kat] = await tx`select k.harga_standar_per_test::float8 as h from kso.alat a join kso.kategori k on k.kode = a.kategori where a.kode = ${a.nilai}`;
-      const isian = isianLengkapi(x, kat?.h ?? null);
-      // buat_draft rujukan butuh nilai jumlah (coalesce 1) — yang DINYATAKAN dicatat lewat lengkapi_draft
+      const katalog = await muatKatalog(tx, alias);
+      const isian = isianLengkapiDariFormat(x);
+      const a = cariAlat(x.alat!, katalog);
+      if (a.kind !== "one") {
+        const [t] = await tx`select kso.app_bot_simpan_tertunda(${k.am_id}, null, ${f.nilai}, ${tx.json(isian as never)}, ${x.alat!},
+                               ${tx.json(a.saran as never)}, ${k.wa_message_id})::int as id`;
+        return { balasan: balasanSaranAlat(k.nama, x.alat!, a, null, katalog.map((c) => c.kode)),
+                 hasil: { aksi: "baru", error: "alat-belum-pasti", tertunda_id: t.id, faskes_id: f.nilai, saran: a.saran.map((s) => s.kode) } };
+      }
       const [b] = await tx`
-        select kso.app_bot_buat_draft(${k.am_id}, ${f.nilai}, ${a.nilai}, ${(isian.jumlah as number) ?? null}, ${(isian.volume_estimasi as number) ?? null},
-          ${(isian.volume_sumber as string) ?? null}, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[],
-          ${tx.json(pendukung as never)}, ${k.wa_message_id}, null, null)::int as id`;
+        select kso.app_bot_buat_draft(${k.am_id}, ${f.nilai}, ${a.kode}, ${(isian.jumlah as number) ?? null}, ${(isian.volume_estimasi as number) ?? null},
+          null, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[], '[]'::jsonb, ${k.wa_message_id}, null, null)::int as id`;
       await tx`select kso.app_bot_lengkapi_draft(${b.id}, ${k.am_id}, ${tx.json(isian as never)})`;
-      const d = await bacaDraft(tx, b.id);
-      return {
-        balasan: formatBalasanDraft(d!, { baru: true, nama: k.nama, transkrip: k.transkrip, tanpaTipe, catatan }),
-        hasil: { aksi: "baru", rencana_id: b.id, faskes_id: f.nilai, alat: a.nilai, kunci: Object.keys(isian) },
-      };
+      return { id: Number(b.id), alatTeks: x.alat! };
     });
   } catch (e) {
     const m = (e as Error).message;
-    return { balasan: terjemahGalatKso(m, ref || "D?"), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+    return { balasan: terjemahGalatKso(m, "D?"), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+  if ("balasan" in tahap1) return tahap1;
+  const ocr = k.lampiran ? await bacaLampiran(k.lampiran) : null;
+  try {
+    return await selesaikan(k, tahap1.id, { baru: true, ocr, alatTeks: tahap1.alatTeks, faskesTeks: x.faskes, tanpaTipe,
+      catatan: [...tidakTerbaca, ...(x.lampiran && !k.lampiran ? ["LAMPIRAN: ADA — PDF-nya belum terlihat; kirim PDF Simulator di chat ini dalam 10 menit."] : [])],
+      hasil: { aksi: "baru" } });
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, `D${tahap1.id}`), hasil: { aksi: "baru", rencana_id: tahap1.id, error: "kso-galat", galat: m.slice(0, 200) } };
   }
 }
+
+/** "#KSO D12 LABEL: isi" (beberapa baris boleh) dan "#KSO D12" (+ PDF). */
+async function lengkapi(k: KsoKonteks, x: IsianFormat, ref: string, tidakTerbaca: string[], tanpaTipe: string[]): Promise<Hasil> {
+  const p = k.perintah;
+  let id: number | null;
+  try {
+    id = await sebagaiBot((tx) => idDariNomor(tx, p));
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+  if (!id) return { balasan: "Rencana itu bukan atas nama Anda, atau nomornya tidak ada.", hasil: { error: "ref-tidak-ada", ref } };
+
+  // "#KSO D62" tanpa isi: PDF pasangannya, atau ringkasan status draft
+  if (!p.isi.trim()) {
+    const ocr = k.lampiran ? await bacaLampiran(k.lampiran) : null;
+    try {
+      return await selesaikan(k, id, { baru: false, ocr, hasil: { aksi: k.lampiran ? "lampiran" : "status" },
+        catatan: k.lampiran ? [] : [`PDF Simulator untuk ${ref}: kirim di chat ini dalam ${KSO_JENDELA_MENIT} menit.`] });
+    } catch (e) {
+      const m = (e as Error).message;
+      return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+    }
+  }
+  if (x.alat && /^\s*\d\s*$/.test(x.alat)) {
+    const r = await pilihAlatTertunda(k, x.alat, id);
+    if (r) return r;
+  }
+  if (!x.label.length)
+    return {
+      balasan: `Tidak ada isian yang dikenali untuk ${ref}. Tulis berlabel, satu per baris, mis.:\n#KSO ${ref} PENDUKUNG: dr. Contoh, kepala instalasi lab\n` +
+        `Label: ${Object.values(NAMA_LABEL).filter((l) => l !== "LAMPIRAN").join(", ")}.`,
+      hasil: { aksi: "lengkapi", rencana_id: id, kosong: true },
+    };
+
+  const alias = await aliasAnalyzer();
+  const catatan: string[] = [...tidakTerbaca];
+  let alatTeks: string | undefined;
+  try {
+    const saranBalas = await sebagaiBot(async (tx): Promise<Hasil | null> => {
+      const awal = await bacaDraft(tx, id!);
+      const isian = isianLengkapiDariFormat(x);
+      if (x.alat) {
+        const katalog = await muatKatalog(tx, alias);
+        const a = cariAlat(x.alat, katalog);
+        if (a.kind === "one") { isian.alat_kode = a.kode; alatTeks = x.alat; }
+        else {
+          await tx`select kso.app_bot_simpan_tertunda(${k.am_id}, ${id}, null, '{}'::jsonb, ${x.alat}, ${tx.json(a.saran as never)}, ${k.wa_message_id})`;
+          catatan.push(balasanSaranAlat(k.nama, x.alat, a, ref, katalog.map((c) => c.kode)));
+        }
+      }
+      if (x.faskes && awal && !awal.faskes.toLowerCase().includes(x.faskes.toLowerCase()))
+        catatan.push("Faskes tidak bisa diganti di draft yang sama — kirim #KSO baru untuk faskes lain.");
+      if (Object.keys(isian).length === 0 && tanpaTipe.length === 0 && !catatan.length)
+        return { balasan: `Tidak ada isian baru yang terbaca untuk ${ref}. Tulis langsung, mis. "#KSO ${ref} MASA KSO: 36".`,
+                 hasil: { aksi: "lengkapi", rencana_id: id, kosong: true } };
+      if (Object.keys(isian).length) await tx`select kso.app_bot_lengkapi_draft(${id}, ${k.am_id}, ${tx.json(isian as never)})`;
+      return null;
+    });
+    if (saranBalas) return saranBalas;
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+  const ocr = k.lampiran ? await bacaLampiran(k.lampiran) : null;
+  try {
+    return await selesaikan(k, id, { baru: false, ocr, alatTeks, tanpaTipe, catatan, faskesTeks: x.faskes,
+                                     hasil: { aksi: "lengkapi", kunci: x.label } });
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, ref), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+}
+
+/** Pesan PDF (wa_message.message_id) yang sudah tercatat sebagai lampiran usulan mana pun — supaya satu PDF diproses sekali. */
+export async function lampiranSudahDicatat(waIds: string[]): Promise<Set<string>> {
+  if (!waIds.length) return new Set();
+  const rows = await sebagaiBot((tx) => tx`select distinct wa_message_id from kso.rencana_lampiran where wa_message_id = any(${waIds})`);
+  return new Set(rows.map((r) => String(r.wa_message_id)));
+}
+
+/** Untuk inbound: pesan #KSO ini boleh memakai PDF pasangan (usulan baru / "#KSO D12" / melengkapi). */
+export function ksoBolehLampiran(p: KsoPerintah): boolean {
+  return p.aksi === "baru" || p.aksi === "lengkapi";
+}
+
+export { teksGalatOcr };
+export type { HasilAlat };

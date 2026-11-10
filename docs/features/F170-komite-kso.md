@@ -136,3 +136,33 @@ ditulis. Penawaran pagi dikirim ke pemegang centang Sekretariat **dan** Penawara
 
 Setelah ke prod: **Sync Fitur** (2 kunci baru: `kso-komite-sekretariat`, `kso-komite-susunan`) → centang
 per grup → isi Susunan Komite dari layar.
+
+## Format WA sembilan isian + FEE + lampiran PDF Simulator (migrasi 302, 10 Nov 2026)
+
+Keputusan product owner: usulan baru HANYA lewat format berlabel (pengurai deterministik `apps/api/src/repo/kso-format.ts`,
+tanpa LLM). Jalur teks bebas (`/kso/ekstrak`) dan voice note dimatikan di API (audio ditandai `kso-suara-nonaktif`, tanpa balasan).
+
+```
+#KSO BUDI                      ← nama pengirim sendiri (dicocokkan ke nama/panggilan master + pushname)
+1. FASKES : RS CONTOH
+2. ALAT : ZYBIO Z50            ← pencarian alat: kode utuh / O↔0 / "Z 50" / merek + angka / kategori → 1 pasti atau 3 saran
+3. TES : 700 TEST/BULAN
+4. MASA KSO : 36 BULAN
+5. PERMINTAAN HARGA : 11.800/TEST
+6. FEE : 5%                    ← GPM dari harga × (1 − fee); harga minimum per zona = harga kotor biaya÷(1−g)÷(1−fee)
+7. KOMPETITOR : MEREK-MODEL-11.500
+8. KLAUSUL : ADA - isinya      ← detail tak dikenali = kode 'lainnya' (gerbang 7 merah)
+9. LAMPIRAN : ADA              ← PDF "KSO CPRR" di chat yang sama ±10 menit (pengirim sama, urutan bebas)
+```
+
+- Susulan: `#KSO D62 LABEL: isi` (PENDUKUNG, STATUS UNIT, ALASAN, KLAUSUL, HARI KERJA, JUMLAH, SUMBER, atau salah satu dari 9 label).
+- Alat tak pasti → draft BELUM dibuat (alat_kode NOT NULL + FK); isian disimpan di `kso.intake_tertunda`, AM memilih `#KSO ALAT 1` / `#KSO ALAT: Z50` (24 jam).
+- PDF dibaca `services/ai /kso/ocr-cprr`, dicocokkan (sales, faskes, alat, tes/bulan, masa, merek kompetitor), disimpan di `kso.rencana_lampiran`.
+  Cocok → hari kerja + sumber volume "Lampiran Simulator CPRR <tanggal>" (label `data`; Sekretariat tetap verifikasi untuk Forum).
+  Koreksi isian lewat WA memicu pencocokan ulang lampiran terakhir (tak perlu kirim PDF ulang).
+- Wajib sebelum diajukan (satu daftar `daftarKurang`, dipakai WA + dashboard): 9 isian + pendukung ≥ 1 bertipe + status unit +
+  bukti volume + alasan strategis (zona Direktur, kecuali HD) + detail klausul (bila ADA) + lampiran cocok.
+  Lengkap → diajukan OTOMATIS (sama dengan `#KSO kirim`, termasuk notifikasi HOD). `#KSO kirim D62` menolak bila masih kurang.
+- Dashboard API: `GET /kso-komite/:tab/daftar/belum-lengkap|lolos-tanpa-forum`, detail rencana memuat `fee_persen`, `harga_bersih`,
+  `lampiran_terakhir`, `lampiran[]`, `kurang[]`; berkas PDF `GET /kso-komite/:tab/rencana/:id/lampiran/:lid` (izin tab + RLS).
+- Uji: `scripts/qa/kso-komite/918_uji_fee_lampiran.sql`, `apps/api/src/repo/kso-format.test.ts`.
