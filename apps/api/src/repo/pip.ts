@@ -128,26 +128,26 @@ export interface MilestoneInput { judul: string; due_date: string }
 
 export function parseGoal(v: unknown): GoalInput {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
-  return { goal: required(o.goal, "goal", "goal", SHORT_MAX), target: clean(o.target, SHORT_MAX) };
+  return { goal: required(o.goal, "goal", "target perbaikan", SHORT_MAX), target: clean(o.target, SHORT_MAX) };
 }
 
 export function parseMilestone(v: unknown, start: string): MilestoneInput {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
-  if (!isIsoDate(o.due_date)) throw new PipError(400, "due_date harus YYYY-MM-DD", "due_date");
-  if (o.due_date < start) throw new PipError(400, "due_date tidak boleh sebelum tanggal mulai PIP", "due_date");
-  return { judul: required(o.judul, "judul", "judul milestone", SHORT_MAX), due_date: o.due_date };
+  if (!isIsoDate(o.due_date)) throw new PipError(400, "isi tenggat tahapan dengan tanggal yang benar", "due_date");
+  if (o.due_date < start) throw new PipError(400, "tenggat tahapan tidak boleh sebelum tanggal mulai PIP", "due_date");
+  return { judul: required(o.judul, "judul", "nama tahapan", SHORT_MAX), due_date: o.due_date };
 }
 
 export interface OutcomeInput { outcome: Outcome; catatan: string; end_date: string | null }
 
 /** Validasi outcome. extend WAJIB end_date baru (> end_date sekarang) — angkanya dari pengguna, tanpa batas bawaan. */
 export function parseOutcome(b: Record<string, unknown>, currentEnd: string): OutcomeInput {
-  if (!OUTCOMES.includes(b.outcome as Outcome)) throw new PipError(400, `outcome harus salah satu: ${OUTCOMES.join(", ")}`, "outcome");
+  if (!OUTCOMES.includes(b.outcome as Outcome)) throw new PipError(400, "pilih hasil akhir: lulus, diperpanjang, atau tidak lulus", "outcome");
   const outcome = b.outcome as Outcome;
-  const catatan = required(b.catatan, "catatan", "catatan outcome");
+  const catatan = required(b.catatan, "catatan", "catatan hasil akhir");
   if (outcome !== "extend") return { outcome, catatan, end_date: null };
-  if (!isIsoDate(b.end_date)) throw new PipError(400, "end_date baru wajib diisi (YYYY-MM-DD) untuk extend", "end_date");
-  if (b.end_date <= currentEnd) throw new PipError(400, "end_date baru harus setelah end_date saat ini", "end_date");
+  if (!isIsoDate(b.end_date)) throw new PipError(400, "isi tanggal berakhir baru bila PIP diperpanjang", "end_date");
+  if (b.end_date <= currentEnd) throw new PipError(400, "tanggal berakhir baru harus setelah tanggal berakhir sekarang", "end_date");
   return { outcome, catatan, end_date: b.end_date };
 }
 
@@ -239,8 +239,10 @@ export async function getCase(scope: DataScope, id: number): Promise<CaseDetail 
         FROM pip_milestone WHERE case_id = ${id} ORDER BY due_date, id`,
     sql`SELECT id, week_no, checkin_date::text AS checkin_date, catatan, created_by, created_at::text AS created_at
         FROM pip_checkin WHERE case_id = ${id} ORDER BY checkin_date, id`,
-    sql`SELECT event_type, human_actor, decision, payload, to_char(occurred_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI') AS occurred_at FROM audit_log
-        WHERE use_case_id = ${AUDIT_USE_CASE} AND correlation_id = ${`f70-case-${id}`} ORDER BY occurred_at, id`,
+    sql`SELECT event_type, human_actor, decision, payload, to_char(a.occurred_at AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI') AS occurred_at FROM audit_log a
+        -- Urut kolom asli (mikrodetik), BUKAN alias teks menitan di atas: seri dalam satu menit
+        -- dulu jatuh ke urutan id (uuid) → riwayat tampil acak (uji dev 10 Nov).
+        WHERE a.use_case_id = ${AUDIT_USE_CASE} AND a.correlation_id = ${`f70-case-${id}`} ORDER BY a.occurred_at, a.id`,
   ]);
   return {
     ...mapCase(r, today),
@@ -335,18 +337,18 @@ export async function startCase(
   const amId = required(b.am_id, "am_id", "am_id", 100);
   const alasan = required(b.alasan, "alasan", "alasan PIP");
   const start = b.start_date == null || b.start_date === "" ? wibDate() : b.start_date;
-  if (!isIsoDate(start)) throw new PipError(400, "start_date harus YYYY-MM-DD", "start_date");
+  if (!isIsoDate(start)) throw new PipError(400, "isi tanggal mulai dengan tanggal yang benar", "start_date");
   const goals = Array.isArray(b.goals) ? b.goals.map(parseGoal) : [];
-  if (!goals.length) throw new PipError(400, "minimal satu improvement goal wajib diisi", "goals");
+  if (!goals.length) throw new PipError(400, "isi minimal satu target perbaikan", "goals");
   const milestones = Array.isArray(b.milestones) ? b.milestones.map((m) => parseMilestone(m, start)) : [];
-  if (goals.length > MAX_ITEMS || milestones.length > MAX_ITEMS) throw new PipError(400, `maksimal ${MAX_ITEMS} goal/milestone saat memulai`, "goals");
+  if (goals.length > MAX_ITEMS || milestones.length > MAX_ITEMS) throw new PipError(400, `maksimal ${MAX_ITEMS} target/tahapan saat memulai`, "goals");
   const end = addDays(start, PIP_DURATION_DAYS);
   const sql = db();
   try {
     return await sql.begin(async (tx) => {
       const t = tx as unknown as Sql;
       const [emp] = await tx`SELECT id FROM employee WHERE am_id = ${amId} ORDER BY id LIMIT 1`;
-      if (!emp) throw new PipError(422, "karyawan belum tertaut ke profil employee (am_id) — tautkan dulu di Kelola Profil");
+      if (!emp) throw new PipError(422, "karyawan belum tertaut ke profil karyawan — tautkan dulu lewat Kelola Profil");
       const [c] = await tx`
         INSERT INTO pip_case (employee_id, start_date, end_date, alasan, created_by)
         VALUES (${String(emp.id)}, ${start}, ${end}, ${alasan}, ${oleh}) RETURNING id`;
@@ -362,7 +364,7 @@ export async function startCase(
     });
   } catch (e) {
     // Indeks unik parsial pip_case_aktif_uq: sudah ada PIP aktif (juga balapan dua klik).
-    if (isUnique(e)) throw new PipError(409, "karyawan ini sudah punya PIP aktif");
+    if (isUnique(e)) throw new PipError(409, "karyawan ini masih punya PIP yang berjalan — selesaikan dulu (isi hasil akhir) sebelum memulai yang baru");
     throw e;
   }
 }
@@ -371,7 +373,7 @@ export async function startCase(
 async function lockActive(tx: Sql, id: number): Promise<{ id: number; start_date: string; end_date: string }> {
   const [c] = await tx`SELECT id, status, start_date::text AS start_date, end_date::text AS end_date FROM pip_case WHERE id = ${id} FOR UPDATE`;
   if (!c) throw new PipError(404, "PIP tidak ditemukan");
-  if (c.status !== "aktif") throw new PipError(409, `PIP sudah ditutup (${String(c.status)})`);
+  if (c.status !== "aktif") throw new PipError(409, `PIP ini sudah selesai (${({ graduate: "lulus", terminate: "tidak lulus" } as Record<string, string>)[String(c.status)] ?? String(c.status)}) — tidak bisa diubah lagi`);
   return { id: Number(c.id), start_date: String(c.start_date), end_date: String(c.end_date) };
 }
 
@@ -402,13 +404,13 @@ export async function addMilestone(scope: DataScope, id: number, b: unknown, ole
 /** Putuskan milestone: tercapai / tidak_tercapai / belum (buka lagi). tidak_tercapai wajib beralasan. */
 export async function decideMilestone(scope: DataScope, milestoneId: number, b: { status?: unknown; catatan?: unknown }, oleh: string | null): Promise<{ ok: true }> {
   assertWrite(scope);
-  if (!MILESTONE_STATUS.includes(b.status as MilestoneStatus)) throw new PipError(400, `status harus salah satu: ${MILESTONE_STATUS.join(", ")}`, "status");
+  if (!MILESTONE_STATUS.includes(b.status as MilestoneStatus)) throw new PipError(400, "status tahapan tidak dikenal", "status");
   const status = b.status as MilestoneStatus;
   const catatan = clean(b.catatan);
-  if (status === "tidak_tercapai" && !catatan) throw new PipError(400, "alasan wajib diisi bila milestone tidak tercapai", "catatan");
+  if (status === "tidak_tercapai" && !catatan) throw new PipError(400, "isi alasan bila tahapan tidak tercapai", "catatan");
   return db().begin(async (tx) => {
     const [m] = await tx`SELECT id, case_id, judul FROM pip_milestone WHERE id = ${milestoneId} FOR UPDATE`;
-    if (!m) throw new PipError(404, "milestone tidak ditemukan");
+    if (!m) throw new PipError(404, "tahapan tidak ditemukan");
     await lockActive(tx as unknown as Sql, Number(m.case_id));
     await tx`
       UPDATE pip_milestone SET status = ${status}, catatan = ${catatan},
@@ -421,14 +423,14 @@ export async function decideMilestone(scope: DataScope, milestoneId: number, b: 
 
 export async function addCheckin(scope: DataScope, id: number, b: { checkin_date?: unknown; catatan?: unknown }, oleh: string | null): Promise<{ id: number; week_no: number }> {
   assertWrite(scope);
-  const catatan = required(b.catatan, "catatan", "catatan check-in");
+  const catatan = required(b.catatan, "catatan", "catatan evaluasi");
   const today = wibDate();
   const date = b.checkin_date == null || b.checkin_date === "" ? today : b.checkin_date;
-  if (!isIsoDate(date)) throw new PipError(400, "checkin_date harus YYYY-MM-DD", "checkin_date");
-  if (date > today) throw new PipError(400, "checkin_date tidak boleh di masa depan", "checkin_date");
+  if (!isIsoDate(date)) throw new PipError(400, "isi tanggal evaluasi dengan tanggal yang benar", "checkin_date");
+  if (date > today) throw new PipError(400, "tanggal evaluasi tidak boleh di masa depan", "checkin_date");
   return db().begin(async (tx) => {
     const c = await lockActive(tx as unknown as Sql, id);
-    if (date < c.start_date) throw new PipError(400, "checkin_date tidak boleh sebelum tanggal mulai PIP", "checkin_date");
+    if (date < c.start_date) throw new PipError(400, "tanggal evaluasi tidak boleh sebelum tanggal mulai PIP", "checkin_date");
     const wk = weekNo(c.start_date, date);
     const [r] = await tx`INSERT INTO pip_checkin (case_id, week_no, checkin_date, catatan, created_by) VALUES (${id}, ${wk}, ${date}, ${catatan}, ${oleh}) RETURNING id`;
     await logAudit(tx as unknown as Sql, id, "pip.checkin_added", oleh, { checkin_id: Number(r.id), week_no: wk, checkin_date: date });
