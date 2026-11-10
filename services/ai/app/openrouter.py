@@ -105,6 +105,13 @@ def extract_models() -> List[str]:
     return [primary, fallback]
 
 
+def ticket_triage_models() -> List[str]:
+    """Model OpenRouter untuk F26 ticket triage (token tier LOW → Haiku)."""
+    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    fallback = os.environ.get("TICKET_TRIAGE_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
+    return [primary, fallback]
+
+
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis, growth-levers,
     weekend-briefing, pola-profile (Haiku — Sonnet tak sepadan biayanya)."""

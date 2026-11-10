@@ -494,3 +494,22 @@ class KsoOcrCprrResponse(BaseModel):
     # Cek silang angka (mis. capex/test ≠ capex ÷ total test) — penanda salah
     # baca, bukan penolak.
     peringatan: List[str] = []
+
+
+# === F26 ticket triage (klasifikasi severity komplain customer) ===
+
+
+class TicketTriageRequest(BaseModel):
+    complaint_text: str
+    dry_run: bool = False
+
+
+class TicketTriageResponse(BaseModel):
+    severity: str = "sedang"  # rendah | sedang | tinggi | kritis
+    area: Optional[str] = None
+    model: str = "dry-run"
+    dry_run: bool = False
+    # True kalau LLM sukses respon TAPI severity-nya di luar 4 enum valid / JSON
+    # gagal parse — severity di-default ke "sedang" tapi caller HARUS anggap ini
+    # tidak pasti (needs_review), bukan hasil klasifikasi asli yang bisa dipercaya.
+    severity_uncertain: bool = False

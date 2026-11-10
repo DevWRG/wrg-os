@@ -34,6 +34,7 @@ export async function GET(req: Request) {
 
   const qs = new URLSearchParams({ limit: String(limit) });
   if (q) qs.set("q", q);
+  if (entity === "items" && url.searchParams.get("jenis") === "alat") qs.set("jenis", "alat");
   try {
     return relay(await gatewayFetch(`/accurate/${entity}?${qs.toString()}`));
   } catch {

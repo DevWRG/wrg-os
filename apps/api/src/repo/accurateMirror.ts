@@ -279,20 +279,35 @@ export async function listDeliveryOrders(limit = 500) {
 // (form SPH: pilih customer). Tanpa `q` perilaku lama: potongan terbaru by
 // last_synced_at — arbitrer untuk dropdown, jadi pencarian harus di DB.
 // Diurutkan `name` saat mencari supaya hasilnya stabil.
+// Kategori item Accurate tak ikut ter-mirror (itemCategoryId kosong di 5.821/5.835
+// baris), tapi prefix kode item mengikuti kategori: IDS. = alat lab/IVD (analyzer,
+// centrifuge, mikropipet), ADR. = alat kesehatan non-IVD. Reagen (RKK/KNV/RNI/HMG…),
+// sparepart (SPA), consumable (AKS/PSG) di prefix lain. Dipakai Instalasi Alat
+// (keputusan user 7 Nov 2026: daftar alat saja, reagen & sparepart dilewati).
+export const KODE_ALAT_PREFIX = ["IDS", "ADR"] as const;
+export const POLA_KODE_ALAT = `^(${KODE_ALAT_PREFIX.join("|")})\\.`;
+export const isKodeAlat = (no: string | null | undefined): boolean =>
+  new RegExp(POLA_KODE_ALAT, "i").test(String(no ?? "").trim());
+
 export async function listMirror(
   entity: "customers" | "items" | "branches" | "vendors",
   limit = 100,
   q?: string,
+  opts: { hanyaAlat?: boolean } = {},
 ) {
   const sql = db();
   const table = entity === "customers" ? sql`accurate_customer` : entity === "items" ? sql`accurate_item` : entity === "vendors" ? sql`accurate_vendor` : sql`accurate_branch`;
   const cari = q?.trim() ? `%${q.trim()}%` : null;
+  const hanyaAlat = entity === "items" && opts.hanyaAlat === true;
+  const alat = hanyaAlat ? sql`AND no ~* ${POLA_KODE_ALAT}` : sql``;
   const rows = cari
     ? await sql`
         SELECT * FROM ${table}
-        WHERE (no ILIKE ${cari} OR name ILIKE ${cari})
+        WHERE (no ILIKE ${cari} OR name ILIKE ${cari}) ${alat}
         ORDER BY name LIMIT ${limit}`
-    : await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
+    : hanyaAlat
+      ? await sql`SELECT * FROM ${table} WHERE true ${alat} ORDER BY name LIMIT ${limit}`
+      : await sql`SELECT * FROM ${table} ORDER BY last_synced_at DESC LIMIT ${limit}`;
   return rows.map((r) => {
     const { raw, ...rest } = r as Record<string, unknown>;
     void raw;
