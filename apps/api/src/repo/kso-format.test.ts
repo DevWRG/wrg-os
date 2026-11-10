@@ -3,8 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  alatCocok, angkaId, bacaBarisLabel, bacaIsianFormat, bacaKlausul, bacaPendukung, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
-  isianLengkapiDariFormat, kodeKlausul, namaCocok, pisahKompetitor, skorAlat, statusUnit, tipePendukung,
+  alatCocok, angkaId, bacaBarisLabel, bacaIsianFormat, bacaKlausul, bacaPendukung, bedaDariCocok, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
+  faskesCocok, isianLengkapiDariFormat, salesCocok, tokenMiripOcr, kodeKlausul, namaCocok, pisahKompetitor, skorAlat, statusUnit, tipePendukung,
   type AlatKatalog, type DataKurang, type HasilOcrCprr,
 } from "./kso-format.js";
 import { parseKsoPerintah } from "./kso-intake.js";
@@ -312,4 +312,39 @@ test("daftarKurang: lengkap = kosong; lampiran wajib; kontak label per item", ()
   assert.equal(q[0].contoh, "#KSO D62 FEE: 5%");
   assert.ok(q.every((x) => !/[<>]/.test(x.teks + x.contoh)));
   assert.deepEqual(daftarKurang({ ...lengkap, lampiran: { lolos: false, galat: "bukan-cprr" } }, "D62").map((x) => x.kunci), ["lampiran"]);
+});
+
+// ---------------------------------------------------------------- 10 Nov malam: toleransi salah baca OCR (B) & tanpa OCR mentah (C)
+
+test("salesCocok/faskesCocok: salah baca OCR satu karakter & kekeliruan umum dimaafkan; nama lain tetap beda", () => {
+  // kasus prod dipetakan ke nama fiktif: Q dibaca g
+  assert.ok(salesCocok("Rafig", ["RAFIQ"]));
+  assert.ok(salesCocok("Pak Rafiq", ["rafig contoh"]));
+  for (const [pdf, wa] of [["T0MI", "TOMI"], ["Wu1an", "WULAN"], ["Lest1", "LESTI"], ["5ANTI", "SANTI"], ["Arnir", "AMIR"], ["Hendrx", "HENDRA"]])
+    assert.ok(salesCocok(pdf, [wa]), `${pdf} ~ ${wa}`);
+  assert.ok(!salesCocok("ANDI", ["BUDI"]), "selisih dua huruf = orang lain");
+  assert.ok(!salesCocok("Ika", ["IRA"]), "token < 4 huruf harus persis");
+  assert.ok(!salesCocok("", ["BUDI"]));
+  assert.ok(faskesCocok("RS C0NTOH SEJAHTERA", ["RS CONTOH SEJAHTERA"]));
+  assert.ok(faskesCocok("RSUD Kertajaga", ["KERTAJAYA, RSUD KAB. UJI"]));
+  assert.ok(!faskesCocok("RS MAWAR", ["RS MELATI"]));
+  assert.ok(tokenMiripOcr("rnulia", "mulia"));
+  assert.ok(!tokenMiripOcr("budi", "andi"));
+});
+
+test("cocokkanLampiran: nama sales salah baca OCR satu huruf → cocok (bukan 'PDF belum cocok')", () => {
+  const c = cocokkanLampiran({ ...OCR, isian: { ...OCR.isian, nama_sales: "Rafig" } }, { ...D, namaAm: ["RAFIQ", "Rafiq Contoh"] }, KAT);
+  assert.equal(c.cocok.sales.status, "cocok");
+  assert.ok(c.lolos, JSON.stringify(c.beda));
+});
+
+test("cocokkanLampiran: alat beda → kode katalog hasil baca PDF disimpan; kalimat beda tanpa teks OCR mentah", () => {
+  const c = cocokkanLampiran({ ...OCR, isian: { ...OCR.isian, analyzer: "EXC200 =" } }, D, KAT);
+  assert.equal(c.cocok.alat.status, "beda");
+  assert.equal(c.cocok.alat.pdf_kode, "EXC200");
+  assert.ok(c.beda.includes('Alat: PDF "EXC200" ≠ WA "Z50 (Zybio Z50)"'), JSON.stringify(c.beda));
+  assert.ok(!c.beda.join("\n").includes("EXC200 ="));
+  // teks OCR yang tak menunjuk kode mana pun → "tidak jelas", bukan teks mentah
+  assert.deepEqual(bedaDariCocok({ alat: { label: "Alat", status: "beda", pdf: "## 25O ~", wa: "Z50 (Zybio Z50)", pdf_kode: null } }),
+    ['Alat: PDF "tidak jelas" ≠ WA "Z50 (Zybio Z50)"']);
 });

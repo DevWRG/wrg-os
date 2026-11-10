@@ -27,14 +27,15 @@ import { callAi } from "../ai.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { cariAkun } from "./interaction.js";
 import {
-  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bacaPilihanFaskes, bacaYaTidak, namaTampilFaskes, bedaDariCocok, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
+  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bacaPilihanFaskes, bacaYaTidak, namaTampilFaskes, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
   isianLengkapiDariFormat, namaCocok, putuskanFaskes, teksGalatOcr, SKOR_YAKIN,
   type AlatKatalog, type CocokIsian, type DataKurang, type FaskesKatalog, type HasilAlat, type HasilFaskes, type HasilOcrCprr, type IsianFormat,
   type ItemKurang, type SaranAlat, type SaranFaskes,
 } from "./kso-format.js";
 import { NAMA_GERBANG, alasanGerbang } from "./kso-saring.js";
 
-export const KSO_LINE = /^\s*#\s*kso\b/i;
+// "*#KSO YA*" disalin dari balasan bot yang ditebalkan WhatsApp: tanda format di awal baris diabaikan.
+export const KSO_LINE = /^\s*[*_~]*\s*#\s*kso\b/i;
 export const KSO_BOT_USER = "bot-wa";
 /** Jendela pemasangan lampiran PDF ↔ pesan #KSO di chat yang sama (pengirim sama, urutan bebas). */
 export const KSO_JENDELA_MENIT = 10;
@@ -65,7 +66,7 @@ export function parseKsoPerintah(body: string | null): KsoPerintah {
   const baris = stripInvisible(body ?? "").split(/\r?\n/);
   const i = baris.findIndex((l) => KSO_LINE.test(l));
   if (i < 0) return { aksi: "kosong", isi: "" };
-  let kepala = baris[i].replace(KSO_LINE, "").trim();
+  let kepala = baris[i].replace(KSO_LINE, "").replace(/^[\s*_~]+|[\s*_~]+$/g, "").trim();
   const sisa = baris.slice(i + 1).join("\n").trim();
   // "#KSO YA" / "#KSO TIDAK" (+ varian) = jawaban konfirmasi faskes — BUKAN nama di kepala, bukan usulan
   const jawab = bacaYaTidak(kepala);
@@ -131,13 +132,25 @@ export const KSO_FORMAT_ISIAN =
   "HARI KERJA : 26 bila beda dari default · ALASAN : … hanya bila diminta bot)";
 
 export const KSO_BANTUAN =
-  "Format #KSO (usulan baru — satu pesan, nama kamu sendiri di baris pertama):\n" +
+  "Format #KSO usulan baru (satu pesan, nama kamu sendiri di baris pertama):\n" +
   KSO_FORMAT_ISIAN + "\n\n" +
   "Melengkapi/koreksi: #KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)\n" +
   "PDF menyusul: kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit.\n" +
-  "Data lengkap + PDF cocok → diajukan otomatis. Mengajukan manual: #KSO kirim D12\n" +
+  "Lengkap + PDF cocok → langsung diajukan otomatis. Mau mengajukan manual: #KSO kirim D12\n" +
   "Volume RS turun sesudah mandat terbit: #KSO D12 volume 900 (turun lebih dari 20% → mandat dihitung ulang)\n" +
   "Voice note tidak diproses untuk #KSO.";
+
+/** Nama depan untuk sapaan ("SARI CONTOH" → "Sari"); sapaan Pak/Bu dilewati. */
+export function namaDepan(nama: string | null | undefined): string {
+  const t = String(nama ?? "").trim().split(/\s+/).find((w) => !/^(?:pak|bu|ibu|bapak|mas|mbak|mba|kak|dr\.?)$/i.test(w)) ?? "";
+  return t ? t[0].toUpperCase() + t.slice(1).toLowerCase() : "";
+}
+/** "Hai Sari 👋" (tanpa nama → "Hai 👋"). */
+export const sapa = (nama: string | null | undefined) => `Hai${namaDepan(nama) ? ` ${namaDepan(nama)}` : ""} 👋`;
+/** Huruf judul untuk nama cabang/kota ("KEDIRI" → "Kediri"); singkatan tanpa huruf hidup (SBY) dan kata bertitik (KAB.) tetap. */
+export function hurufJudul(s: string): string {
+  return s.trim().split(/\s+/).map((w) => (/^[A-Za-z]{3,}$/.test(w) && /[AEIOUaeiou]/.test(w) ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)).join(" ");
+}
 
 /** Terjemahan galat fungsi kso.* ke bahasa manusia. Tak pernah menampilkan nama fungsi/kode. */
 export function terjemahGalatKso(pesan: string, ref: string): string {
@@ -295,10 +308,11 @@ export function kurangDraft(d: DraftTampil): ItemKurang[] {
   return daftarKurang(x, `D${d.id}`);
 }
 
-/** Nama pendek isian kurang untuk baris "Kurang:" (kunci = ItemKurang.kunci). */
-const KURANG_PENDEK: Record<string, string> = {
-  tes: "tes/bulan", masa: "masa KSO", harga: "permintaan harga", fee: "fee", kompetitor: "kompetitor", klausul: "klausul",
-  lampiran: "lampiran PDF", pendukung: "pendukung", status_unit: "status unit", sumber: "sumber volume", alasan: "alasan",
+/** Nama ramah isian kurang untuk daftar "Lengkapi ya:" (kunci = ItemKurang.kunci). */
+const KURANG_RAMAH: Record<string, string> = {
+  tes: "Jumlah tes per bulan", masa: "Masa KSO (bulan)", harga: "Permintaan harga per tes", fee: "Fee (tulis 0 kalau tidak ada)",
+  kompetitor: "Kompetitor (atau TIDAK ADA)", klausul: "Klausul (ADA + isinya, atau TIDAK)", lampiran: "PDF Simulator (kirim di chat ini)",
+  pendukung: "Pendukung", status_unit: "Status unit", sumber: "Bukti volume", alasan: "Alasan",
 };
 
 /** Satu baris gerbang di balasan WA: biner HIJAU / MERAH + alasan tanpa angka. */
@@ -318,47 +332,100 @@ export function gerbangUntukAm(d: Pick<DraftTampil, "gerbang" | "kolom_dinyataka
   });
 }
 
+/** Nama gerbang di WA (lebih pendek dari NAMA_GERBANG layar). */
+const GERBANG_WA: Record<number, string> = { 4: "Coverage teknisi", 7: "Klausul" };
+/** Alasan yang mengulang nama gerbangnya dipendekkan di WA. */
+const ALASAN_WA: Record<string, string> = {
+  "melebihi batas tenor": "melebihi batas", "klausul khusus": "ada klausul khusus", "ada unit idle sejenis — relokasi dulu": "ada unit idle sejenis",
+  "piutang faskes melewati batas": "melewati batas", "Hemodialisa — diputus Direktur": "Hemodialisa, diputus Direktur",
+};
+
+/** Nama bidang pencocokan PDF (kunci CocokIsian) untuk AM. */
+const BIDANG_PDF: Record<string, string> = {
+  sales: "nama sales", faskes: "faskes", alat: "alat", volume: "tes/bulan", tenor: "masa KSO", kompetitor: "kompetitor",
+};
+/** Nilai baca PDF yang aman ditampilkan: satu baris, tanpa simbol OCR, maks 40 huruf. */
+function nilaiPdf(v: string | null | undefined): string {
+  const t = String(v ?? "").replace(/[^\p{L}\p{N} .,'’\-/()]+/gu, " ").replace(/\s+/g, " ").replace(/[\s.,\-/(]+$/, "").trim();
+  return t.length > 40 ? `${t.slice(0, 39).trim()}…` : t || "-";
+}
+
+/**
+ * Ketidakcocokan PDF Simulator ↔ isian WA dalam kata AM, satu baris per bidang. Hanya nilai yang ditulis AM sendiri
+ * (nama, faskes, tes, masa) — tanpa teks OCR mentah alat/kompetitor (alat = kode katalog hasil baca PDF) dan tanpa angka biaya.
+ */
+export function bedaPdfRamah(d: Pick<DraftTampil, "alat_kode" | "lampiran">): string[] {
+  const l = d.lampiran;
+  if (!l || l.lolos) return [];
+  if (l.galat) return [`PDF: ${teksGalatOcr(l.galat)}`];
+  return Object.entries(l.cocok ?? {}).filter(([, c]) => c.status !== "cocok").map(([k, c]) => {
+    const bidang = BIDANG_PDF[k] ?? c.label.toLowerCase();
+    if (c.status === "kosong")
+      return c.pdf == null ? `PDF: ${bidang} tidak terbaca` : `PDF: ${bidang} belum diisi di WA`;
+    if (k === "alat") return c.pdf_kode ? `PDF: alat beda (PDF *${c.pdf_kode}* / WA *${d.alat_kode}*)` : `PDF: alat tidak sama dengan WA (*${d.alat_kode}*)`;
+    if (k === "kompetitor") return `PDF: kompetitor tidak sama dengan WA ("${nilaiPdf(c.wa)}")`;
+    const wa = k === "faskes" ? namaTampilFaskes(c.wa ?? "-") : c.wa;
+    return `PDF: ${bidang} beda (PDF "${nilaiPdf(c.pdf)}" / WA "${nilaiPdf(wa)}")`;
+  });
+}
+
+/** Contoh perbaikan bila yang kurang hanya PDF tak cocok: label WA untuk tes/masa/kompetitor, selain itu kirim ulang PDF. */
+const LABEL_PDF: Record<string, string> = { volume: "TES: 700", tenor: "MASA KSO: 36", kompetitor: "KOMPETITOR: MEREK-MODEL" };
+function contohPdf(d: Pick<DraftTampil, "lampiran">, ref: string): string {
+  const ulang = `kirim ulang PDF Simulator dengan caption #KSO ${ref}`;
+  const k = d.lampiran?.galat ? null : Object.entries(d.lampiran?.cocok ?? {}).find(([, c]) => c.status !== "cocok")?.[0];
+  return k && LABEL_PDF[k] ? `Contoh: #KSO ${ref} ${LABEL_PDF[k]} (kalau WA yang salah), atau ${ulang}` : `Contoh: ${ulang}`;
+}
+
 /**
  * Balasan WA ke AM untuk semua keadaan draft (baru, lengkapi/susulan, lampiran diproses, "#KSO D62", kirim belum
- * lengkap). Bentuk disetujui product owner 10 Nov:
+ * lengkap). Bentuk ramah (product owner 10 Nov malam; *tebal* = format WhatsApp):
  *
- *   D63 · RS CONTOH · Z50 · 4/7 HIJAU
+ *   *D63 · RS CONTOH (KAB. X) · Z50*
+ *   4 dari 7 gerbang hijau
  *
- *   1. GPM deal              ❌ MERAH
- *   2. Volume terbukti       ❌ MERAH (belum ada bukti)
+ *   ✅ Relokasi dulu
+ *   ❌ Volume terbukti — belum ada bukti
  *   …
- *   Kurang: lampiran PDF, pendukung, status unit, alasan
- *   (contoh: #KSO D63 PENDUKUNG: ...)
+ *   Lengkapi ya:
+ *   • Pendukung
+ *   Contoh: #KSO D63 PENDUKUNG: ...
  *
- * TANPA angka margin/HPP/harga mandat (keputusan B 10 Nov). Diajukan otomatis → baris Kurang diganti hasil jalur.
+ * Hijau dulu, lalu merah (urutan gerbang tetap di tiap kelompok). TANPA angka margin/HPP/harga mandat (keputusan B
+ * 10 Nov). Diajukan otomatis → "Lengkapi ya" diganti hasil jalur.
  */
 export function formatBalasanGerbang(
   d: DraftTampil,
-  o: { tanpaTipe?: string[]; catatan?: string[]; diajukan?: string; belumBisaKirim?: boolean } = {},
+  o: { tanpaTipe?: string[]; catatan?: string[]; diajukan?: string; belumBisaKirim?: boolean; alatPdf?: string } = {},
 ): string {
   const ref = `D${d.id}`;
   const gs = gerbangUntukAm(d);
-  const out: string[] = [`${ref} · ${d.faskes}${d.faskes_baru ? " (faskes baru)" : ""} · ${d.alat_kode} · ${gs.filter((g) => g.hijau).length}/7 HIJAU`, ""];
-  for (const g of gs)
-    out.push(`${`${g.no}. ${g.nama}`.padEnd(25)}${g.hijau ? "✅ HIJAU" : `❌ MERAH${g.alasan ? ` (${g.alasan})` : ""}`}`);
+  const out: string[] = [
+    `*${ref} · ${namaTampilFaskes(d.faskes)}${d.faskes_baru ? " (faskes baru)" : ""} · ${d.alat_kode}*`,
+    `${gs.filter((g) => g.hijau).length} dari 7 gerbang hijau`, "",
+  ];
+  for (const g of [...gs.filter((x) => x.hijau), ...gs.filter((x) => !x.hijau)]) {
+    const alasan = g.alasan ? ALASAN_WA[g.alasan] ?? g.alasan : null;
+    out.push(`${g.hijau ? "✅" : "❌"} ${GERBANG_WA[g.no] ?? g.nama}${alasan ? ` — ${alasan}` : ""}`);
+  }
   out.push("");
 
   const q = kurangDraft(d);
+  const bedaPdf = bedaPdfRamah(d);
   if (o.diajukan) out.push(o.diajukan);
   else if (q.length) {
-    const lampiranBeda = d.lampiran && !d.lampiran.lolos;
-    const nama = q.map((t) => (t.kunci === "lampiran" && lampiranBeda ? "lampiran PDF belum cocok" : KURANG_PENDEK[t.kunci] ?? t.kunci));
-    out.push(`${o.belumBisaKirim ? "Belum bisa diajukan. " : ""}Kurang: ${nama.join(", ")}`);
-    if (lampiranBeda) {
-      const b = d.lampiran!.galat ? [teksGalatOcr(d.lampiran!.galat)] : bedaDariCocok(d.lampiran!.cocok);
-      if (b.length) out.push(`PDF belum cocok: ${b.join("; ")}`);
-    }
-    out.push(`(contoh: ${q[0].contoh})`);
+    // PDF yang belum cocok: satu baris per bidang (di akhir); item lain dengan nama ramah
+    const lain = q.filter((t) => !(t.kunci === "lampiran" && d.lampiran && !d.lampiran.lolos));
+    const butir = [...lain.map((t) => KURANG_RAMAH[t.kunci] ?? t.kunci), ...bedaPdf];
+    out.push(o.belumBisaKirim ? "Belum bisa diajukan — lengkapi dulu ya:" : "Lengkapi ya:");
+    for (const b of butir) out.push(`• ${b}`);
+    out.push(lain.length ? `Contoh: ${lain[0].contoh}` : contohPdf(d, ref));
   } else if (d.status === "DRAFT" || d.status === "DITAHAN") {
-    out.push(`Lengkap — balas "#KSO kirim ${ref}" untuk mengajukan.`);
+    out.push(`Semua lengkap 👍 Balas *#KSO kirim ${ref}* untuk mengajukan.`);
   } else {
     out.push(`Sudah diajukan${d.nomor ? ` (${d.nomor})` : ""} — status ${d.status.replace(/_/g, " ").toLowerCase()}.`);
   }
+  if (o.alatPdf) out.push(o.alatPdf);
   for (const c of o.catatan ?? []) out.push(`ℹ️ ${c}`);
   for (const n of o.tanpaTipe ?? []) out.push(`ℹ️ Peran ${n} belum jelas — tulis: #KSO ${ref} PENDUKUNG: ${n}, kepala instalasi lab`);
   return out.join("\n");
@@ -368,13 +435,14 @@ export function formatBalasanGerbang(
 export function teksHasilAjukan(x: {
   nomor: string; jalur: string; zona: string | null; zona_dasar: string | null; alasan_forum: string | null; belum_hijau: number[]; gerbang2: string | null;
 }): string {
+  const awal = `✅ Sudah diajukan (${x.nomor})`;
   if (x.jalur === "AM")
-    return `${x.nomor} diajukan → ZONA AM: lolos tanpa forum, mandat terbit otomatis; penawaran diterbitkan Sekretariat/Admin Sales.\n` +
-      `RS minta harga lebih rendah → #KSO kelonggaran ${x.nomor} ALASAN`;
-  if (x.jalur === "CEPAT") return `${x.nomor} diajukan → ZONA 2 HOD: dua HOD memutus maksimal 1 hari kerja.`;
+    return `${awal} → lolos tanpa forum, mandat terbit otomatis. Penawarannya disiapkan Sekretariat/Admin Sales.\n` +
+      `Kalau RS minta harga lebih rendah: #KSO kelonggaran ${x.nomor} ALASAN`;
+  if (x.jalur === "CEPAT") return `${awal} → diputus 2 HOD (maks. 1 hari kerja).`;
   const zf = teksZonaForum(x);
-  return `${x.nomor} diajukan → ${zf.label}${x.alasan_forum ? ` (${x.alasan_forum})` : ""}: masuk agenda forum Selasa/Kamis berikutnya ` +
-    `(batas data 14.00), Direktur memutus.${zf.catatan ? `\n${zf.catatan}` : ""}`;
+  return `${awal} → masuk agenda Forum berikutnya (Selasa/Kamis).` +
+    `${x.alasan_forum ? `\nCatatan: ${x.alasan_forum}.` : ""}${zf.catatan ? `\n${zf.catatan}` : ""}`;
 }
 
 /** Kolom "analyzer" PDF Simulator yang menunjuk TEPAT SATU kode katalog (cariAlat "one"); selain itu null. Murni. */
@@ -385,41 +453,45 @@ export function alatDariPdf(h: HasilOcrCprr | null | undefined, katalog: AlatKat
   const c = cariAlat(an, katalog);
   return c.kind === "one" ? { kode: c.kode, nama: c.nama, kategori: c.kategori, analyzer: an } : null;
 }
-/** Catatan alat yang diambil dari PDF. ref = "D62" (draft sudah ada) atau null (usulan masih menunggu jawaban). */
-export function teksAlatDariPdf(alatTeks: string, a: { kode: string; nama: string; analyzer: string }, ref: string | null): string {
-  return `Alat "${alatTeks}" tidak cocok pasti ke katalog KSO — dipakai alat dari PDF Simulator: ${a.kode} (${a.nama}; PDF: "${a.analyzer}"). ` +
-    `Salah? Balas #KSO ${ref ? `${ref} ` : ""}ALAT: KODE.`;
+/**
+ * Baris alat yang diambil dari PDF Simulator (alat yang ditulis AM tak pasti). HANYA kode katalog — teks OCR mentah
+ * kolom analyzer tidak pernah ditampilkan. ref = "D62" (draft sudah ada) atau null (usulan masih menunggu jawaban).
+ */
+export function teksAlatDariPdf(a: { kode: string }, ref: string | null): string {
+  return ref ? `Alat diambil dari PDF Simulator: *${a.kode}*. Salah? Balas #KSO ${ref} ALAT: KODE` : `Alat: *${a.kode}* (dari PDF Simulator)`;
 }
 
 /** Balasan saat alat belum pasti: 3 saran + cara memilih. */
 export function balasanSaranAlat(nama: string, alatTeks: string, h: Extract<HasilAlat, { kind: "saran" }>, ref: string | null, semuaKode: string[]): string {
+  // ref = koreksi alat draft yang sudah ada (baris ini ikut balasan gerbang → tanpa sapaan)
   const awal = ref
-    ? `Alat "${alatTeks}" untuk ${ref} belum pasti — alat ${ref} tidak diubah.`
-    : `Alat "${alatTeks}" belum cocok pasti ke katalog KSO, ${nama}. Draft BELUM dibuat — isian lain sudah disimpan, tinggal pilih alatnya.`;
+    ? `Alat "${alatTeks}" untuk ${ref} belum ketemu pasti — alat ${ref} belum diubah.`
+    : `${sapa(nama)}\nAlat "${alatTeks}" belum ketemu pasti.`;
   const saran = h.saran.length
-    ? `${h.ambigu ? "Cocok ke beberapa tipe" : "Mungkin maksudnya"}:\n${h.saran.map((s, i) => `${i + 1}. ${s.kode} — ${s.nama}${s.kategori ? ` (${s.kategori})` : ""}`).join("\n")}`
-    : `Tidak ada yang mirip. Pilihan katalog: ${semuaKode.join(", ")}.`;
-  const cara = ref
-    ? `Balas: #KSO ${ref} ALAT 1${h.saran.length > 1 ? ` (atau ${h.saran.map((_, i) => i + 1).join("/")})` : ""}, atau #KSO ${ref} ALAT: KODE`
-    : `Balas: #KSO ALAT 1${h.saran.length > 1 ? ` (atau ${h.saran.map((_, i) => i + 1).join("/")})` : ""}, atau #KSO ALAT: KODE — berlaku 24 jam.`;
+    ? `${h.ambigu ? "Cocok ke beberapa tipe" : "Mungkin maksudnya"}:\n${h.saran.map((s, i) => `${i + 1}. *${s.kode}* — ${s.nama}${s.kategori ? ` (${s.kategori})` : ""}`).join("\n")}`
+    : `Belum ada yang mirip. Kode yang tersedia: ${semuaKode.join(", ")}.`;
+  const p = ref ? `#KSO ${ref} ALAT` : "#KSO ALAT";
+  const lain = h.saran.length > 1 ? ` (atau ${h.saran.slice(1).map((_, i) => i + 2).join("/")})` : "";
+  const cara = h.saran.length ? `Balas *${p} 1*${lain}, atau *${p}: KODE*.` : `Balas *${p}: KODE*.`;
   return `${awal}\n${saran}\n${cara}`;
 }
 
 /** Nama calon faskes untuk pertanyaan konfirmasi: urutan terbaca + cabang + penanda faskes baru. */
 export function tampilCalonFaskes(s: Pick<SaranFaskes, "nama" | "cabang" | "baru">): string {
-  return `${namaTampilFaskes(s.nama)}${s.cabang ? ` — cabang ${s.cabang}` : ""}${s.baru ? " (faskes baru)" : ""}`;
+  return `*${namaTampilFaskes(s.nama)}*${s.baru ? " (faskes baru)" : ""}${s.cabang ? ` — cabang ${hurufJudul(s.cabang)}` : ""}`;
 }
 
 /**
  * Konfirmasi faskes (keputusan product owner 10 Nov: bot yang mencocokkan, AM hanya menjawab YA/TIDAK). SATU calon
  * terbaik — tidak pernah daftar. Baris tertunda lama yang berisi beberapa calon: yang pertama (peringkat teratas).
  */
-export function balasanSaranFaskes(nama: string, faskesTeks: string, saran: SaranFaskes[], alatTeks: string | null): string {
+export function balasanSaranFaskes(nama: string, _faskesTeks: string, saran: SaranFaskes[], alatTeks: string | null): string {
   const calon = saran[0];
   return [
-    `Faskes "${faskesTeks}" = ${tampilCalonFaskes(calon)}? Balas #KSO YA atau #KSO TIDAK (TIDAK = dicatat sebagai faskes baru "${faskesTeks}"). Berlaku 24 jam.`,
-    `Draft BELUM dibuat, ${nama} — isian lain sudah disimpan, tinggal konfirmasi faskesnya.`,
-    ...(alatTeks ? [`Alat "${alatTeks}" juga belum pasti — ditanyakan sesudah faskes dijawab.`] : []),
+    sapa(nama),
+    `Faskesnya ${tampilCalonFaskes(calon)}, betul?`,
+    "Balas *#KSO YA* atau *#KSO TIDAK* (kalau tidak, dicatat sebagai faskes baru).",
+    ...(alatTeks ? [`Alat "${alatTeks}" belum ketemu pasti — ditanyakan sesudah ini.`] : []),
   ].join("\n");
 }
 
@@ -439,8 +511,8 @@ export interface TertundaFaskes {
 export function ubahKonfirmasiFaskes(t: TertundaFaskes | null, jawab: "ya" | "tidak", nama: string):
   { ubah: Record<string, unknown> } | { balasan: string; galat: string } {
   if (!t || !faskesTerbuka(t)) {
-    const alat = t && t.alat_kode == null ? " Yang masih ditunggu: pilihan alat — balas #KSO ALAT 1 atau #KSO ALAT: KODE." : " Kirim usulan baru dengan format #KSO lengkap.";
-    return { balasan: `Tidak ada konfirmasi faskes yang menunggu jawaban, ${nama}.${alat}`, galat: "tanpa-konfirmasi" };
+    const alat = t && t.alat_kode == null ? "Yang masih ditunggu: pilihan alat — balas #KSO ALAT 1 atau #KSO ALAT: KODE." : "Untuk usulan baru, kirim format #KSO lengkap ya.";
+    return { balasan: `${sapa(nama)}\nTidak ada konfirmasi faskes yang menunggu jawaban. ${alat}`, galat: "tanpa-konfirmasi" };
   }
   if (jawab === "ya") return { ubah: { faskes_id: t.faskes_saran[0].id, faskes_teks: t.faskes_teks, faskes_saran: [] } };
   if (!t.faskes_teks?.trim())
@@ -453,14 +525,14 @@ export function ubahKonfirmasiFaskes(t: TertundaFaskes | null, jawab: "ya" | "ti
  * 10 Nov): default = area AM (304), diganti kota dari PDF Simulator atau label KOTA bila AM menulisnya.
  */
 export function catatanFaskesBaru(d: Pick<DraftTampil, "faskes" | "cabang">): string[] {
-  return [`Faskes "${d.faskes}" belum ada di master — dicatat sebagai FASKES BARU (calon customer)${d.cabang ? `, cabang ${d.cabang}` : ""}. ` +
-    "Sekretariat menautkannya ke akun master begitu customer ini terdaftar."];
+  return [`Faskes ini belum ada di master — dicatat sebagai faskes baru (calon customer)${d.cabang ? `, cabang ${hurufJudul(d.cabang)}` : ""}. ` +
+    "Nanti Sekretariat yang menautkan ke akun master."];
 }
 
 /** Balasan pesan #KSO yang tidak sesuai format (teks bebas tidak lagi diproses). */
 export function balasanFormatSalah(x: IsianFormat | null): string {
   const kurang = x ? (["faskes", "alat"] as const).filter((k) => !x.label.includes(k)).map((k) => NAMA_LABEL[k]) : [];
-  return `Format #KSO belum sesuai${kurang.length ? ` (${kurang.join(" dan ")} wajib ada)` : ""} — usulan BELUM dicatat. Teks bebas dan voice note tidak diproses lagi.\n\n${KSO_BANTUAN}`;
+  return `Format #KSO-nya belum pas${kurang.length ? ` (${kurang.join(" dan ")} wajib ada)` : ""} — usulan belum dicatat. Pakai format ini ya:\n\n${KSO_BANTUAN}`;
 }
 
 // ---------------------------------------------------------------- DB (sebagai bot_wa)
@@ -647,6 +719,8 @@ interface OpsiSelesai {
   baru: boolean;
   catatan?: string[];
   tanpaTipe?: string[];
+  /** Baris "Alat diambil dari PDF Simulator" (teksAlatDariPdf). */
+  alatPdf?: string;
   alatTeks?: string;
   faskesTeks?: string;
   ocr?: OcrLampiran | null;
@@ -717,7 +791,7 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
     }
     const catatan = [...(o.baru && d.faskes_baru ? catatanFaskesBaru(d) : []), ...(o.catatan ?? [])];
     if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
-    const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan });
+    const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan, alatPdf: o.alatPdf });
     return {
       balasan,
       hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci), ...(d.faskes_baru ? { faskes_baru: d.faskes_id } : {}),
@@ -790,7 +864,7 @@ export function pertanyaanTertunda(nama: string, t: Omit<BarisTertunda, "isian" 
     };
   if (t.alat_kode == null) {
     const h: Extract<HasilAlat, { kind: "saran" }> = { kind: "saran", ambigu: false, saran: t.saran };
-    const faskesBaru = t.faskes_id == null && t.faskes_teks ? `\nFaskes "${t.faskes_teks}" belum ada di master — akan dicatat sebagai faskes baru.` : "";
+    const faskesBaru = t.faskes_id == null && t.faskes_teks ? `\nFaskes "${t.faskes_teks}" akan dicatat sebagai faskes baru.` : "";
     return {
       balasan: balasanSaranAlat(nama, t.alat_teks ?? "", h, null, semuaKode) + faskesBaru,
       hasil: { aksi: "baru", error: "alat-belum-pasti", tertunda_id: t.id, faskes_id: t.faskes_id, saran: t.saran.map((s) => s.kode) },
@@ -844,7 +918,7 @@ async function ubahLanjutkan(k: KsoKonteks, id: number, ubah: Record<string, unk
     await tx`select kso.app_bot_tertunda_isi(${id}, ${k.am_id}, ${tx.json(ubah as never)})`;
     return bacaTertunda(tx, k.am_id);
   });
-  if (!t) return { balasan: `Usulan yang menunggu sudah kedaluwarsa, ${k.nama}. Kirim ulang dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+  if (!t) return { balasan: `${sapa(k.nama)}\nUsulan yang menunggu sudah lewat 24 jam — kirim ulang dengan format #KSO lengkap ya.`, hasil: { error: "tanpa-tertunda" } };
   return lanjutkanTertunda(k, t, semuaKode);
 }
 
@@ -855,7 +929,7 @@ async function pilihAlatTertunda(k: KsoKonteks, alatTeks: string, rencanaId: num
   const t = await sebagaiBot(async (tx) => ({ katalog: await muatKatalog(tx, alias), row: await bacaTertunda(tx, k.am_id) }));
   const semuaKode = t.katalog.map((c) => c.kode);
   if (!t.row)
-    return { balasan: `Tidak ada usulan yang menunggu pilihan alat, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+    return { balasan: `${sapa(k.nama)}\nTidak ada usulan yang menunggu pilihan alat. Untuk usulan baru, kirim format #KSO lengkap ya.`, hasil: { error: "tanpa-tertunda" } };
   const angka = /^\s*(\d)\s*$/.exec(alatTeks);
   let ubah: Record<string, unknown>;
   if (angka) {
@@ -880,7 +954,7 @@ async function pilihFaskesTertunda(k: KsoKonteks, teks: string, kota: string | n
   const semuaKode = t.katalog.map((c) => c.kode);
   if (!t.row) {
     if (pil.kind === "nama") return null;
-    return { balasan: `Tidak ada usulan yang menunggu pilihan faskes, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+    return { balasan: `${sapa(k.nama)}\nTidak ada usulan yang menunggu pilihan faskes. Untuk usulan baru, kirim format #KSO lengkap ya.`, hasil: { error: "tanpa-tertunda" } };
   }
   const r = t.row;
   let ubah: Record<string, unknown>;
@@ -1042,12 +1116,12 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
   if (!x.faskes || !x.alat) return { balasan: balasanFormatSalah(x), hasil: { error: "format-tidak-sesuai", label: x.label } };
   const kandidat = await namaPengirim(k.am_id, k);
   if (!p.nama)
-    return { balasan: `Nama kamu belum ditulis di baris #KSO, ${k.nama}. Usulan BELUM dicatat — tulis baris pertama: #KSO ${k.nama.split(/\s+/)[0].toUpperCase()}`,
+    return { balasan: `${sapa(k.nama)}\nNamamu belum ada di baris #KSO — usulan belum dicatat. Tulis di baris pertama: #KSO ${namaDepan(k.nama).toUpperCase()}`,
              hasil: { error: "nama-kosong" } };
   if (!namaCocok(p.nama, kandidat))
     return {
-      balasan: `Maaf, nama di baris #KSO ("${p.nama}") tidak sama dengan pengirim pesan (${k.nama}). Usulan BELUM dicatat.\n` +
-        `Usulan KSO hanya bisa dikirim oleh AM-nya sendiri — tulis nama kamu sendiri: #KSO ${k.nama.split(/\s+/)[0].toUpperCase()}`,
+      balasan: `Maaf ${namaDepan(k.nama)}, nama di baris #KSO ("${p.nama}") beda dengan pengirim — usulan belum dicatat.\n` +
+        `Usulan KSO hanya bisa dikirim AM-nya sendiri. Tulis namamu: #KSO ${namaDepan(k.nama).toUpperCase()}`,
       hasil: { error: "nama-tidak-cocok", nama_kepala: p.nama },
     };
 
@@ -1063,7 +1137,7 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
       alatPdf = alatDariPdf(ocrAwal.hasil, kat0);
     }
   }
-  const catatanAlatPdf = (ref: string | null) => (alatPdf ? [teksAlatDariPdf(x.alat!, alatPdf, ref)] : []);
+  const catatanAlatPdf = (ref: string | null) => (alatPdf ? [teksAlatDariPdf(alatPdf, ref)] : []);
   let tahap1: Hasil | { id: number; alatTeks: string };
   try {
     tahap1 = await sebagaiBot(async (tx): Promise<Hasil | { id: number; alatTeks: string }> => {
@@ -1084,7 +1158,7 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
                                ${k.lampiran?.wa_message_id ?? null}, ${k.lampiran?.media_path ?? null})::int as id`;
         const tanya = pertanyaanTertunda(k.nama, { id: Number(t.id), faskes_id: faskesId, alat_teks: x.alat!, saran: alatSaran, alat_kode: alatKode,
                                                    faskes_teks: x.faskes!, faskes_saran: faskesSaran }, katalog.map((c) => c.kode))!;
-        return { balasan: [tanya.balasan, ...catatanAlatPdf(null).map((c) => `ℹ️ ${c}`)].join("\n"),
+        return { balasan: [tanya.balasan, ...catatanAlatPdf(null)].join("\n"),
                  hasil: { ...tanya.hasil, ...(k.lampiran ? { lampiran_menunggu: k.lampiran.wa_message_id } : {}), ...(alatPdf ? { alat_dari_pdf: alatPdf.kode } : {}) } };
       }
       let faskesId: string;
@@ -1109,8 +1183,9 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
   const ocr = ocrAwal ?? (k.lampiran ? await bacaLampiran(k.lampiran) : null);
   try {
     return await selesaikan(k, tahap1.id, { baru: true, ocr, alatTeks: tahap1.alatTeks, faskesTeks: x.faskes, tanpaTipe,
-      catatan: [...catatanAlatPdf(`D${tahap1.id}`), ...tidakTerbaca,
-                ...(x.lampiran && !k.lampiran ? ["LAMPIRAN: ADA — PDF-nya belum terlihat; kirim PDF Simulator di chat ini dalam 10 menit."] : [])],
+      alatPdf: catatanAlatPdf(`D${tahap1.id}`)[0],
+      catatan: [...tidakTerbaca,
+                ...(x.lampiran && !k.lampiran ? [`PDF-nya belum masuk — kirim PDF Simulator di chat ini dalam ${KSO_JENDELA_MENIT} menit ya.`] : [])],
       hasil: { aksi: "baru", ...(alatPdf ? { alat_dari_pdf: alatPdf.kode } : {}) } });
   } catch (e) {
     const m = (e as Error).message;

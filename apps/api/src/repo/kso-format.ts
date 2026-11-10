@@ -373,6 +373,25 @@ function tokenNama(s: string | null | undefined): string[] {
 const tokenSama = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 4 && (a.startsWith(b) || b.startsWith(a)));
 
 /**
+ * Kanon salah baca OCR untuk NAMA (huruf kecil): rn→m, q→g, 0→o, 1/l/i→l, 5→s. Dipakai HANYA pencocokan silang PDF
+ * Simulator (nama sales & faskes), bukan pencocokan faskes master. Kasus prod 10 Nov: huruf q terbaca g ("BUDIQ" ~ "Budig").
+ */
+const kanonOcrNama = (s: string) => s.replace(/rn/g, "m").replace(/q/g, "g").replace(/0/g, "o").replace(/[1i]/g, "l").replace(/5/g, "s");
+/** Token OCR sama: sama/awalan (tokenSama), atau ≥ 4 huruf dengan selisih satu karakter / sama sesudah kanon OCR. */
+export function tokenMiripOcr(a: string, b: string): boolean {
+  const x = a.toLowerCase(), y = b.toLowerCase();
+  if (tokenSama(x, y)) return true;
+  if (Math.min(x.length, y.length) < 4) return false;
+  const kx = kanonOcrNama(x), ky = kanonOcrNama(y);
+  return tokenSama(kx, ky) || jarakEdit(x, y) <= 1 || jarakEdit(kx, ky) <= 1;
+}
+/** Token nama untuk pencocokan OCR: huruf + angka (angka bisa salah baca huruf), sapaan dibuang. */
+function tokenNamaOcr(s: string | null | undefined): string[] {
+  return String(s ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+    .filter((t) => t.length >= 3 && /[a-z]/.test(t) && !SAPAAN.has(t));
+}
+
+/**
  * Nama di "#KSO BUDI" harus nama PENGIRIM: setiap token nama kepala ada di salah satu kandidat (nama AM, panggilan,
  * pushname WA). Tak peka huruf besar, tanda baca dibuang, sapaan (Pak/Bu/Mas) diabaikan, awalan ≥ 4 huruf cukup
  * ("Budi" ~ "Budiz"). Nama kepala kosong = tidak cocok.
@@ -594,6 +613,8 @@ export interface CocokIsian {
   status: StatusCocok;
   pdf: string | null;
   wa: string | null;
+  /** Alat: kode katalog yang ditunjuk teks OCR PDF (cariAlat "one"); dipakai di balasan, bukan teks OCR mentah. */
+  pdf_kode?: string | null;
 }
 export interface HasilCekLampiran {
   lolos: boolean;
@@ -632,20 +653,31 @@ export function jenisFaskes(s: string | null | undefined): "rs" | "pkm" | "klini
   if (t.some((x) => x === "LAB" || x === "LABORATORIUM")) return "lab";
   return null;
 }
+/** Kedua nama menyebut jenis faskes yang dikenali (jenisFaskes) dan jenisnya berbeda. */
+export function jenisBeda(a: string | null | undefined, b: string | null | undefined): boolean {
+  const ja = jenisFaskes(a), jb = jenisFaskes(b);
+  return !!ja && !!jb && ja !== jb;
+}
 function tokenFaskes(s: string | null | undefined): string[] {
   return String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").split(/\s+/).filter((t) => t.length >= 2 && !STOP_FASKES.has(t));
 }
-/** Faskes cocok bila satu token pembeda (selain RS/RSUD/UMUM/…) sama — urutan & penulisan bebas. */
+/**
+ * Faskes PDF cocok bila satu token pembeda (selain RS/RSUD/UMUM/…) sama — urutan & penulisan bebas; salah baca OCR satu
+ * karakter (≥ 4 huruf) dan kekeliruan OCR umum (q/g, 0/o, 1/l/i, 5/s, rn/m) dimaafkan (tokenMiripOcr).
+ */
 export function faskesCocok(pdf: string | null | undefined, kandidat: (string | null | undefined)[]): boolean {
   const p = tokenFaskes(pdf);
   if (!p.length) return false;
-  return kandidat.some((k) => tokenFaskes(k).some((t) => p.some((x) => tokenSama(x.toLowerCase(), t.toLowerCase()))));
+  return kandidat.some((k) => tokenFaskes(k).some((t) => p.some((x) => tokenMiripOcr(x, t))));
 }
-/** Nama sales cocok bila satu token nama (≥ 3 huruf, bukan sapaan) sama dengan salah satu kandidat nama AM. */
+/**
+ * Nama sales PDF cocok bila satu token nama (≥ 3 huruf, bukan sapaan) sama dengan salah satu kandidat nama AM —
+ * toleran salah baca OCR (tokenMiripOcr): "Budig" ~ "BUDIQ", "Rina5" ~ "RINAS".
+ */
 export function salesCocok(pdf: string | null | undefined, kandidat: (string | null | undefined)[]): boolean {
-  const p = tokenNama(pdf).filter((t) => t.length >= 3);
+  const p = tokenNamaOcr(pdf);
   if (!p.length) return false;
-  return kandidat.some((k) => tokenNama(k).filter((t) => t.length >= 3).some((t) => p.some((x) => tokenSama(x, t))));
+  return kandidat.some((k) => tokenNamaOcr(k).some((t) => p.some((x) => tokenMiripOcr(x, t))));
 }
 
 export interface DraftUntukLampiran {
@@ -687,6 +719,10 @@ export function cocokkanLampiran(h: HasilOcrCprr, d: DraftUntukLampiran, katalog
   const faskesPdf = x.header_pasti ? [x.nama_faskes, x.kota].filter(Boolean).join(" ") : header ?? [x.nama_faskes, x.kota].filter(Boolean).join(" ");
   set("faskes", "Faskes", faskesPdf ? faskesCocok(faskesPdf, d.faskes) : null, faskesPdf, d.faskes.find(Boolean));
   set("alat", "Alat", x.analyzer ? alatCocok(x.analyzer, d.alat_kode, katalog) : null, x.analyzer, `${d.alat_kode} (${d.alat_nama})`);
+  if (x.analyzer) {
+    const ka = cariAlat(x.analyzer, katalog);
+    cocok.alat.pdf_kode = ka.kind === "one" ? ka.kode : null;
+  }
   set("volume", "Tes/bulan", x.test_per_bulan == null || d.volume_estimasi == null ? null : Number(x.test_per_bulan) === d.volume_estimasi,
       x.test_per_bulan, d.volume_estimasi);
   set("tenor", "Masa KSO (bulan)", x.masa_bulan == null || d.tenor_bulan == null ? null : Number(x.masa_bulan) === d.tenor_bulan,
@@ -708,12 +744,7 @@ export function cocokkanLampiran(h: HasilOcrCprr, d: DraftUntukLampiran, katalog
   // 10 Nov (product owner): perbandingan CPRR vs permintaan harga = angka HPP → tidak lagi disusun (balasan ke AM).
   for (const p of h.peringatan ?? []) info.push(`Catatan baca PDF: ${p}`);
 
-  const beda: string[] = [];
-  for (const c of Object.values(cocok)) {
-    if (c.status === "beda") beda.push(`${c.label}: PDF "${c.pdf ?? "-"}" ≠ WA "${c.wa ?? "-"}"`);
-    else if (c.status === "kosong")
-      beda.push(c.pdf == null ? `${c.label}: tidak terbaca di PDF` : `${c.label}: belum diisi di WA (PDF "${c.pdf}")`);
-  }
+  const beda = bedaDariCocok(cocok);
   const hk = x.hari_kerja != null && Number.isInteger(Number(x.hari_kerja)) && Number(x.hari_kerja) >= 1 && Number(x.hari_kerja) <= 31
     ? Number(x.hari_kerja) : null;
   return { lolos: beda.length === 0, cocok, beda, info, hari_kerja: hk, tanggal: x.tanggal ?? null };
@@ -721,9 +752,12 @@ export function cocokkanLampiran(h: HasilOcrCprr, d: DraftUntukLampiran, katalog
 
 /** Kalimat ketidakcocokan dari kolom `cocok` yang tersimpan (balasan ulang & layar). */
 export function bedaDariCocok(cocok: Record<string, CocokIsian> | null | undefined): string[] {
-  return Object.values(cocok ?? {}).filter((c) => c.status !== "cocok").map((c) =>
-    c.status === "beda" ? `${c.label}: PDF "${c.pdf ?? "-"}" ≠ WA "${c.wa ?? "-"}"`
-      : c.pdf == null ? `${c.label}: tidak terbaca di PDF` : `${c.label}: belum diisi di WA (PDF "${c.pdf}")`);
+  return Object.entries(cocok ?? {}).filter(([, c]) => c.status !== "cocok").map(([k, c]) => {
+    // alat: kode katalog hasil baca PDF, bukan teks OCR mentah ("EXC200 =")
+    const pdf = k === "alat" && c.pdf != null ? c.pdf_kode ?? "tidak jelas" : c.pdf;
+    return c.status === "beda" ? `${c.label}: PDF "${pdf ?? "-"}" ≠ WA "${c.wa ?? "-"}"`
+      : c.pdf == null ? `${c.label}: tidak terbaca di PDF` : `${c.label}: belum diisi di WA (PDF "${pdf}")`;
+  });
 }
 
 // ---------------------------------------------------------------- yang masih kurang
@@ -832,6 +866,9 @@ export function skorFaskes(teks: string, nama: string): number {
   // "PUSKESMAS X I" ≠ "PUSKESMAS X II". Uji dev 10 Nov: tanpa ini AM yang menulis faskes baru bernomor ditawari
   // faskes lama tanpa nomor.
   if (angkaPembeda(teks) !== angkaPembeda(nama)) return 0;
+  // Jenis faskes yang tertulis di KEDUA sisi dan berbeda (RSUD vs PKM, RS vs klinik) = faskes lain walau nama intinya
+  // sama — kasus prod 10 Nov: "X, RSUD KAB. Y" ditawari "X, PKM KAB. Y". Salah satu tanpa jenis → seperti biasa.
+  if (jenisBeda(teks, nama)) return 0;
   const q = tokenFaskes(teks);
   const c = [...new Set(tokenFaskes(nama))];
   if (!q.length || !c.length) return 0;
@@ -871,7 +908,8 @@ export function peringkatFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiF
   return katalog
     .map((x) => ({ x, skor: skorFaskes(teks, x.nama), semua: semuaKataFaskes(teks, x.nama), cabang: !!cab && normFaskes(x.cabang) === cab,
                    jenis: !!jenisAm && jenisFaskes(x.nama) === jenisAm }))
-    .filter((y) => y.skor >= SKOR_FASKES_MIRIP || (ambigu.has(normFaskes(y.x.nama)) && angkaPembeda(teks) === angkaPembeda(y.x.nama)))
+    .filter((y) => y.skor >= SKOR_FASKES_MIRIP
+      || (ambigu.has(normFaskes(y.x.nama)) && angkaPembeda(teks) === angkaPembeda(y.x.nama) && !jenisBeda(teks, y.x.nama)))
     .sort((a, b) => Number(b.semua) - Number(a.semua) || Number(b.jenis) - Number(a.jenis) || b.skor - a.skor || Number(b.cabang) - Number(a.cabang)
       || a.x.nama.length - b.x.nama.length || a.x.nama.localeCompare(b.x.nama))
     .map(({ x, skor }) => ({ id: x.id, nama: x.nama, cabang: x.cabang ?? null, baru: !!x.baru, skor }));
@@ -892,7 +930,9 @@ export function putuskanFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiFa
   // terbalik "INTI, JENIS KOTA"). Hanya itu yang dipakai tanpa bertanya — keputusan pemilik 10 Nov: bot yang
   // mencocokkan, AM cukup konfirmasi YA/TIDAK.
   const samaPersis = (nama: string) => !!n && (normFaskes(nama) === n || normFaskes(namaTampilFaskes(nama)) === n);
-  if (o.yakin) {
+  // cariAkun menunjuk satu akun yang jenisnya beda dengan yang ditulis AM (RSUD vs PKM) → bukan calon; diputus peringkat biasa
+  const yakinNama = o.yakin ? katalog.find((x) => x.id === o.yakin!.id)?.nama ?? o.yakin.nama : null;
+  if (o.yakin && !jenisBeda(teks, yakinNama)) {
     const f = katalog.find((x) => x.id === o.yakin!.id);
     const nama = f?.nama ?? o.yakin.nama;
     if (samaPersis(nama)) return { kind: "one", id: o.yakin.id, nama, baru: !!f?.baru };
