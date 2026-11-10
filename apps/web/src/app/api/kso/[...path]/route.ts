@@ -1,7 +1,9 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
-import { canKelolaHargaBeli, canViewKso } from "@/lib/kso-access";
+import { canKelolaHargaBeli, canLihatHargaBeli, canViewKso } from "@/lib/kso-access";
+import { sembunyikanHargaBeli } from "@/lib/kso/basis";
+import type { KsoMaster } from "@/lib/kso/types";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +17,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
   try {
+    // Master tanpa harga beli/HPP untuk yang tak berizin basis "beli" (Komite / Finance / HOD Business).
+    if (sub === "master" && !canLihatHargaBeli(me)) {
+      const res = await gatewayFetch("/kso/master");
+      if (!res.ok) return relay(res);
+      return Response.json(sembunyikanHargaBeli((await res.json()) as KsoMaster));
+    }
     // x-user-id dari sesi: F73 /kso/kesehatan ber-scope (AM = miliknya, HoD = timnya);
     // endpoint KSO lain mengabaikannya.
     return relay(await gatewayFetch(`/kso/${sub}${qs ? `?${qs}` : ""}`, { headers: { "x-user-id": me.id } }));
