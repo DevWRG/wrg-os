@@ -132,6 +132,46 @@ test("status unit → enum", () => {
   assert.equal(statusUnit("bekas"), null);
 });
 
+test("isian 10–12 di pesan PERTAMA: bernomor, huruf besar, BUKTI VOLUME → sumber; templat ditempel apa adanya ditolak", () => {
+  const x = bacaIsianFormat(`#KSO BUDI
+1. FASKES : RS CONTOH SEJAHTERA
+2. ALAT : ZYBIO Z50
+3. TES : 700 TEST/BULAN
+10. STATUS UNIT : RELOKASI IDLE
+11. BUKTI VOLUME : rekap LIS 6 bulan
+12. PENDUKUNG : dr. Contoh, kepala instalasi lab
+JUMLAH : 2
+HARI KERJA : 26`);
+  assert.equal(x.status_unit, "idle");
+  assert.equal(x.sumber, "rekap LIS 6 bulan");
+  assert.deepEqual(x.pendukung, [{ nama: "dr. Contoh", tipe: "kepala_instalasi" }]);
+  assert.equal(x.jumlah, 2);
+  assert.equal(x.hari_kerja, 26);
+  assert.deepEqual(x.tidakTerbaca, []);
+  const isian = isianLengkapiDariFormat(x);
+  assert.equal(isian.unit_status, "idle");
+  assert.equal(isian.volume_sumber, "rekap LIS 6 bulan");
+  assert.deepEqual(isian.pendukung, [{ nama: "dr. Contoh", tipe: "kepala_instalasi" }]);
+  assert.deepEqual(bacaBarisLabel("11. BUKTI VOLUME : SURAT RS"), ["sumber", "SURAT RS"]);
+  for (const v of ["EKS KSO", "EKS DEMO", "REFURBISH", "PINJAMAN PRINCIPAL", "BARU"]) assert.ok(bacaIsianFormat(`10. STATUS UNIT : ${v}`).status_unit, v);
+
+  // templat ditempel tanpa diubah → tak terbaca (disebut di balasan), bukan dipilihkan
+  const t = bacaIsianFormat(`10. STATUS UNIT : BARU / RELOKASI IDLE / EKS KSO / EKS DEMO / REFURBISH / PINJAMAN PRINCIPAL
+11. BUKTI VOLUME : REKAP LIS 6 BULAN / PEMBELIAN REAGEN / SURAT RS
+12. PENDUKUNG : dr. NAMA, JABATAN (mis. kepala instalasi lab)`);
+  assert.equal(t.status_unit, undefined);
+  assert.equal(t.sumber, undefined);
+  assert.deepEqual(t.pendukung, []);
+  assert.deepEqual(t.tidakTerbaca.map((q) => q.label), ["status_unit", "sumber", "pendukung"]);
+  assert.match(t.tidakTerbaca[0].sebab, /pilih SATU/);
+  assert.equal(bacaIsianFormat("STATUS UNIT: baru atau refurbish").status_unit, undefined);
+  // satu jenis bukti dengan garis miring tetap diterima; dua bukti sekaligus (koma) juga
+  assert.equal(bacaIsianFormat("BUKTI VOLUME: rekap LIS/SIMRS 6 bulan").sumber, "rekap LIS/SIMRS 6 bulan");
+  assert.equal(bacaIsianFormat("BUKTI VOLUME: rekap LIS 6 bulan, surat RS").sumber, "rekap LIS 6 bulan, surat RS");
+  // KOTA tetap diterima diam-diam
+  assert.equal(bacaIsianFormat("KOTA: Kota Fiktif").kota, "Kota Fiktif");
+});
+
 test("nama di kepala #KSO: cocok dengan nama/panggilan/pushname; beda ditolak", () => {
   const kand = ["Budi Santoso Contoh", "Budi", "Budi WRG Sby"];
   assert.ok(namaCocok("BUDI", kand));

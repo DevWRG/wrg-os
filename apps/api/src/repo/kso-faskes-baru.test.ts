@@ -146,16 +146,18 @@ function draft(o: Partial<DraftTampil> = {}): DraftTampil {
 }
 
 test("balasan gerbang: penanda (faskes baru) di kepala, catatan faskes baru tanpa angka margin", () => {
-  const catatan = catatanFaskesBaru(draft(), false);
+  const catatan = catatanFaskesBaru(draft());
   const t = formatBalasanGerbang(draft(), { catatan });
   assert.equal(t.split("\n")[0], "D64 · RS UJI COBA (faskes baru) · Z3 · 5/7 HIJAU");
   assert.match(t, /dicatat sebagai FASKES BARU \(calon customer\), cabang MALANG/);
-  assert.match(t, /#KSO D64 KOTA: NAMA KOTA/);
   assert.deepEqual(polaTerlarang(t), [], t);
   assert.equal(formatBalasanGerbang(draft({ faskes_baru: false })).split("\n")[0], "D64 · RS UJI COBA · Z3 · 5/7 HIJAU");
-  // kota sudah ada / ada PDF → tak diminta
-  assert.equal(catatanFaskesBaru(draft({ faskes_kota: "Kota Fiktif" }), false).length, 1);
-  assert.equal(catatanFaskesBaru(draft(), true).length, 1);
+  // 304: kota TIDAK pernah ditanyakan ke AM (default area AM) — dengan atau tanpa kota/PDF
+  for (const d of [draft(), draft({ faskes_kota: null }), draft({ faskes_kota: "MALANG", faskes_kota_area: true })]) {
+    const c = catatanFaskesBaru(d);
+    assert.equal(c.length, 1);
+    assert.doesNotMatch(c.join("\n"), /KOTA|[Kk]ota faskes belum/);
+  }
 });
 
 test("balasanSaranFaskes tanpa alat tertunda: tanpa baris alat", () => {

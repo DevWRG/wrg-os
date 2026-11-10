@@ -10,7 +10,7 @@ import { FORMAT_KSO, FORMAT_KSO_TAMBAHAN } from "@/lib/kso-komite-daftar";
 
 import { salinTeks } from "./salin";
 
-/** Tombol bantuan "Format #KSO": templat sembilan isian + cara melengkapi, dengan tombol salin. */
+/** Tombol bantuan "Format #KSO": templat dua belas isian + cara melengkapi, dengan tombol salin. */
 export function TombolFormatKso() {
   const [buka, setBuka] = useState(false);
   const { toast, node } = useToast();
@@ -28,7 +28,11 @@ export function TombolFormatKso() {
         <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Format #KSO di WhatsApp</DialogTitle>
-            <DialogDescription>Satu pesan, nama AM sendiri di baris pertama, lalu sembilan isian bernomor. Contoh di bawah fiktif.</DialogDescription>
+            <DialogDescription>
+              Satu pesan, nama AM sendiri di baris pertama, lalu dua belas isian bernomor — semuanya bisa lengkap sekali kirim.
+              Nomor 10 dan 11 pilih satu; baris tambahan hanya bila perlu. Kota tidak perlu ditulis (diambil dari data customer
+              atau area AM). Contoh di bawah fiktif.
+            </DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-4">
             <pre className="border-border bg-white max-w-full overflow-x-auto rounded-lg border p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap dark:bg-card">{FORMAT_KSO}</pre>
