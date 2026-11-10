@@ -1200,7 +1200,7 @@ async function pesanKsoTerdekat(row: WaRow): Promise<{ id: string; body: string 
   return null;
 }
 
-/** PDF terdekat pesan #KSO ini (pengirim & chat sama, ±jendela) yang belum dicatat sebagai lampiran usulan mana pun. */
+/** PDF terdekat pesan #KSO ini (pengirim & chat sama, ±jendela) yang belum terbaca sebagai lampiran usulan mana pun. */
 async function pdfKsoTerdekat(row: WaRow): Promise<WaRow | null> {
   const rows = (await db()`
     SELECT id::text, group_jid, sender_jid, sender_name, body, message_type, message_id, received_at::text, media_path
@@ -1214,7 +1214,8 @@ async function pdfKsoTerdekat(row: WaRow): Promise<WaRow | null> {
                            AND ${row.received_at}::timestamptz + make_interval(mins => ${KSO_JENDELA_MENIT})
      ORDER BY abs(extract(epoch FROM received_at - ${row.received_at}::timestamptz)) LIMIT 3`) as unknown as WaRow[];
   if (!rows.length) return null;
-  const sudah = await lampiranSudahDicatat(rows.map((r) => r.message_id).filter((x): x is string => !!x));
+  // 305: PDF yang gagal dibaca karena gangguan teknis (berkas disimpan, belum terbaca) boleh dipasangkan lagi → dibaca ulang
+  const sudah = await lampiranSudahDicatat(rows.map((r) => r.message_id).filter((x): x is string => !!x), { hanyaDibaca: true });
   return rows.find((r) => !r.message_id || !sudah.has(r.message_id)) ?? null;
 }
 

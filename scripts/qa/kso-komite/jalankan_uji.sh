@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) + tangga cartridge (916) + Agenda A terverifikasi (917) + fee & lampiran PDF (918) + faskes baru (919) + kota area AM (920) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
+# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) + tangga cartridge (916) + Agenda A terverifikasi (917) + fee & lampiran PDF (918) + faskes baru (919) + kota area AM (920) + lampiran tanpa simpan (921) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -40,7 +40,7 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/286_kso_bottomline_alat_baru.sql \
          "$INIT"/288_kso_biaya_elektrolit.sql \
          "$INIT"/302_kso_format_wa_lampiran.sql "$INIT"/303_kso_faskes_baru.sql \
-         "$INIT"/304_kso_faskes_baru_kota_area.sql; do
+         "$INIT"/304_kso_faskes_baru_kota_area.sql "$INIT"/305_kso_lampiran_tanpa_simpan.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -94,4 +94,6 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|segarkan_referensi|app_bot_tertunda_isi|app_bot_tertunda_simpan|am|AM-[0-9]+) *$|^ *[a-z0-9-]{3,40} *$|^ *[0-9]+ *$|^ *\{|^UPDATE [0-9]+$|^INSERT [0-9 ]+$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 920_uji_kota_area_am.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|set_config) *$|^ *[a-z0-9-]{3,40} *$|^INSERT [0-9 ]+$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 921_uji_lampiran_tanpa_simpan.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_bot_catat_lampiran) *$|^ *[a-z0-9-]{3,40} *$|^ *[0-9]+ *$|^INSERT [0-9 ]+$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'

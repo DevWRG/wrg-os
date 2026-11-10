@@ -43,6 +43,25 @@ export function statusLampiran(l: { lolos: boolean; ok?: boolean | null; galat?:
   return l.ok === false || (l.galat != null && l.galat !== "") ? "galat" : "beda";
 }
 
+/**
+ * 305 — berkas PDF lampiran: "buka" = berkas masih ada (tombol Buka PDF; mis. gagal teknis, disimpan untuk dibaca ulang),
+ * "diunggah" = sudah dibaca dan berkasnya tidak disimpan di server, "tanpa" = tak ada berkas (data lama / tak dikenal).
+ */
+export type KeadaanBerkas = "buka" | "diunggah" | "tanpa";
+export function keadaanBerkas(l: { ada_berkas: boolean; dibaca_at?: string | null; berkas_dihapus?: boolean } | null | undefined): KeadaanBerkas {
+  if (!l) return "tanpa";
+  if (l.ada_berkas) return "buka";
+  return l.dibaca_at || l.berkas_dihapus ? "diunggah" : "tanpa";
+}
+
+/** "Lampiran simulator sudah diunggah · dibaca 10 Nov 14.05" — waktu baca final (fallback: waktu diunggah). */
+export function teksDiunggah(
+  l: { dibaca_at?: string | null; diunggah_at?: string | null; dibuat_at?: string | null }, fmt: (s: string | null | undefined) => string,
+): string {
+  const t = l.dibaca_at ?? l.diunggah_at ?? l.dibuat_at ?? null;
+  return t ? `Lampiran simulator sudah diunggah · dibaca ${fmt(t)}` : "Lampiran simulator sudah diunggah";
+}
+
 export const LABEL_LAMPIRAN: Record<StatusLampiran, string> = {
   belum: "Belum ada", cocok: "Cocok", beda: "Ada selisih", galat: "PDF tak terbaca",
 };

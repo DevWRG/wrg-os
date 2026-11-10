@@ -1,12 +1,13 @@
 "use client";
 
-import { Check, CircleDashed, Copy, ExternalLink, Info, Minus, X } from "lucide-react";
+import { Check, CircleDashed, Copy, ExternalLink, FileCheck2, Info, Minus, X } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { useToast } from "@/components/sph/sph-ui";
 import type { TabKso } from "@/lib/kso-komite-access";
 import {
-  LABEL_LAMPIRAN, URUT_COCOK, hargaBersih, kelengkapan, persenFee, statusLampiran, teksGalatOcr, type StatusLampiran,
+  LABEL_LAMPIRAN, URUT_COCOK, hargaBersih, keadaanBerkas, kelengkapan, persenFee, statusLampiran, teksDiunggah, teksGalatOcr,
+  type StatusLampiran,
 } from "@/lib/kso-komite-daftar";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,15 @@ function ChipCocok({ s }: { s: StatusCocok }) {
     <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold", COCOK_CLS[s])}>
       {s === "cocok" ? <Check className="size-3" aria-hidden /> : s === "beda" ? <X className="size-3" aria-hidden /> : <Minus className="size-3" aria-hidden />}
       {COCOK_KATA[s]}
+    </span>
+  );
+}
+
+/** 305: lampiran sudah diunggah & dibaca, berkas PDF tidak disimpan di server. */
+function ChipDiunggah({ teks }: { teks: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-600/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+      <FileCheck2 className="size-3.5" aria-hidden />{teks}
     </span>
   );
 }
@@ -132,11 +142,13 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold">Lampiran PDF Simulator <ChipLampiran status={st} /></h3>
         {/* PDF Simulator memuat biaya (capex, reagen, CPRR) → tidak dibuka untuk respons yang disaring (API 403) */}
-        {l?.ada_berkas && !d.tanpa_angka && (
-          <a href={urlPdf(tab, r.id, l.id)} target="_blank" rel="noreferrer" className={cn(buttonVariants({ size: "sm" }))}>
+        {keadaanBerkas(l) === "buka" && !d.tanpa_angka && (
+          <a href={urlPdf(tab, r.id, l!.id)} target="_blank" rel="noreferrer" className={cn(buttonVariants({ size: "sm" }))}>
             <ExternalLink aria-hidden />Buka PDF
           </a>
         )}
+        {/* 305: PDF tidak disimpan sesudah dibaca — yang tersisa hasil bacanya (perbandingan PDF vs WA di bawah) */}
+        {l && keadaanBerkas(l) === "diunggah" && <ChipDiunggah teks={teksDiunggah(l, waktu)} />}
       </div>
       {!l ? (
         <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-center text-sm">
@@ -165,6 +177,7 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
                   {x.ada_berkas && !d.tanpa_angka && (
                     <a href={urlPdf(tab, r.id, x.id)} target="_blank" rel="noreferrer" className="text-primary text-xs font-medium hover:underline">PDF</a>
                   )}
+                  {keadaanBerkas(x) === "diunggah" && <span className="text-muted-foreground text-xs">sudah dibaca</span>}
                 </span>
               </li>
             ))}
