@@ -113,7 +113,7 @@ test("tertunda: faskes ditanya dulu (alat ikut disebut), lalu alat, lalu selesai
   const q1 = pertanyaanTertunda("HUSNI", T, ["Z3", "Z50"])!;
   assert.equal(q1.hasil.error, "faskes-belum-pasti");
   assert.match(q1.balasan, /1\. MITRA KELUARGA CONTOH, RS — SBY 1\n2\. RS ANGGREK FIKTIF \(faskes baru\)/);
-  assert.match(q1.balasan, /#KSO FASKES 1 \(atau 1\/2\) — atau #KSO FASKES BARU kalau ini customer baru/);
+  assert.match(q1.balasan, /#KSO FASKES 1 \(atau 1\/2\) — atau #KSO FASKES BARU untuk tetap pakai nama "[^"]+" \(customer baru\)/);
   assert.match(q1.balasan, /Alat "Z5X" juga belum pasti/);
   // faskes dijawab nomor → alat ditanya
   const q2 = pertanyaanTertunda("HUSNI", { ...T, faskes_id: "9002", faskes_saran: [] }, ["Z3", "Z50"])!;
@@ -178,4 +178,12 @@ test("KLAUSUL: YA tanpa isi → gerbang 7 MERAH 'isi klausul belum ditulis' (buk
   assert.match(ya, /7\. Klausul standar {7}❌ MERAH \(isi klausul belum ditulis\)/);
   const belum = formatBalasanGerbang(draft({ kolom_dinyatakan: [], klausul_ada: null }));
   assert.match(belum, /7\. Klausul standar {7}❌ MERAH \(belum dijawab\)/);
+});
+
+test("skorFaskes: angka pembeda beda = faskes lain (bukan salah ketik)", () => {
+  assert.equal(skorFaskes("RS UJI COBA 2", "RS UJI COBA"), 0);
+  assert.equal(skorFaskes("Puskesmas Contoh II", "PUSKESMAS CONTOH I"), 0);
+  assert.equal(skorFaskes("RS CONTOH 02", "RS CONTOH 2") > 0, true);
+  assert.equal(skorFaskes("RS CONTOH SEJAHTRA", "RS CONTOH SEJAHTERA") >= SKOR_FASKES_MIRIP, true);
+  assert.deepEqual(putuskanFaskes("RS UJI COBA 2", [{ id: "BARU-1", nama: "RS UJI COBA", cabang: "KOTA FIKTIF", baru: true }]), { kind: "baru" });
 });
