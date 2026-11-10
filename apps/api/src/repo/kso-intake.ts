@@ -26,9 +26,10 @@ import { callAi } from "../ai.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { cariAkun } from "./interaction.js";
 import {
-  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bedaDariCocok, bentukNama, cariAlat, cocokkanLampiran, daftarKurang, isianLengkapiDariFormat,
-  namaCocok, teksGalatOcr,
-  type AlatKatalog, type CocokIsian, type DataKurang, type HasilAlat, type HasilOcrCprr, type IsianFormat, type ItemKurang, type SaranAlat,
+  NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bacaPilihanFaskes, bedaDariCocok, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
+  isianLengkapiDariFormat, namaCocok, putuskanFaskes, teksGalatOcr,
+  type AlatKatalog, type CocokIsian, type DataKurang, type FaskesKatalog, type HasilAlat, type HasilFaskes, type HasilOcrCprr, type IsianFormat,
+  type ItemKurang, type SaranAlat, type SaranFaskes,
 } from "./kso-format.js";
 import { NAMA_GERBANG, alasanGerbang } from "./kso-saring.js";
 
@@ -117,7 +118,7 @@ export const KSO_BANTUAN =
   "9. LAMPIRAN : ADA — kirim PDF Simulator KSO di chat ini dalam 10 menit\n" +
   "Boleh ditambah di pesan yang sama: PENDUKUNG: dr. Contoh, kepala instalasi lab · " +
   "STATUS UNIT: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal · HARI KERJA: 26 · JUMLAH: 1 · " +
-  "ALASAN: alasan strategis (wajib bila diminta bot)\n\n" +
+  "ALASAN: alasan strategis (wajib bila diminta bot) · KOTA: kota faskes (untuk faskes/customer baru)\n\n" +
   "Melengkapi/koreksi: #KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)\n" +
   "PDF menyusul: kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit.\n" +
   "Data lengkap + PDF cocok → diajukan otomatis. Mengajukan manual: #KSO kirim D12\n" +
@@ -169,6 +170,10 @@ export interface DraftTampil {
   status: string;
   faskes: string;
   cabang: string | null;
+  /** 303: faskes SEMENTARA (calon customer, id BARU-<n>) + kotanya. */
+  faskes_id?: string;
+  faskes_baru?: boolean;
+  faskes_kota?: string | null;
   alat: string;
   alat_kode: string;
   jumlah: number;
@@ -284,11 +289,13 @@ const KURANG_PENDEK: Record<string, string> = {
 export interface BarisGerbangWa { no: number; nama: string; hijau: boolean; alasan: string | null }
 
 /** Tujuh gerbang untuk AM: 'belum' = MERAH; KLAUSUL belum dijawab = gerbang 7 MERAH. Tak pernah memuat angka. */
-export function gerbangUntukAm(d: Pick<DraftTampil, "gerbang" | "kolom_dinyatakan">): BarisGerbangWa[] {
+export function gerbangUntukAm(d: Pick<DraftTampil, "gerbang" | "kolom_dinyatakan" | "klausul_ada">): BarisGerbangWa[] {
   const klausulBelum = !d.kolom_dinyatakan.includes("klausul");
   return [1, 2, 3, 4, 5, 6, 7].map((no) => {
     const g = d.gerbang.find((x) => Number(x.no) === no);
-    if (no === 7 && klausulBelum) return { no, nama: NAMA_GERBANG[no], hijau: false, alasan: "belum dijawab" };
+    // KLAUSUL: ADA/YA tanpa isinya = sudah dijawab ada, detailnya yang ditunggu
+    if (no === 7 && klausulBelum)
+      return { no, nama: NAMA_GERBANG[no], hijau: false, alasan: d.klausul_ada === true ? "isi klausul belum ditulis" : "belum dijawab" };
     if (!g) return { no, nama: NAMA_GERBANG[no], hijau: false, alasan: "belum ada data" };
     const hijau = g.status === "hijau";
     return { no, nama: NAMA_GERBANG[no], hijau, alasan: hijau ? null : alasanGerbang(no, g.status, g.nilai) };
@@ -315,7 +322,7 @@ export function formatBalasanGerbang(
 ): string {
   const ref = `D${d.id}`;
   const gs = gerbangUntukAm(d);
-  const out: string[] = [`${ref} · ${d.faskes} · ${d.alat_kode} · ${gs.filter((g) => g.hijau).length}/7 HIJAU`, ""];
+  const out: string[] = [`${ref} · ${d.faskes}${d.faskes_baru ? " (faskes baru)" : ""} · ${d.alat_kode} · ${gs.filter((g) => g.hijau).length}/7 HIJAU`, ""];
   for (const g of gs)
     out.push(`${`${g.no}. ${g.nama}`.padEnd(25)}${g.hijau ? "✅ HIJAU" : `❌ MERAH${g.alasan ? ` (${g.alasan})` : ""}`}`);
   out.push("");
@@ -368,6 +375,26 @@ export function balasanSaranAlat(nama: string, alatTeks: string, h: Extract<Hasi
   return `${awal}\n${saran}\n${cara}`;
 }
 
+/** Balasan saat nama faskes mirip beberapa faskes (salah ketik / ambigu): maks 3 pilihan + FASKES BARU. */
+export function balasanSaranFaskes(nama: string, faskesTeks: string, saran: SaranFaskes[], alatTeks: string | null): string {
+  const daftar = saran.map((s, i) => `${i + 1}. ${s.nama}${s.cabang ? ` — ${s.cabang}` : ""}${s.baru ? " (faskes baru)" : ""}`).join("\n");
+  const nomor = saran.length > 1 ? ` (atau ${saran.map((_, i) => i + 1).join("/")})` : "";
+  return [
+    `Faskes "${faskesTeks}" belum pasti, ${nama}. Draft BELUM dibuat — isian lain sudah disimpan, tinggal pilih faskesnya.`,
+    `Mungkin maksudnya:\n${daftar}`,
+    `Balas: #KSO FASKES 1${nomor} — atau #KSO FASKES BARU kalau ini customer baru. Berlaku 24 jam.`,
+    ...(alatTeks ? [`Alat "${alatTeks}" juga belum pasti — ditanyakan sesudah faskes dipilih.`] : []),
+  ].join("\n");
+}
+
+/** Catatan di balasan draft yang memakai faskes baru (calon customer). Tanpa angka. */
+export function catatanFaskesBaru(d: Pick<DraftTampil, "id" | "faskes" | "cabang" | "faskes_kota">, adaLampiran: boolean): string[] {
+  const out = [`Faskes "${d.faskes}" belum ada di master — dicatat sebagai FASKES BARU (calon customer)${d.cabang ? `, cabang ${d.cabang}` : ""}. ` +
+    "Sekretariat menautkannya ke akun master begitu customer ini terdaftar."];
+  if (!d.faskes_kota && !adaLampiran) out.push(`Kota faskes belum ada — tulis: #KSO D${d.id} KOTA: NAMA KOTA (atau terisi dari PDF Simulator).`);
+  return out;
+}
+
 /** Balasan pesan #KSO yang tidak sesuai format (teks bebas tidak lagi diproses). */
 export function balasanFormatSalah(x: IsianFormat | null): string {
   const kurang = x ? (["faskes", "alat"] as const).filter((k) => !x.label.includes(k)).map((k) => NAMA_LABEL[k]) : [];
@@ -389,7 +416,8 @@ export async function sebagaiBot<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
 
 async function bacaDraft(tx: Tx, id: number): Promise<DraftTampil | null> {
   const [r] = await tx`
-    select r.id::int, r.nomor, r.status::text, f.nama as faskes, f.cabang, a.nama as alat, a.kode as alat_kode,
+    select r.id::int, r.nomor, r.status::text, r.faskes_id, f.nama as faskes, f.cabang, f.baru as faskes_baru, f.kota as faskes_kota,
+           a.nama as alat, a.kode as alat_kode,
            r.jumlah, r.volume_estimasi, r.volume_sumber, r.harga_per_test::float8, k.harga_standar_per_test::float8 as harga_standar,
            k.label as kategori, r.tenor_bulan, r.hari_kerja,
            coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
@@ -423,14 +451,26 @@ async function idDariNomor(tx: Tx, p: KsoPerintah): Promise<number | null> {
 
 type Cocok<T> = { kind: "one"; nilai: T; nama: string } | { kind: "none" } | { kind: "ambiguous"; names: string[] };
 
-/** Faskes HANYA dari master (spesifikasi 2.4: tidak pernah membuat faskes baru dari intake). */
-async function cocokFaskes(tx: Tx, teks: string): Promise<Cocok<string>> {
-  const akun = await cariAkun(teks);
-  if (akun.kind === "none") return { kind: "none" };
-  if (akun.kind === "ambiguous") return { kind: "ambiguous", names: akun.names.slice(0, 3) };
-  const rows = await tx`select id, nama from kso.faskes where id = any(${akun.ids.map(String)})`;
-  if (rows.length === 1) return { kind: "one", nilai: String(rows[0].id), nama: String(rows[0].nama) };
-  return rows.length === 0 ? { kind: "none" } : { kind: "ambiguous", names: rows.slice(0, 3).map((r) => String(r.nama)) };
+/**
+ * Faskes untuk usulan baru (303 — keputusan product owner 10 Nov: faskes boleh customer baru). Jalur pasti lama tetap
+ * (cariAkun → tepat satu kso.faskes master); selain itu diputuskan putuskanFaskes atas kso.faskes (master + faskes
+ * baru yang belum ditautkan): pilihan bila ada yang mirip, faskes baru bila tidak ada.
+ */
+async function cariFaskesBot(tx: Tx, teks: string): Promise<HasilFaskes> {
+  let yakin: { id: string; nama: string } | null = null;
+  let ambigu: string[] = [];
+  try {
+    const akun = await cariAkun(teks);
+    if (akun.kind === "one") {
+      const rows = await tx`select id, nama from kso.faskes where id = any(${akun.ids.map(String)}) and not baru`;
+      if (rows.length === 1) yakin = { id: String(rows[0].id), nama: String(rows[0].nama) };
+      else ambigu = rows.map((r) => String(r.nama));
+    } else if (akun.kind === "ambiguous") ambigu = akun.names;
+  } catch { /* accurate_customer tak terbaca → putuskan dari kso.faskes saja */ }
+  const katalog = (await tx`select id, nama, cabang, kota, baru from kso.faskes where ditautkan_ke is null`)
+    .map((r) => ({ id: String(r.id), nama: String(r.nama), cabang: r.cabang ? String(r.cabang) : null, kota: r.kota ? String(r.kota) : null,
+                   baru: Boolean(r.baru) })) as FaskesKatalog[];
+  return putuskanFaskes(teks, katalog, { yakin, ambigu });
 }
 
 /** Kompatibilitas lama: kode yang pasti → "one"; beberapa yang yakin → "ambiguous"; selain itu "none". */
@@ -576,6 +616,12 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
                  ${cek.lolos ? sumberDariLampiran(cek.tanggal) : null})`;
       // cek.info (peringatan hitungan OCR, harga pesaing) tidak dikirim ke AM — balasan hanya gerbang + kurang
       lampiranHasil = { lolos: cek.lolos, beda: cek.beda.length };
+      // 303: faskes baru tanpa kota → kota dari PDF Simulator (nama faskes PDF sudah dicocokkan dengan nama yang ditulis AM)
+      const kotaPdf = o.ocr.hasil.ok ? o.ocr.hasil.isian?.kota?.trim() : null;
+      if (awal.faskes_baru && !awal.faskes_kota && kotaPdf && awal.faskes_id) {
+        const [kt] = await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${awal.faskes_id}, ${kotaPdf}) as ok`;
+        if (kt?.ok) lampiranHasil.kota_faskes = kotaPdf;
+      }
       if (terkunci)
         return { balasan: `PDF untuk ${awal.nomor ?? `D${id}`} dicatat sebagai arsip — usulannya sudah diajukan, isiannya tidak berubah.`,
                  hasil: { aksi: "lampiran", rencana_id: id, lampiran: lampiranHasil } };
@@ -605,12 +651,12 @@ async function selesaikan(k: KsoKonteks, id: number, o: OpsiSelesai): Promise<Ha
         galatAjukan = (e as Error).message;
       }
     }
-    const catatan = [...(o.catatan ?? [])];
+    const catatan = [...(o.baru && d.faskes_baru ? catatanFaskesBaru(d, !!o.ocr || !!d.lampiran) : []), ...(o.catatan ?? [])];
     if (galatAjukan) catatan.push(terjemahGalatKso(galatAjukan, `D${id}`));
     const balasan = formatBalasanGerbang(d, { tanpaTipe: o.tanpaTipe, catatan, diajukan: diajukan?.balasan });
     return {
       balasan,
-      hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci),
+      hasil: { ...(o.hasil ?? {}), rencana_id: id, kurang: kurang.map((x) => x.kunci), ...(d.faskes_baru ? { faskes_baru: d.faskes_id } : {}),
                ...(lampiranHasil ? { lampiran: lampiranHasil } : {}),
                ...(diajukan ? { diajukan: true, nomor: diajukan.hasil.nomor, jalur: diajukan.hasil.jalur } : {}),
                ...(galatAjukan ? { galat_ajukan: galatAjukan.slice(0, 200) } : {}) },
@@ -633,26 +679,183 @@ export async function prosesLampiranKso(
   }
 }
 
+// ---------------------------------------------------------------- isian tertunda (alat dan/atau faskes belum pasti)
+
+interface BarisTertunda {
+  id: number;
+  faskes_id: string | null;
+  isian: Record<string, unknown>;
+  alat_teks: string | null;
+  saran: SaranAlat[];
+  wa_message_id: string | null;
+  alat_kode: string | null;
+  faskes_teks: string | null;
+  faskes_saran: SaranFaskes[];
+  kota: string | null;
+  lampiran_wa: string | null;
+  lampiran_path: string | null;
+}
+
+/** Usulan BARU (tanpa draft) milik AM yang masih menunggu jawaban (24 jam). */
+async function bacaTertunda(tx: Tx, amId: string): Promise<BarisTertunda | null> {
+  const [r] = await tx`select id::int, faskes_id, isian, alat_teks, saran, wa_message_id, alat_kode, faskes_teks, faskes_saran, kota,
+                              lampiran_wa, lampiran_path
+                         from kso.intake_tertunda
+                        where am_id = ${amId} and selesai_at is null and rencana_id is null and dibuat_at > now() - interval '24 hours'
+                        order by dibuat_at desc limit 1`;
+  if (!r) return null;
+  return { ...(r as unknown as BarisTertunda), saran: (r.saran as SaranAlat[]) ?? [], faskes_saran: (r.faskes_saran as SaranFaskes[]) ?? [],
+           isian: (r.isian as Record<string, unknown>) ?? {} };
+}
+
+/** Faskes masih ditanya = belum ada faskes_id dan ada daftar pilihan. faskes_id kosong tanpa pilihan = faskes BARU nanti. */
+export function faskesTerbuka(t: Pick<BarisTertunda, "faskes_id" | "faskes_saran">): boolean {
+  return t.faskes_id == null && t.faskes_saran.length > 0;
+}
+
+/**
+ * Pertanyaan berikutnya untuk isian tertunda: faskes dulu, lalu alat. null = keduanya sudah terjawab (draft bisa dibuat).
+ * Murni — diuji tanpa DB.
+ */
+export function pertanyaanTertunda(nama: string, t: Omit<BarisTertunda, "isian" | "wa_message_id" | "kota" | "lampiran_wa" | "lampiran_path">,
+                                   semuaKode: string[]): Hasil | null {
+  if (faskesTerbuka(t))
+    return {
+      balasan: balasanSaranFaskes(nama, t.faskes_teks ?? "", t.faskes_saran, t.alat_kode ? null : t.alat_teks),
+      hasil: { aksi: "baru", error: "faskes-belum-pasti", tertunda_id: t.id, saran_faskes: t.faskes_saran.map((s) => s.id) },
+    };
+  if (t.alat_kode == null) {
+    const h: Extract<HasilAlat, { kind: "saran" }> = { kind: "saran", ambigu: false, saran: t.saran };
+    const faskesBaru = t.faskes_id == null && t.faskes_teks ? `\nFaskes "${t.faskes_teks}" belum ada di master — akan dicatat sebagai faskes baru.` : "";
+    return {
+      balasan: balasanSaranAlat(nama, t.alat_teks ?? "", h, null, semuaKode) + faskesBaru,
+      hasil: { aksi: "baru", error: "alat-belum-pasti", tertunda_id: t.id, faskes_id: t.faskes_id, saran: t.saran.map((s) => s.kode) },
+    };
+  }
+  return null;
+}
+
+/** Tanya bagian yang masih terbuka, atau — bila alat & faskes sudah pasti — buat draftnya (faskes baru bila perlu). */
+async function lanjutkanTertunda(k: KsoKonteks, t: BarisTertunda, semuaKode: string[]): Promise<Hasil> {
+  const tanya = pertanyaanTertunda(k.nama, t, semuaKode);
+  if (tanya) return tanya;
+  let id: number;
+  try {
+    id = await sebagaiBot(async (tx) => {
+      let faskes = t.faskes_id;
+      if (!faskes) {
+        const [f] = await tx`select kso.app_bot_buat_faskes_baru(${k.am_id}, ${t.faskes_teks}, ${t.kota}) as id`;
+        faskes = String(f.id);
+      } else if (t.kota) await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${faskes}, ${t.kota})`;
+      const isian = t.isian;
+      const [b] = await tx`
+        select kso.app_bot_buat_draft(${k.am_id}, ${faskes}, ${t.alat_kode}, ${(isian.jumlah as number) ?? null},
+          ${(isian.volume_estimasi as number) ?? null}, null, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[],
+          '[]'::jsonb, ${t.wa_message_id ?? k.wa_message_id}, null, null)::int as id`;
+      await tx`select kso.app_bot_lengkapi_draft(${b.id}, ${k.am_id}, ${tx.json(isian as never)})`;
+      await tx`select kso.app_bot_tutup_tertunda(${t.id}, ${k.am_id})`;
+      return Number(b.id);
+    });
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, "D?"), hasil: { error: "kso-galat", galat: m.slice(0, 200), tertunda_id: t.id } };
+  }
+  // PDF yang dikirim BERSAMA pesan #KSO aslinya (tersimpan di baris tertunda), lalu PDF di pesan jawaban ini, lalu PDF
+  // terpisah di sekitar pesan asli — draft baru ada sekarang, jadi lampirannya baru diproses sekarang.
+  let lampiran: LampiranWa | null = t.lampiran_path ? { wa_message_id: t.lampiran_wa, media_path: t.lampiran_path } : k.lampiran ?? null;
+  if (!lampiran && t.wa_message_id && k.cariLampiranDekat) lampiran = await k.cariLampiranDekat(String(t.wa_message_id));
+  const ocr = lampiran ? await bacaLampiran(lampiran) : null;
+  try {
+    return await selesaikan(k, id, { baru: true, ocr, alatTeks: t.alat_teks ?? undefined, faskesTeks: t.faskes_teks ?? undefined,
+                                     hasil: { aksi: "baru", dari_tertunda: t.id, alat: t.alat_kode } });
+  } catch (e) {
+    const m = (e as Error).message;
+    return { balasan: terjemahGalatKso(m, `D${id}`), hasil: { aksi: "baru", rencana_id: id, error: "kso-galat", galat: m.slice(0, 200) } };
+  }
+}
+
+/** Ubah baris tertunda (kunci yang ada ditulis apa adanya), baca ulang, lanjutkan. */
+async function ubahLanjutkan(k: KsoKonteks, id: number, ubah: Record<string, unknown>, semuaKode: string[]): Promise<Hasil> {
+  const t = await sebagaiBot(async (tx) => {
+    await tx`select kso.app_bot_tertunda_isi(${id}, ${k.am_id}, ${tx.json(ubah as never)})`;
+    return bacaTertunda(tx, k.am_id);
+  });
+  if (!t) return { balasan: `Usulan yang menunggu sudah kedaluwarsa, ${k.nama}. Kirim ulang dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+  return lanjutkanTertunda(k, t, semuaKode);
+}
+
 /** "#KSO ALAT 1" / "#KSO ALAT: Z50" (tanpa D) atau "#KSO D62 ALAT 2": pilih alat untuk isian tertunda. */
 async function pilihAlatTertunda(k: KsoKonteks, alatTeks: string, rencanaId: number | null): Promise<Hasil | null> {
+  if (rencanaId != null) return pilihAlatDraft(k, alatTeks, rencanaId);
+  const alias = await aliasAnalyzer();
+  const t = await sebagaiBot(async (tx) => ({ katalog: await muatKatalog(tx, alias), row: await bacaTertunda(tx, k.am_id) }));
+  const semuaKode = t.katalog.map((c) => c.kode);
+  if (!t.row)
+    return { balasan: `Tidak ada usulan yang menunggu pilihan alat, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+  const angka = /^\s*(\d)\s*$/.exec(alatTeks);
+  let ubah: Record<string, unknown>;
+  if (angka) {
+    const s = t.row.saran[Number(angka[1]) - 1];
+    if (!s)
+      return { balasan: t.row.saran.length ? `Nomor ${angka[1]} tidak ada di daftar alat (1–${t.row.saran.length}).`
+                                           : "Tidak ada daftar pilihan alat yang terbuka. Tulis kodenya: #KSO ALAT: KODE",
+               hasil: { error: "nomor-alat-salah" } };
+    ubah = { alat_kode: s.kode };
+  } else {
+    const h = cariAlat(alatTeks, t.katalog);
+    ubah = h.kind === "one" ? { alat_kode: h.kode, alat_teks: alatTeks, saran: [] } : { alat_kode: null, alat_teks: alatTeks, saran: h.saran };
+  }
+  return ubahLanjutkan(k, t.row.id, ubah, semuaKode);
+}
+
+/** "#KSO FASKES 1" / "#KSO FASKES BARU" / "#KSO FASKES: NAMA" — faskes untuk usulan tertunda. null = tak ada yang tertunda (bukan jawaban). */
+async function pilihFaskesTertunda(k: KsoKonteks, teks: string, kota: string | null): Promise<Hasil | null> {
+  const alias = await aliasAnalyzer();
+  const pil = bacaPilihanFaskes(teks);
+  const t = await sebagaiBot(async (tx) => ({ katalog: await muatKatalog(tx, alias), row: await bacaTertunda(tx, k.am_id) }));
+  const semuaKode = t.katalog.map((c) => c.kode);
+  if (!t.row) {
+    if (pil.kind === "nama") return null;
+    return { balasan: `Tidak ada usulan yang menunggu pilihan faskes, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`, hasil: { error: "tanpa-tertunda" } };
+  }
+  const r = t.row;
+  let ubah: Record<string, unknown>;
+  if (pil.kind === "nomor") {
+    const s = r.faskes_saran[pil.n - 1];
+    if (!s)
+      return { balasan: r.faskes_saran.length ? `Nomor ${pil.n} tidak ada di daftar faskes (1–${r.faskes_saran.length}).`
+                                              : "Tidak ada daftar pilihan faskes yang terbuka. Tulis namanya: #KSO FASKES: NAMA FASKES",
+               hasil: { error: "nomor-faskes-salah" } };
+    ubah = { faskes_id: s.id, faskes_teks: r.faskes_teks, faskes_saran: [] };
+  } else if (pil.kind === "baru") {
+    if (!r.faskes_teks)
+      return { balasan: "Nama faskes barunya belum ada — tulis: #KSO FASKES: NAMA FASKES", hasil: { error: "faskes-baru-tanpa-nama" } };
+    ubah = { faskes_id: null, faskes_teks: r.faskes_teks, faskes_saran: [] };
+  } else {
+    const h = await sebagaiBot((tx) => cariFaskesBot(tx, pil.nama));
+    ubah = h.kind === "one" ? { faskes_id: h.id, faskes_teks: pil.nama, faskes_saran: [] }
+      : { faskes_id: null, faskes_teks: pil.nama, faskes_saran: h.kind === "saran" ? h.saran : [] };
+  }
+  if (kota) ubah.kota = kota;
+  return ubahLanjutkan(k, r.id, ubah, semuaKode);
+}
+
+/** "#KSO D62 ALAT 2" / "#KSO D62 ALAT: Z50": pilih alat untuk draft yang sudah ada (pilihan dari koreksi alat). */
+async function pilihAlatDraft(k: KsoKonteks, alatTeks: string, rencanaId: number): Promise<Hasil | null> {
   const alias = await aliasAnalyzer();
   const t = await sebagaiBot(async (tx) => {
     const katalog = await muatKatalog(tx, alias);
-    const [row] = await tx`select id::int, faskes_id, isian, saran, wa_message_id from kso.intake_tertunda
-                            where am_id = ${k.am_id} and selesai_at is null and rencana_id is not distinct from ${rencanaId}
+    const [row] = await tx`select id::int, saran, wa_message_id from kso.intake_tertunda
+                            where am_id = ${k.am_id} and selesai_at is null and rencana_id = ${rencanaId}
                               and dibuat_at > now() - interval '24 hours'
                             order by dibuat_at desc limit 1`;
     return { katalog, row };
   });
   const angka = /^\s*(\d)\s*$/.exec(alatTeks);
   if (!t.row) {
-    if (rencanaId != null && !angka) return null; // koreksi alat biasa untuk draft — jalur lengkapi
-    return {
-      balasan: rencanaId != null
-        ? `Tidak ada daftar pilihan alat yang terbuka untuk D${rencanaId}. Tulis kodenya: #KSO D${rencanaId} ALAT: KODE`
-        : `Tidak ada usulan yang menunggu pilihan alat, ${k.nama}. Kirim usulan baru dengan format #KSO lengkap.`,
-      hasil: { error: "tanpa-tertunda" },
-    };
+    if (!angka) return null; // koreksi alat biasa untuk draft — jalur lengkapi
+    return { balasan: `Tidak ada daftar pilihan alat yang terbuka untuk D${rencanaId}. Tulis kodenya: #KSO D${rencanaId} ALAT: KODE`,
+             hasil: { error: "tanpa-tertunda" } };
   }
   const saran = (t.row.saran as SaranAlat[]) ?? [];
   let pilih: { kode: string; nama: string } | null = null;
@@ -664,39 +867,24 @@ async function pilihAlatTertunda(k: KsoKonteks, alatTeks: string, rencanaId: num
     const h = cariAlat(alatTeks, t.katalog);
     if (h.kind === "one") pilih = { kode: h.kode, nama: h.nama };
     else {
-      await sebagaiBot((tx) => tx`select kso.app_bot_simpan_tertunda(${k.am_id}, ${rencanaId}, ${t.row.faskes_id ?? null}, ${tx.json(t.row.isian as never)},
+      await sebagaiBot((tx) => tx`select kso.app_bot_simpan_tertunda(${k.am_id}, ${rencanaId}, null, '{}'::jsonb,
                                     ${alatTeks}, ${tx.json(h.saran as never)}, ${t.row.wa_message_id ?? null})`);
-      return { balasan: balasanSaranAlat(k.nama, alatTeks, h, rencanaId != null ? `D${rencanaId}` : null, t.katalog.map((c) => c.kode)),
+      return { balasan: balasanSaranAlat(k.nama, alatTeks, h, `D${rencanaId}`, t.katalog.map((c) => c.kode)),
                hasil: { aksi: "pilih-alat", error: "alat-belum-pasti", saran: h.saran.map((s) => s.kode) } };
     }
   }
-  const isian = { ...(t.row.isian as Record<string, unknown>) };
-  let id: number;
   try {
-    id = await sebagaiBot(async (tx) => {
-      if (rencanaId != null) {
-        await tx`select kso.app_bot_lengkapi_draft(${rencanaId}, ${k.am_id}, ${tx.json({ alat_kode: pilih!.kode } as never)})`;
-        await tx`select kso.app_bot_tutup_tertunda(${t.row.id}, ${k.am_id})`;
-        return rencanaId;
-      }
-      const [b] = await tx`
-        select kso.app_bot_buat_draft(${k.am_id}, ${t.row.faskes_id}, ${pilih!.kode}, ${(isian.jumlah as number) ?? null},
-          ${(isian.volume_estimasi as number) ?? null}, null, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[],
-          '[]'::jsonb, ${t.row.wa_message_id ?? k.wa_message_id}, null, null)::int as id`;
-      await tx`select kso.app_bot_lengkapi_draft(${b.id}, ${k.am_id}, ${tx.json(isian as never)})`;
+    await sebagaiBot(async (tx) => {
+      await tx`select kso.app_bot_lengkapi_draft(${rencanaId}, ${k.am_id}, ${tx.json({ alat_kode: pilih!.kode } as never)})`;
       await tx`select kso.app_bot_tutup_tertunda(${t.row.id}, ${k.am_id})`;
-      return Number(b.id);
     });
   } catch (e) {
     const m = (e as Error).message;
-    return { balasan: terjemahGalatKso(m, rencanaId != null ? `D${rencanaId}` : "D?"), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
+    return { balasan: terjemahGalatKso(m, `D${rencanaId}`), hasil: { error: "kso-galat", galat: m.slice(0, 200) } };
   }
-  // PDF yang dikirim bersama pesan #KSO aslinya (menunggu karena draft belum ada) ikut diproses sekarang
-  let lampiran = k.lampiran ?? null;
-  if (!lampiran && rencanaId == null && t.row.wa_message_id && k.cariLampiranDekat) lampiran = await k.cariLampiranDekat(String(t.row.wa_message_id));
-  const ocr = lampiran ? await bacaLampiran(lampiran) : null;
-  return selesaikan(k, id, { baru: rencanaId == null, ocr, alatTeks: angka ? undefined : alatTeks,
-                             hasil: { aksi: rencanaId == null ? "baru" : "lengkapi", dari_tertunda: t.row.id, alat: pilih.kode } });
+  const ocr = k.lampiran ? await bacaLampiran(k.lampiran) : null;
+  return selesaikan(k, rencanaId, { baru: false, ocr, alatTeks: angka ? undefined : alatTeks,
+                                    hasil: { aksi: "lengkapi", dari_tertunda: t.row.id, alat: pilih.kode } });
 }
 
 /** Kerjakan satu perintah #KSO. Mengembalikan teks balasan + ringkasan untuk processed_result. */
@@ -771,8 +959,12 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
   if (p.aksi === "lengkapi") return lengkapi(k, x, ref, tidakTerbaca, tanpaTipe);
 
   // ---- baru
-  // pilih alat untuk isian tertunda: "#KSO ALAT 1" (tanpa nama, tanpa faskes)
+  // jawaban isian tertunda: "#KSO ALAT 1" / "#KSO FASKES 2" / "#KSO FASKES BARU" (tanpa nama, satu label)
   if (!p.nama && x.alat && !x.faskes) return (await pilihAlatTertunda(k, x.alat, null))!;
+  if (!p.nama && x.faskes && !x.alat) {
+    const r = await pilihFaskesTertunda(k, x.faskes, x.kota ?? null);
+    if (r) return r;
+  }
   if (!x.faskes || !x.alat) return { balasan: balasanFormatSalah(x), hasil: { error: "format-tidak-sesuai", label: x.label } };
   const kandidat = await namaPengirim(k.am_id, k);
   if (!p.nama)
@@ -789,25 +981,34 @@ export async function prosesKso(k: KsoKonteks): Promise<Hasil> {
   let tahap1: Hasil | { id: number; alatTeks: string };
   try {
     tahap1 = await sebagaiBot(async (tx): Promise<Hasil | { id: number; alatTeks: string }> => {
-      const f = await cocokFaskes(tx, x.faskes!);
-      if (f.kind === "none")
-        return { balasan: `Faskes "${x.faskes}" tidak ketemu di master, ${k.nama}. Draft BELUM dibuat — cek ejaan nama faskes lalu kirim ulang #KSO.`, hasil: { error: "faskes-tidak-ada", q: x.faskes } };
-      if (f.kind === "ambiguous")
-        return {
-          balasan: `Faskes "${x.faskes}" ada beberapa, ${k.nama}:\n${f.names.map((n, i) => `${i + 1}. ${n}`).join("\n")}\nKirim ulang #KSO dengan nama faskes yang lebih lengkap. Draft BELUM dibuat.`,
-          hasil: { error: "faskes-ambigu", kandidat: f.names },
-        };
       const katalog = await muatKatalog(tx, alias);
       const isian = isianLengkapiDariFormat(x);
+      // 303: faskes boleh customer baru — pasti → dipakai; mirip → AM memilih; tak ada yang mirip → faskes baru
+      const f = await cariFaskesBot(tx, x.faskes!);
       const a = cariAlat(x.alat!, katalog);
-      if (a.kind !== "one") {
-        const [t] = await tx`select kso.app_bot_simpan_tertunda(${k.am_id}, null, ${f.nilai}, ${tx.json(isian as never)}, ${x.alat!},
-                               ${tx.json(a.saran as never)}, ${k.wa_message_id})::int as id`;
-        return { balasan: balasanSaranAlat(k.nama, x.alat!, a, null, katalog.map((c) => c.kode)),
-                 hasil: { aksi: "baru", error: "alat-belum-pasti", tertunda_id: t.id, faskes_id: f.nilai, saran: a.saran.map((s) => s.kode) } };
+      if (f.kind === "saran" || a.kind !== "one") {
+        const faskesId = f.kind === "one" ? f.id : null;
+        const faskesSaran = f.kind === "saran" ? f.saran : [];
+        const alatKode = a.kind === "one" ? a.kode : null;
+        const alatSaran = a.kind === "saran" ? a.saran : [];
+        const [t] = await tx`select kso.app_bot_tertunda_simpan(${k.am_id}, ${tx.json(isian as never)}, ${k.wa_message_id},
+                               ${faskesId}, ${x.faskes!}, ${tx.json(faskesSaran as never)}, ${x.kota ?? null},
+                               ${alatKode}, ${x.alat!}, ${tx.json(alatSaran as never)},
+                               ${k.lampiran?.wa_message_id ?? null}, ${k.lampiran?.media_path ?? null})::int as id`;
+        const tanya = pertanyaanTertunda(k.nama, { id: Number(t.id), faskes_id: faskesId, alat_teks: x.alat!, saran: alatSaran, alat_kode: alatKode,
+                                                   faskes_teks: x.faskes!, faskes_saran: faskesSaran }, katalog.map((c) => c.kode))!;
+        return { balasan: tanya.balasan, hasil: { ...tanya.hasil, ...(k.lampiran ? { lampiran_menunggu: k.lampiran.wa_message_id } : {}) } };
+      }
+      let faskesId: string;
+      if (f.kind === "one") {
+        faskesId = f.id;
+        if (f.baru && x.kota) await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${faskesId}, ${x.kota})`;
+      } else {
+        const [fb] = await tx`select kso.app_bot_buat_faskes_baru(${k.am_id}, ${x.faskes!}, ${x.kota ?? null}) as id`;
+        faskesId = String(fb.id);
       }
       const [b] = await tx`
-        select kso.app_bot_buat_draft(${k.am_id}, ${f.nilai}, ${a.kode}, ${(isian.jumlah as number) ?? null}, ${(isian.volume_estimasi as number) ?? null},
+        select kso.app_bot_buat_draft(${k.am_id}, ${faskesId}, ${a.kode}, ${(isian.jumlah as number) ?? null}, ${(isian.volume_estimasi as number) ?? null},
           null, ${(isian.harga_per_test as number) ?? null}, null, null, '{}'::text[], '[]'::jsonb, ${k.wa_message_id}, null, null)::int as id`;
       await tx`select kso.app_bot_lengkapi_draft(${b.id}, ${k.am_id}, ${tx.json(isian as never)})`;
       return { id: Number(b.id), alatTeks: x.alat! };
@@ -880,6 +1081,13 @@ async function lengkapi(k: KsoKonteks, x: IsianFormat, ref: string, tidakTerbaca
       }
       if (x.faskes && awal && !awal.faskes.toLowerCase().includes(x.faskes.toLowerCase()))
         catatan.push("Faskes tidak bisa diganti di draft yang sama — kirim #KSO baru untuk faskes lain.");
+      // 303: "#KSO D12 KOTA: SURABAYA" — kota faskes baru (hanya mengisi yang kosong)
+      if (x.kota && awal) {
+        const [kt] = awal.faskes_baru && awal.faskes_id
+          ? await tx`select kso.app_bot_isi_kota_faskes(${k.am_id}, ${awal.faskes_id}, ${x.kota}) as ok` : [{ ok: false }];
+        catatan.push(kt?.ok ? `Kota faskes baru dicatat: ${x.kota}.`
+          : awal.faskes_baru ? "Kota faskes ini sudah terisi — tidak diubah." : "KOTA hanya untuk faskes baru — faskes master sudah punya cabang/kota.");
+      }
       if (Object.keys(isian).length === 0 && tanpaTipe.length === 0 && !catatan.length)
         return { balasan: `Tidak ada isian baru yang terbaca untuk ${ref}. Tulis langsung, mis. "#KSO ${ref} MASA KSO: 36".`,
                  hasil: { aksi: "lengkapi", rencana_id: id, kosong: true } };

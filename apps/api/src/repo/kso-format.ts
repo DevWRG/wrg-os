@@ -19,7 +19,7 @@
 
 export type LabelKso =
   | "faskes" | "alat" | "tes" | "masa" | "harga" | "fee" | "kompetitor" | "klausul" | "lampiran"
-  | "pendukung" | "status_unit" | "alasan" | "hari_kerja" | "jumlah" | "sumber";
+  | "pendukung" | "status_unit" | "alasan" | "hari_kerja" | "jumlah" | "sumber" | "kota";
 
 /** Urutan penting: label yang lebih panjang/khusus dicek dulu ("JUMLAH TES" = tes, "JUMLAH" = unit). */
 const POLA_LABEL: [LabelKso, RegExp][] = [
@@ -38,13 +38,15 @@ const POLA_LABEL: [LabelKso, RegExp][] = [
   ["alasan", /^alasan(?:\s+strategis)?\b/i],
   ["jumlah", /^jumlah(?:\s+(?:unit|alat))?\b/i],
   ["sumber", /^(?:sumber|bukti)(?:\s+volume)?\b/i],
+  // 303: kota faskes BARU (calon customer) — opsional; faskes master sudah punya cabang/kota
+  ["kota", /^(?:kota|kab(?:upaten)?\s*\/\s*kota)\b/i],
 ];
 
 /** Label tampil (balasan & bantuan). */
 export const NAMA_LABEL: Record<LabelKso, string> = {
   faskes: "FASKES", alat: "ALAT", tes: "TES", masa: "MASA KSO", harga: "PERMINTAAN HARGA", fee: "FEE",
   kompetitor: "KOMPETITOR", klausul: "KLAUSUL", lampiran: "LAMPIRAN", pendukung: "PENDUKUNG", status_unit: "STATUS UNIT",
-  alasan: "ALASAN", hari_kerja: "HARI KERJA", jumlah: "JUMLAH", sumber: "SUMBER",
+  alasan: "ALASAN", hari_kerja: "HARI KERJA", jumlah: "JUMLAH", sumber: "SUMBER", kota: "KOTA",
 };
 
 const NOMOR_BARIS = /^\s*(?:\d{1,2}\s*[.)]|[-•*])\s*/;
@@ -212,6 +214,8 @@ export interface IsianFormat {
   hari_kerja?: number;
   jumlah?: number;
   sumber?: string;
+  /** 303: kota faskes baru (label KOTA:). Tidak masuk isian draft — milik kso.faskes. */
+  kota?: string;
   /** Label yang muncul di pesan (nilainya terbaca atau tidak). */
   label: LabelKso[];
   /** Label muncul tapi nilainya tak bisa dibaca → disebut di balasan. */
@@ -294,6 +298,7 @@ export function bacaIsianFormat(teks: string): IsianFormat {
         break;
       }
       case "sumber": x.sumber = v; break;
+      case "kota": x.kota = v; break;
     }
   }
   return x;
@@ -723,4 +728,87 @@ export function daftarKurang(d: DataKurang, ref: string): ItemKurang[] {
     // teks tanpa margin: daftar ini juga dikirim ke AM (keputusan 10 Nov)
     t("alasan", "ALASAN strategis — diperlukan untuk usulan ini", "ALASAN: referensi wilayah");
   return q;
+}
+
+// ---------------------------------------------------------------- 303: faskes — pasti / pilih / faskes baru
+
+export interface FaskesKatalog {
+  id: string;
+  nama: string;
+  cabang?: string | null;
+  kota?: string | null;
+  /** Faskes SEMENTARA (calon customer) yang dibuat dari #KSO sebelumnya — id BARU-<n>. */
+  baru?: boolean;
+}
+export interface SaranFaskes {
+  id: string;
+  nama: string;
+  cabang: string | null;
+  baru: boolean;
+  skor: number;
+}
+export type HasilFaskes =
+  | { kind: "one"; id: string; nama: string; baru: boolean }
+  | { kind: "saran"; saran: SaranFaskes[] }
+  | { kind: "baru" };
+
+/** Skor "mirip" (0–1) di atas batas ini = ditawarkan sebagai pilihan, bukan langsung dibuat faskes baru. */
+export const SKOR_FASKES_MIRIP = 0.5;
+
+const normFaskes = (s: string | null | undefined) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+
+/**
+ * Kemiripan nama faskes yang DITULIS AM dengan satu nama faskes (master / faskes baru). Kata generik (RS, RSUD,
+ * KLINIK, KOTA, …) dibuang dulu. Skor = maks(kemiripan huruf inti, porsi kata inti AM yang ada di nama itu × 0,9);
+ * kata ≥ 4 huruf dengan selisih satu huruf dihitung sama (salah ketik "KELURGA" ~ "KELUARGA").
+ */
+export function skorFaskes(teks: string, nama: string): number {
+  const q = tokenFaskes(teks);
+  const c = [...new Set(tokenFaskes(nama))];
+  if (!q.length || !c.length) return 0;
+  const sama = (a: string, b: string) => tokenSama(a.toLowerCase(), b.toLowerCase()) || (a.length >= 4 && b.length >= 4 && jarakEdit(a, b) === 1);
+  const cakup = q.filter((t) => c.some((x) => sama(t, x))).length / q.length;
+  const d = dice(q.join(""), c.join(""));
+  return Math.round(Math.max(d, cakup * 0.9) * 100) / 100;
+}
+
+/**
+ * Keputusan faskes untuk usulan #KSO baru (keputusan product owner 10 Nov: faskes boleh customer baru):
+ *   - `yakin` (cariAkun menunjuk tepat satu faskes master) atau nama persis sama (huruf/tanda baca diabaikan)
+ *     dengan tepat satu faskes → "one";
+ *   - ada yang mirip (skor ≥ SKOR_FASKES_MIRIP, atau nama yang disebut cariAkun ambigu) → "saran" (maks 3) —
+ *     AM memilih nomor atau FASKES BARU; tidak pernah membuat faskes kembar diam-diam;
+ *   - tidak ada yang mirip → "baru" (faskes sementara dibuat).
+ */
+export function putuskanFaskes(
+  teks: string, katalog: FaskesKatalog[], o: { yakin?: { id: string; nama: string } | null; ambigu?: string[] } = {},
+): HasilFaskes {
+  if (o.yakin) {
+    const f = katalog.find((x) => x.id === o.yakin!.id);
+    return { kind: "one", id: o.yakin.id, nama: f?.nama ?? o.yakin.nama, baru: !!f?.baru };
+  }
+  const n = normFaskes(teks);
+  const persis = katalog.filter((x) => n && normFaskes(x.nama) === n);
+  if (persis.length === 1) return { kind: "one", id: persis[0].id, nama: persis[0].nama, baru: !!persis[0].baru };
+  const ambigu = new Set((o.ambigu ?? []).map(normFaskes));
+  const saran = katalog
+    .map((x) => {
+      const s = skorFaskes(teks, x.nama);
+      return { x, skor: ambigu.has(normFaskes(x.nama)) || persis.includes(x) ? Math.max(s, 1) : s };
+    })
+    .filter((y) => y.skor >= SKOR_FASKES_MIRIP)
+    .sort((a, b) => b.skor - a.skor || a.x.nama.localeCompare(b.x.nama))
+    .slice(0, 3)
+    .map(({ x, skor }) => ({ id: x.id, nama: x.nama, cabang: x.cabang ?? null, baru: !!x.baru, skor }));
+  return saran.length ? { kind: "saran", saran } : { kind: "baru" };
+}
+
+/** Isian "#KSO FASKES …" untuk usulan tertunda: nomor pilihan, FASKES BARU, atau nama yang ditulis ulang. */
+export type PilihanFaskes = { kind: "nomor"; n: number } | { kind: "baru" } | { kind: "nama"; nama: string };
+export function bacaPilihanFaskes(v: string): PilihanFaskes {
+  const t = v.trim();
+  const m = /^(\d)\s*\.?$/.exec(t);
+  if (m) return { kind: "nomor", n: Number(m[1]) };
+  if (/^(?:baru|faskes\s+baru|customer\s+baru|calon\s+customer)\b\s*\.?$/i.test(t)) return { kind: "baru" };
+  return { kind: "nama", nama: t };
 }
