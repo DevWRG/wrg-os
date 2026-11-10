@@ -1,4 +1,4 @@
-import { requireFeature } from "@/lib/feature-guard";
+import { actorName, requireFeature } from "@/lib/feature-guard";
 import { gatewayFetch } from "@/lib/gateway";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +17,9 @@ export async function POST(req: Request) {
     const res = await gatewayFetch("/hitl/resolve", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      // Pelaku dari SESI, bukan dari body browser (gerbang tulis BFF): approver_id tercatat di
+      // hitl_queue & riwayat deal (Tautkan F9).
+      body: JSON.stringify({ ...(body && typeof body === "object" ? body : {}), approver_id: actorName(g.me) }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });

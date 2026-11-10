@@ -114,6 +114,7 @@ export default function HitlPage() {
     id: string,
     decision: "approve" | "reject",
     chosenDealId?: string,
+    chosenRef?: { kind: "deal" | "accurate_customer"; ref_id: string },
   ) {
     setBusy(id);
     setError(null);
@@ -125,6 +126,7 @@ export default function HitlPage() {
           id,
           decision,
           chosen_deal_id: chosenDealId,
+          chosen_ref: chosenRef,
           approver_id: "web-ui",
         }),
       });
@@ -276,17 +278,35 @@ export default function HitlPage() {
                     AM: {it.am_name ?? it.payload.am_id ?? "—"} {it.payload.cabang ? `· ${it.payload.cabang}` : ""}
                   </p>
                   <div className="space-y-1">
+                    <p className="text-muted-foreground text-xs">
+                      Kalau ini customer yang sama, tekan <span className="font-medium text-foreground">Tautkan</span> pada kandidat yang benar:
+                      nama customer di deal diganti dengan nama kandidat dan akun faskesnya ditautkan (tercatat di riwayat deal).
+                    </p>
                     {it.payload.candidates.map((c) => (
-                      <p key={c.ref_id} className="text-sm flex items-center justify-between gap-2">
-                        <span className="truncate">
+                      <div key={`${c.kind}-${c.ref_id}`} className="flex items-center justify-between gap-2 rounded-md border bg-card px-2 py-1.5 text-sm">
+                        <span className="min-w-0 truncate">
                           {c.customer_name}{" "}
-                          {c.kind === "accurate_customer" && <Badge variant="outline">Accurate</Badge>}
+                          {c.kind === "accurate_customer" ? <Badge variant="outline">Accurate</Badge> : <Badge variant="outline">Deal lain</Badge>}
                           {c.am_id && <span className="text-muted-foreground"> ({c.am_id})</span>}
                         </span>
-                        <Badge variant={c.exact ? "destructive" : "secondary"}>
-                          {c.exact ? "IDENTIK" : `${(c.score * 100).toFixed(0)}%`}
-                        </Badge>
-                      </p>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <Badge variant={c.exact ? "destructive" : "secondary"}>
+                            {c.exact ? "IDENTIK" : `${(c.score * 100).toFixed(0)}%`}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="soft"
+                            disabled={busy === it.id}
+                            onClick={() => {
+                              const p = it.payload as DuplicateNamePayload;
+                              if (!window.confirm(`Tautkan deal ini?\n\nNama customer "${p.customer_name}" akan diganti menjadi "${c.customer_name}"${c.kind === "accurate_customer" ? " dan ditautkan ke customer Accurate itu" : " (disamakan dengan deal lain)"}. Tercatat di riwayat deal.`)) return;
+                              void resolve(it.id, "approve", undefined, { kind: c.kind, ref_id: c.ref_id });
+                            }}
+                          >
+                            Tautkan
+                          </Button>
+                        </span>
+                      </div>
                     ))}
                   </div>
                   <div className="flex gap-2">
@@ -294,9 +314,10 @@ export default function HitlPage() {
                       size="sm"
                       className="flex-1"
                       disabled={busy === it.id}
+                      variant="soft"
                       onClick={() => void resolve(it.id, "approve")}
                     >
-                      Sudah dicek / bukan duplikat
+                      Bukan duplikat (sudah dicek)
                     </Button>
                     <Button
                       variant="outline"
