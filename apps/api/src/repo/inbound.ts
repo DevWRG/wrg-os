@@ -370,6 +370,11 @@ function groupAllowed(jid: string): boolean {
   const g = allowedGroups();
   return g.length === 0 || g.includes(jid) || jid === complaintGroupJid();
 }
+// F8 — #install/#servis/#training/#kalibrasi diproses hanya bila AFTERSALES_WA_ENABLED
+// persis "true" (rilis bertahap; menu web Aftersales tetap jalan). Mati = diam.
+function aftersalesWaAktif(): boolean {
+  return (process.env.AFTERSALES_WA_ENABLED ?? "").toLowerCase() === "true";
+}
 
 export interface WaRow {
   id: string;
@@ -1521,6 +1526,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // groupAllowed()/WA_INBOUND_GROUPS existing. Identitas via matchTeknisi
   // (teknisi_capacity F8 — sejak 246 cermin master_user role Teknisi).
   if (kind === "install" || kind === "servis" || kind === "training" || kind === "kalibrasi") {
+    if (!aftersalesWaAktif()) return finish({ skipped: "aftersales-wa-off" });
     // F175: shortcut berformat #REPORT (ada baris `Status:`) dari Teknisi → jalur per
     // alat dengan jenis dari hashtag. Teks bebas lama tetap ke teknisi_report di bawah.
     if (teknisiPlanReportAktif() && /^\s*status\s*:/im.test(row.body ?? "")) {
