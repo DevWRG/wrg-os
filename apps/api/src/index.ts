@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { isInsideRoot, rootDariScope } from "./media-akses.js";
+import { isInsideRoot, mediaRootWa, rootDariScope } from "./media-akses.js";
 import { homedir } from "node:os";
 
 import { serve } from "@hono/node-server";
@@ -2798,7 +2798,7 @@ app.get("/visits/:id", async (c) => {
 // path-validated anti traversal. BFF menentukan scope dari izin menu (Visits /
 // Aset GA / Relokasi); tanpa header = tak ada root (403). Dulu hanya MEDIA_ROOT,
 // jadi tautan foto/dokumen/BA aset GA selalu 403.
-const MEDIA_ROOT = resolve(process.env.MEDIA_ROOT ?? `${homedir()}/.openclaw/media`);
+const MEDIA_ROOT = mediaRootWa();
 const MIME: Record<string, string> = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
   gif: "image/gif", pdf: "application/pdf",
