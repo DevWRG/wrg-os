@@ -131,7 +131,8 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold">Lampiran PDF Simulator <ChipLampiran status={st} /></h3>
-        {l?.ada_berkas && (
+        {/* PDF Simulator memuat biaya (capex, reagen, CPRR) → tidak dibuka untuk respons yang disaring (API 403) */}
+        {l?.ada_berkas && !d.tanpa_angka && (
           <a href={urlPdf(tab, r.id, l.id)} target="_blank" rel="noreferrer" className={cn(buttonVariants({ size: "sm" }))}>
             <ExternalLink aria-hidden />Buka PDF
           </a>
@@ -139,7 +140,7 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
       </div>
       {!l ? (
         <p className="text-muted-foreground rounded-lg border border-dashed px-3 py-4 text-center text-sm">
-          Belum ada PDF. AM mengirim <b>#KSO {r.nomor ?? `D${r.id}`}</b> lalu PDF Simulator KSO (KSO CPRR) di chat WA dalam 10 menit.
+          Belum ada PDF. AM mengirim <b>#KSO {r.nomor ?? `D${r.id}`}</b> lalu PDF Simulator KSO di chat WA dalam 10 menit.
         </p>
       ) : (
         <>
@@ -148,7 +149,7 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
           </p>
           {st === "galat" && <Info1 nada="red">PDF belum bisa dipakai: {teksGalatOcr(l.galat)}.</Info1>}
           {l.cocok && Object.keys(l.cocok).length > 0 && <TabelCocok cocok={l.cocok} />}
-          <Cprr l={l} harga={r.harga_per_test} fee={r.fee_persen ?? null} />
+          {!d.tanpa_angka && <Cprr l={l} harga={r.harga_per_test} fee={r.fee_persen ?? null} />}
           {(l.peringatan ?? []).map((p) => <Info1 key={p} nada="sky">Catatan baca PDF: {p}</Info1>)}
         </>
       )}
@@ -161,7 +162,7 @@ export function BagianLampiran({ tab, d }: { tab: TabKso; d: Detail }) {
                 <span className="tabular-nums">{waktu(x.dibuat_at)}{i === 0 && <span className="text-muted-foreground"> · terbaru</span>}</span>
                 <span className="flex items-center gap-2">
                   <ChipLampiran status={statusLampiran(x)} />
-                  {x.ada_berkas && (
+                  {x.ada_berkas && !d.tanpa_angka && (
                     <a href={urlPdf(tab, r.id, x.id)} target="_blank" rel="noreferrer" className="text-primary text-xs font-medium hover:underline">PDF</a>
                   )}
                 </span>

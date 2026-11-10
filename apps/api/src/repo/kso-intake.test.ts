@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KSO_BANTUAN, blokGpm, formatBalasanDraft, hargaBersih, kurangDraft, parseKsoPerintah, perkiraanZona, balasanFormatSalah, balasanSaranAlat, balasanVolumeTurun, pilihAlat, teksZonaForum, terjemahGalatKso, volumeDariTeks, type DraftTampil } from "./kso-intake.js";
+import { KSO_BANTUAN, formatBalasanGerbang, gerbangUntukAm, hargaBersih, kurangDraft, parseKsoPerintah, perkiraanZona, balasanFormatSalah, balasanSaranAlat, balasanVolumeTurun, pilihAlat, teksHasilAjukan, teksZonaForum, terjemahGalatKso, volumeDariTeks, type DraftTampil } from "./kso-intake.js";
 import { bacaIsianFormat } from "./kso-format.js";
+import { polaTerlarang } from "./kso-saring.js";
 import { detectKind } from "./inbound.js";
 
 test("parseKsoPerintah: rencana baru, lengkapi, kirim, kelonggaran, kalah, kosong", () => {
@@ -53,7 +54,7 @@ function draft(o: Partial<DraftTampil> = {}): DraftTampil {
   // draft LENGKAP format 9 isian (angka & nama fiktif)
   return {
     id: 12, nomor: null, status: "DRAFT", faskes: "RS SWASTA A", cabang: "SBY 2", alat: "Z3", alat_kode: "Z3", jumlah: 1,
-    volume_estimasi: 900, volume_sumber: "Lampiran Simulator CPRR 2026-11-10", harga_per_test: 18500, harga_standar: null, kategori: "Hematologi",
+    volume_estimasi: 900, volume_sumber: "Lampiran Simulator KSO 2026-11-10", harga_per_test: 18500, harga_standar: null, kategori: "Hematologi",
     tenor_bulan: 36, unit_status: "baru", klausul: [], kolom_dinyatakan: ["fee_persen", "jumlah", "klausul", "klausul_ada", "kompetitor_alat", "tenor_bulan"],
     pendukung: [{ nama: "dr. Rina SpPK", tipe: "kepala_instalasi" }],
     gerbang: [1, 2, 3, 4, 5, 6, 7].map((no) => ({ no, nama: `G${no}`, status: "hijau", nilai: `nilai ${no}` })),
@@ -63,58 +64,121 @@ function draft(o: Partial<DraftTampil> = {}): DraftTampil {
   };
 }
 
-test("formatBalasanDraft: urutan bagian tetap; lengkap → ajakan kirim", () => {
-  const t = formatBalasanDraft(draft(), { baru: true, nama: "Budi" });
-  const iDraft = t.indexOf("Draft D12 dibuat");
-  const iSistem = t.indexOf("Dari sistem");
-  const iGerbang = t.indexOf("Gerbang: 7 dari 7 hijau → ZONA AM");
-  const iKirim = t.indexOf('Balas "#KSO kirim D12"');
-  assert.ok(iDraft === 0 && iDraft < iSistem && iSistem < iGerbang && iGerbang < iKirim, t);
-  assert.match(t, /Sumber volume: "Lampiran Simulator CPRR 2026-11-10"/);
-  assert.match(t, /· Lampiran: ✅ PDF Simulator cocok \(2026-11-10\)/);
-  assert.match(t, /· GPM deal: nilai 1\n· Relokasi: nilai 3\n· Piutang faskes: nilai 5/);
-  assert.doesNotMatch(t, /Belum lengkap/);
+// ---- balasan WA ke AM: 7 gerbang + satu baris kurang, TANPA margin/HPP (keputusan product owner 10 Nov) ----
+
+/** Penjaga: teks ke AM tak boleh memuat GPM berangka, persen, rupiah, biaya, HPP, CPRR, cicilan, markup, harga mandat. */
+function tanpaAngkaMargin(t: string) {
+  assert.deepEqual(polaTerlarang(t), [], `teks AM memuat angka margin/HPP:\n${t}`);
+}
+
+/** Angka fiktif yang TIDAK boleh bocor ke teks AM. */
+const ANGKA = { gpm: 0.481, hd: false, catatan: "GPM 48,1% → zona Forum", biaya_per_tes: 4667,
+  harga_am: 10370.4, harga_hod: 9333.3, harga_forum: 8484.8, volume_min_forum: 763.2 };
+const merah = (no: number, status: string, nilai: string) => ({ no, nama: `G${no}`, status, nilai });
+
+test("formatBalasanGerbang: semua hijau → header 7/7, tujuh baris HIJAU, ajakan kirim", () => {
+  const t = formatBalasanGerbang(draft({ angka: ANGKA }));
+  const baris = t.split("\n");
+  assert.equal(baris[0], "D12 · RS SWASTA A · Z3 · 7/7 HIJAU");
+  assert.equal(baris[1], "");
+  assert.equal(baris[2], "1. GPM deal              ✅ HIJAU");
+  assert.equal(baris[5], "4. Coverage + teknisi    ✅ HIJAU");
+  assert.equal(baris[8], "7. Klausul standar       ✅ HIJAU");
+  assert.match(t, /Lengkap — balas "#KSO kirim D12" untuk mengajukan\./);
+  assert.doesNotMatch(t, /Kurang:/);
+  tanpaAngkaMargin(t);
 });
 
-test("formatBalasanDraft: diajukan otomatis → teks hasil zona, tanpa daftar kurang", () => {
-  const t = formatBalasanDraft(draft(), { baru: true, nama: "Budi", diajukan: "KSO-2026-0012 diajukan, Budi.\n→ ZONA AM: lolos tanpa forum" });
-  assert.match(t, /Lengkap ✅ — diajukan otomatis\.\nKSO-2026-0012 diajukan/);
-  assert.doesNotMatch(t, /#KSO kirim/);
+test("formatBalasanGerbang: campuran + belum = MERAH dengan alasan tanpa angka; baris Kurang + satu contoh", () => {
+  const d = draft({
+    angka: ANGKA, gpm_deal: 0.38, lampiran: null, pendukung: [], unit_status: null, zona_dasar: "direktur",
+    gerbang: [merah(1, "merah", "GPM 38,6% → zona Direktur"), merah(2, "belum", "Belum ada bukti volume"),
+      merah(3, "hijau", "Tidak ada unit idle sejenis"), merah(4, "belum", "Register teknisi hematologi belum ada di OS"),
+      merah(5, "hijau", "Faskes baru — belum ada tagihan"), merah(6, "hijau", "36 bulan sejak serah terima"),
+      merah(7, "hijau", "Tanpa klausul khusus")],
+  });
+  const t = formatBalasanGerbang(d);
+  assert.equal(t.split("\n")[0], "D12 · RS SWASTA A · Z3 · 4/7 HIJAU");
+  assert.match(t, /1\. GPM deal {14}❌ MERAH\n/);
+  assert.match(t, /2\. Volume terbukti {7}❌ MERAH \(belum ada bukti\)/);
+  assert.match(t, /3\. Relokasi dulu {9}✅ HIJAU/);
+  assert.match(t, /4\. Coverage \+ teknisi {4}❌ MERAH \(belum ada data\)/);
+  assert.match(t, /\nKurang: lampiran PDF, pendukung, status unit, alasan\n\(contoh: kirim PDF Simulator di chat ini dengan caption #KSO D12\)/);
+  assert.doesNotMatch(t, /38|48|Direktur|zona/i, "persen GPM / zona dari GPM tak boleh muncul");
+  tanpaAngkaMargin(t);
 });
 
-test("formatBalasanDraft: fee dibacakan dengan harga bersih; alat fuzzy dibacakan asalnya", () => {
-  const t = formatBalasanDraft(draft({ fee_persen: 5, harga_per_test: 11800 }), { baru: true, nama: "Budi", alatTeks: "HEMATOLOGY ZYBIO Z 3" });
-  assert.match(t, /· Fee: 5% → harga bersih Rp\s?11\.210\/test \(dasar GPM\)/);
-  assert.match(t, /· Alat: 1 × Z3 \(dari "HEMATOLOGY ZYBIO Z 3" → Z3, Hematologi\)/);
-  assert.match(formatBalasanDraft(draft(), { baru: true, nama: "Budi" }), /· Fee: tidak ada/);
-  assert.equal(hargaBersih(11800, 5), 11210);
-  assert.equal(hargaBersih(11800, null), 11800);
+test("formatBalasanGerbang: merah gerbang 2–7 diberi alasan pendek tanpa angka; klausul belum dijawab = gerbang 7 MERAH", () => {
+  const d = draft({
+    kolom_dinyatakan: ["fee_persen", "jumlah", "kompetitor_alat", "tenor_bulan"],
+    gerbang: [merah(1, "hijau", "GPM 61,0% → zona AM"), merah(2, "merah", "Perkiraan lisan — tidak diterima sebagai bukti"),
+      merah(3, "merah", "2 unit idle sejenis bisa direlokasi — pakai unit itu dulu"), merah(4, "merah", "Di luar coverage cabang"),
+      merah(5, "merah", "120 hari · 3,5× tagihan bulanan"), merah(6, "merah", "72 bulan sejak serah terima"), merah(7, "hijau", "Tanpa klausul khusus")],
+  });
+  const t = formatBalasanGerbang(d);
+  assert.match(t, /\(perkiraan lisan tidak diterima\)/);
+  assert.match(t, /\(ada unit idle sejenis — relokasi dulu\)/);
+  assert.match(t, /\(di luar coverage cabang\)/);
+  assert.match(t, /\(piutang faskes melewati batas\)/);
+  assert.match(t, /\(melebihi batas tenor\)/);
+  assert.match(t, /7\. Klausul standar {7}❌ MERAH \(belum dijawab\)/);
+  assert.doesNotMatch(t, /120|3,5|72|61/, "angka piutang/tenor/GPM tidak dibacakan");
+  assert.equal(t.split("\n")[0], "D12 · RS SWASTA A · Z3 · 1/7 HIJAU");
+  assert.match(t, /Kurang: klausul\n\(contoh: #KSO D12 KLAUSUL: TIDAK\)/);
 });
 
-test("formatBalasanDraft: hari kerja — disebut AM dibacakan, kosong = default + cara koreksi (282)", () => {
-  assert.match(formatBalasanDraft(draft({ hari_kerja: 30, hari_kerja_default: 25 }), { baru: false, nama: "Budi" }), /· Hari kerja alat: 30 hari\/bulan\n/);
-  const t = formatBalasanDraft(draft({ hari_kerja: null, hari_kerja_default: 25 }), { baru: false, nama: "Budi" });
-  assert.match(t, /· Hari kerja alat: 25 hari\/bulan \(default — koreksi: #KSO D12 HARI KERJA: 26\)/);
+test("formatBalasanGerbang: gerbang belum dihitung = MERAH (belum ada data); Hemodialisa disebut tanpa angka", () => {
+  const t = formatBalasanGerbang(draft({ gerbang: [merah(1, "belum", "Hemodialisa: Kalkulator HD — selalu Direktur")] }));
+  assert.match(t, /1\. GPM deal {14}❌ MERAH \(Hemodialisa — diputus Direktur\)/);
+  assert.match(t, /2\. Volume terbukti {7}❌ MERAH \(belum ada data\)/);
+  assert.deepEqual(gerbangUntukAm(draft({ gerbang: [] })).map((g) => g.hijau), [false, false, false, false, false, false, false]);
 });
 
-test("Belum lengkap: daftar berlabel + contoh jawaban siap salin; tanpa ajakan kirim", () => {
-  const t = formatBalasanDraft(draft({ tenor_bulan: null, fee_persen: null, lampiran: null, kolom_dinyatakan: ["jumlah", "klausul"] }), { baru: true, nama: "Budi" });
-  assert.match(t, /Belum lengkap \(4\):\n1\. MASA KSO/);
-  assert.match(t, /FEE ke RS\/perantara/);
-  assert.match(t, /KOMPETITOR/);
-  assert.match(t, /LAMPIRAN — PDF Simulator KSO/);
-  assert.match(t, /#KSO D12 MASA KSO: 36\n#KSO D12 FEE: 5%/);
-  assert.match(t, /· Lampiran: belum ada PDF/);
-  assert.doesNotMatch(t, /Masa KSO: /);
-  assert.doesNotMatch(t, /#KSO kirim/);
+test("formatBalasanGerbang: lampiran PDF tidak cocok → field yang beda disebut (bukan angka biaya)", () => {
+  const t = formatBalasanGerbang(draft({ lampiran: { id: 2, lolos: false, galat: null, tanggal: null, wa_message_id: "W2", dibuat_at: null,
+    cocok: { volume: { label: "Tes/bulan", status: "beda", pdf: "800", wa: "900" } } } }));
+  assert.match(t, /Kurang: lampiran PDF belum cocok\nPDF belum cocok: Tes\/bulan: PDF "800" ≠ WA "900"\n\(contoh: #KSO D12 LABEL: ISI YANG BENAR, atau kirim ulang PDF\)/);
+  tanpaAngkaMargin(t);
+});
+
+test("formatBalasanGerbang: '#KSO kirim' belum lengkap → 'Belum bisa diajukan' di baris Kurang", () => {
+  const t = formatBalasanGerbang(draft({ tenor_bulan: null, fee_persen: null }), { belumBisaKirim: true });
+  assert.match(t, /\nBelum bisa diajukan\. Kurang: masa KSO, fee\n\(contoh: #KSO D12 MASA KSO: 36\)/);
   assert.doesNotMatch(t, /[<>]/, "WA membuang teks dalam kurung sudut");
 });
 
-test("klausul belum dijawab: gerbang 7 tidak ditampilkan hijau dan zona naik satu level", () => {
-  const t = formatBalasanDraft(draft({ kolom_dinyatakan: ["jumlah", "tenor_bulan", "fee_persen", "kompetitor_alat"] }), { baru: true, nama: "Budi" });
-  assert.match(t, /ZONA 2 HOD/);
-  assert.match(t, /❔ 7\. G7: belum dijawab/);
-  assert.match(t, /KLAUSUL — ADA \(sebut isinya\) atau TIDAK/);
+test("formatBalasanGerbang: catatan & pendukung tanpa peran tetap disebut singkat", () => {
+  const t = formatBalasanGerbang(draft(), { tanpaTipe: ["Bu Sari"], catatan: ['TES "banyak" tidak terbaca — angka tes per bulan tidak terbaca.'] });
+  assert.match(t, /ℹ️ TES "banyak" tidak terbaca/);
+  assert.match(t, /Peran Bu Sari belum jelas — tulis: #KSO D12 PENDUKUNG: Bu Sari, kepala instalasi lab/);
+});
+
+const AJU = { nomor: "KSO-2026-0012", zona: null, zona_dasar: null, alasan_forum: null, belum_hijau: [], gerbang2: "hijau" };
+
+test("diajukan otomatis zona AM / 2 HOD / Forum: kata zona tanpa GPM & tanpa harga mandat", () => {
+  const am = formatBalasanGerbang(draft({ angka: ANGKA }), { diajukan: teksHasilAjukan({ ...AJU, jalur: "AM", zona: "am" }) });
+  assert.match(am, /\nKSO-2026-0012 diajukan → ZONA AM: lolos tanpa forum, mandat terbit otomatis; penawaran diterbitkan Sekretariat\/Admin Sales\./);
+  assert.match(am, /#KSO kelonggaran KSO-2026-0012 ALASAN/);
+  assert.doesNotMatch(am, /Kurang:|#KSO kirim/);
+  const hod = teksHasilAjukan({ ...AJU, jalur: "CEPAT", zona: "hod" });
+  assert.equal(hod, "KSO-2026-0012 diajukan → ZONA 2 HOD: dua HOD memutus maksimal 1 hari kerja.");
+  const forum = teksHasilAjukan({ ...AJU, jalur: "FORUM", zona: "forum", zona_dasar: "forum" });
+  assert.match(forum, /→ ZONA FORUM: masuk agenda forum Selasa\/Kamis berikutnya \(batas data 14\.00\), Direktur memutus\./);
+  for (const t of [am, hod, forum]) tanpaAngkaMargin(t);
+});
+
+test("terjemahGalatKso ALASAN_STRATEGIS_WAJIB & kurang alasan: tanpa sebut GPM", () => {
+  const t = terjemahGalatKso("ALASAN_STRATEGIS_WAJIB", "D12");
+  assert.doesNotMatch(t, /GPM|Forum|Direktur/);
+  assert.match(t, /#KSO D12 ALASAN: ISI ALASAN/);
+  const q = kurangDraft(draft({ zona_dasar: "direktur" }));
+  assert.equal(q[0].teks, "ALASAN strategis — diperlukan untuk usulan ini");
+  tanpaAngkaMargin(q.map((x) => x.teks).join("\n"));
+});
+
+test("hargaBersih: harga × (1 − fee)", () => {
+  assert.equal(hargaBersih(11800, 5), 11210);
+  assert.equal(hargaBersih(11800, null), 11800);
 });
 
 test("kurangDraft: KLAUSUL ADA tanpa detail, pendukung & status unit, lampiran tidak cocok, alasan zona Direktur", () => {
@@ -129,21 +193,7 @@ test("kurangDraft: KLAUSUL ADA tanpa detail, pendukung & status unit, lampiran t
   assert.match(l[0].teks, /PDF belum cocok: Tes\/bulan: PDF "800" ≠ WA "900"/);
   assert.deepEqual(q({ zona_dasar: "direktur" }), ["alasan"]);
   assert.deepEqual(q({ zona_dasar: "direktur", alasan_strategis: "Referensi wilayah" }), []);
-  assert.deepEqual(q({ zona_dasar: "direktur", angka: { gpm: null, hd: true, catatan: null, biaya_per_tes: null, harga_am: null, harga_hod: null, harga_forum: null, volume_min_forum: null } }), []);
-});
-
-test("pendukung tanpa peran → ditanyakan dengan contoh label", () => {
-  const t = formatBalasanDraft(draft(), { baru: false, nama: "Budi", tanpaTipe: ["Bu Sari"] });
-  assert.match(t, /Peran Bu Sari belum jelas — tulis: #KSO D12 PENDUKUNG: Bu Sari, kepala instalasi lab/);
-});
-
-test("SBY 1 (tanpa HOD Area) di zona HOD → info forum; di zona AM tak butuh HOD", () => {
-  const t = formatBalasanDraft(draft({ kursi_hod: 1, zona_dasar: "hod" }), { baru: false, nama: "Budi" });
-  assert.match(t, /ZONA FORUM/);
-  assert.match(t, /tanpa HOD Area/);
-  const a = formatBalasanDraft(draft({ kursi_hod: 1 }), { baru: false, nama: "Budi" });
-  assert.match(a, /ZONA AM/);
-  assert.doesNotMatch(a, /tanpa HOD Area/);
+  assert.deepEqual(q({ zona_dasar: "direktur", angka: { ...ANGKA, gpm: null, hd: true } }), []);
 });
 
 test("perkiraanZona: cermin kso.ajukan — eskalasi satu level, data GPM kosong = forum", () => {
@@ -169,49 +219,9 @@ test("terjemahGalatKso: tak pernah menampilkan kode galat", () => {
   assert.match(terjemahGalatKso("BUKAN_MILIK_PENGIRIM: x", "D1"), /bukan atas nama Anda/);
 });
 
-// ---- blok GPM (angka fiktif) ----
-const ANGKA = { gpm: 0.481, hd: false, catatan: "GPM 48,1% → zona Forum", biaya_per_tes: 4667,
-  harga_am: 10370.4, harga_hod: 9333.3, harga_forum: 8484.8, volume_min_forum: 763.2 };
-
-test("blokGpm: GPM, harga minimum per zona di volume AM, volume minimum zona Forum di harga AM", () => {
-  const t = blokGpm({ angka: ANGKA, volume_estimasi: 900, harga_per_test: 9000 }).join("\n");
-  assert.match(t, /GPM deal 48,1% \(biaya Rp\s?4\.667\/tes termasuk cicilan alat\)\n/);
-  assert.match(t, /Harga minimum di 900 tes\/bln: AM Rp\s?10\.400 · 2 HOD Rp\s?9\.400 · Forum Rp\s?8\.500/);
-  assert.match(t, /Volume minimum zona Forum di Rp\s?9\.000: 764 tes\/bln/);
-});
-
-test("blokGpm: dengan fee → GPM dari harga bersih, harga minimum = harga diminta termasuk fee", () => {
-  const t = blokGpm({ angka: ANGKA, volume_estimasi: 900, harga_per_test: 9000, fee_persen: 5 }).join("\n");
-  assert.match(t, /dihitung dari harga bersih sesudah fee 5%/);
-  assert.match(t, /Harga minimum di 900 tes\/bln \(harga diminta, sudah termasuk fee 5%\): AM/);
-});
-
-test("blokGpm: volume minimum > 10× volume usulan ditulis tidak realistis, bukan angka puluhan ribu", () => {
-  const t = blokGpm({ angka: { ...ANGKA, volume_min_forum: 75139 }, volume_estimasi: 900, harga_per_test: 6900 }).join("\n");
-  assert.match(t, /baru tercapai di atas 10× volume usulan — tidak realistis/);
-  assert.doesNotMatch(t, /75139|75\.139/);
-  assert.match(blokGpm({ angka: { ...ANGKA, volume_min_forum: 9000 }, volume_estimasi: 900, harga_per_test: 9000 }).join(""), /9000 tes\/bln/);
-});
-
-test("blokGpm: zona Forum tak tercapai, Hemodialisa, data belum lengkap", () => {
-  assert.match(blokGpm({ angka: { ...ANGKA, volume_min_forum: null }, volume_estimasi: 900, harga_per_test: 3000 }).join(""), /tidak tercapai/);
-  assert.match(blokGpm({ angka: { ...ANGKA, hd: true }, volume_estimasi: 60, harga_per_test: 400000 }).join(""), /Kalkulator HD/);
-  assert.match(blokGpm({ angka: { ...ANGKA, gpm: null, catatan: "HPP alat belum ada" }, volume_estimasi: 900, harga_per_test: 9000 }).join(""),
-    /belum bisa: HPP alat belum ada/);
-  assert.deepEqual(blokGpm({ angka: null, volume_estimasi: 900, harga_per_test: 9000 }), []);
-});
-
-test("jumlah tak disebut = 1 unit, ditampilkan & tidak ditanyakan", () => {
+test("jumlah tak disebut = 1 unit, tidak ditanyakan", () => {
   const d = draft({ kolom_dinyatakan: ["fee_persen", "klausul", "kompetitor_alat", "tenor_bulan"] });
-  assert.match(formatBalasanDraft(d, { baru: true, nama: "Budi" }), /Alat: 1 × Z3 — dianggap 1 unit \(koreksi: #KSO D12 JUMLAH: 2\)/);
   assert.ok(!kurangDraft(d).some((q) => q.kunci === "jumlah"));
-});
-
-test("ringkasan memuat kompetitor, alasan strategis, dan blok GPM sebelum gerbang", () => {
-  const t = formatBalasanDraft(draft({ alasan_strategis: "Referensi wilayah", angka: ANGKA }), { baru: true, nama: "Budi" });
-  assert.match(t, /· Kompetitor: MEREKA-X100 \(Rp\s?17\.000\/test\)/);
-  assert.match(t, /Alasan strategis: Referensi wilayah/);
-  assert.ok(t.indexOf("GPM deal") < t.indexOf("Gerbang:"));
 });
 
 test("bantuan #KSO = format sembilan isian berlabel, tanpa kurung sudut", () => {
@@ -264,15 +274,17 @@ test("volumeDariTeks: angka sesudah kata volume, titik = ribuan; tanpa kata volu
   assert.equal(volumeDariTeks("volume belum pasti"), null);
 });
 
-test("balasanVolumeTurun: toleransi, dihitung ulang (tiga harga), ditarik ke forum", () => {
-  assert.match(balasanVolumeTurun("D12", { hasil: "toleransi", volume_dasar: 900, volume_batas: 720, volume_baru: 800 }),
-    /volume 800 tes\/bln masih dalam toleransi \(≥ 720, 80% dari 900\)\. Mandat tetap\./);
+test("balasanVolumeTurun: toleransi, dihitung ulang, ditarik ke forum — tanpa harga mandat & tanpa GPM", () => {
+  const tol = balasanVolumeTurun("D12", { hasil: "toleransi", volume_dasar: 900, volume_batas: 720, volume_baru: 800 });
+  assert.match(tol, /volume 800 tes\/bln masih dalam toleransi \(batas 720 tes\/bln\)\. Mandat tetap\./);
   const ulang = balasanVolumeTurun("D12", { hasil: "dihitung_ulang", volume_dasar: 900, volume_baru: 600, pembuka: 18500, target: 11000, lantai: 10000,
     volume_minimum: 480, berlaku_sampai: "2026-12-05" });
-  assert.match(ulang, /turun dari 900 ke 600 tes\/bln \(> 20%\) — mandat dihitung ulang/);
-  assert.match(ulang, /harga pembuka Rp\s?18\.500, target Rp\s?11\.000, batas bawah Rp\s?10\.000\/test, volume minimum 480/);
-  assert.match(balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "direktur", tanpa_angka: false }),
-    /GPM turun ke zona Direktur\. Mandat lama gugur; usulan masuk agenda forum berikutnya/);
-  assert.match(balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "forum", tanpa_angka: true }),
-    /angka GPM belum lengkap/);
+  assert.match(ulang, /turun dari 900 ke 600 tes\/bln \(melewati batas toleransi\) — mandat dihitung ulang, berlaku s\/d 2026-12-05\./);
+  assert.match(ulang, /diterbitkan Sekretariat\/Admin Sales/);
+  assert.doesNotMatch(ulang, /18\.500|11\.000|10\.000|pembuka|batas bawah/);
+  const forum = balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "direktur", tanpa_angka: false });
+  assert.match(forum, /usulan perlu diputus ulang\. Mandat lama gugur; usulan masuk agenda forum berikutnya/);
+  const tanpa = balasanVolumeTurun("D12", { hasil: "ke_forum", volume_dasar: 900, volume_baru: 300, zona: "forum", tanpa_angka: true });
+  assert.match(tanpa, /mandat tak bisa dihitung ulang otomatis/);
+  for (const t of [tol, ulang, forum, tanpa]) { tanpaAngkaMargin(t); assert.doesNotMatch(t, /GPM/); }
 });

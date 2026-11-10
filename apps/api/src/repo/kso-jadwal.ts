@@ -93,23 +93,30 @@ export function pesanAgenda(tgl: string, items: ItemAgenda[], pimpinan: Pimpinan
   return out.join("\n");
 }
 
-export function pesanHod(jenis: "putusan" | "pendapat", nama: string, r: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }, batas: string): string {
+// 10 Nov (product owner): margin & HPP hanya untuk HOD Business, Komite, Sekretariat, Direksi. Capex (harga PO alat × jumlah
+// = HPP alat) TIDAK dikirim ke kursi HOD Sales (kso.hod.jenis 'area') maupun Admin Sales. `angka` = boleh melihat capex.
+const capexTeks = (capex: number, angka: boolean) => (angka ? ` · ${rpJt(capex)}` : "");
+
+export function pesanHod(jenis: "putusan" | "pendapat", nama: string, r: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }, batas: string,
+                         angka = true): string {
   return jenis === "putusan"
-    ? `Halo ${nama}, ada usulan KSO *perlu PUTUSAN* Anda (jalur cepat):\n${r.nomor} · ${r.faskes_nama} · ${r.alat_nama} · ${rpJt(r.capex)}\n` +
+    ? `Halo ${nama}, ada usulan KSO *perlu PUTUSAN* Anda (jalur cepat):\n${r.nomor} · ${r.faskes_nama} · ${r.alat_nama}${capexTeks(r.capex, angka)}\n` +
         `Buka tab HOD → "Putuskan": Setuju / Tolak / Naikkan ke forum.\nBatas: ${batas}. Lewat batas = dianggap setuju.${tautan() !== "/kso-komite" ? `\n${tautan()}` : ""}`
-    : `Halo ${nama}, ada usulan KSO *perlu PENDAPAT* Anda (jalur forum):\n${r.nomor} · ${r.faskes_nama} · ${r.alat_nama} · ${rpJt(r.capex)}\n` +
+    : `Halo ${nama}, ada usulan KSO *perlu PENDAPAT* Anda (jalur forum):\n${r.nomor} · ${r.faskes_nama} · ${r.alat_nama}${capexTeks(r.capex, angka)}\n` +
         `Buka tab HOD → "Beri pendapat" (bukan putusan).\nBatas: ${batas}.${tautan() !== "/kso-komite" ? `\n${tautan()}` : ""}`;
 }
 
-export function pesanPendapatForum(nama: string, tgl: string, daftar: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[]): string {
+export function pesanPendapatForum(nama: string, tgl: string, daftar: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[],
+                                   angka = true): string {
   return [`Halo ${nama}, forum Komite KSO *${tanggalManusia(tgl)} 16.00 WIB* menunggu *PENDAPAT* Anda (${daftar.length} usulan):`,
-    ...daftar.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama} · ${rpJt(x.capex)}`),
+    ...daftar.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama}${capexTeks(x.capex, angka)}`),
     `Buka tab HOD → "Beri pendapat" (bukan putusan). Batas: ${tanggalManusia(tgl)} 16.00 WIB.`,
     ...(tautan() !== "/kso-komite" ? [tautan()] : [])].join("\n");
 }
 
-export function pesanDaftar(judul: string, baris: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[], penutup: string): string {
-  return [`*${judul}* (${baris.length})`, ...baris.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama} · ${rpJt(x.capex)}`), "", penutup,
+export function pesanDaftar(judul: string, baris: { nomor: string | null; faskes_nama: string; alat_nama: string; capex: number }[], penutup: string,
+                            angka = true): string {
+  return [`*${judul}* (${baris.length})`, ...baris.map((x, i) => `${i + 1}. ${x.nomor} · ${x.faskes_nama} · ${x.alat_nama}${capexTeks(x.capex, angka)}`), "", penutup,
     ...(tautan() !== "/kso-komite" ? [tautan()] : [])].join("\n");
 }
 
@@ -163,7 +170,7 @@ export async function runAgenda(sekarang = new Date()) {
     const [f] = await tx`select kso.app_job_susun_agenda(${tgl})::int as id`;
     const items = (await tx`select jenis, nomor, faskes_nama, alat_nama, capex::float8 as capex, gerbang_merah, am_nama, rencana_id::int
                               from kso.v_agenda where forum_id = ${f.id} and rencana_id is not null order by jenis, urut`) as unknown as (ItemAgenda & { rencana_id: number })[];
-    const hod = await tx`select ai.rencana_id::int, h.hod_id from kso.agenda_item ai cross join lateral kso.hod_untuk(ai.rencana_id) h
+    const hod = await tx`select ai.rencana_id::int, h.hod_id, h.jenis::text as jenis from kso.agenda_item ai cross join lateral kso.hod_untuk(ai.rencana_id) h
                           where ai.forum_id = ${f.id} and ai.jenis = 'A'`;
     return { items, hod };
   });
@@ -172,14 +179,17 @@ export async function runAgenda(sekarang = new Date()) {
   const kirim = await kirimKe(await penerimaFitur("kso-komite-agenda"), `agenda:${tgl}`, "agenda", pesanAgenda(tgl, items, pimpinan));
   // SATU pesan per HOD per forum (bukan satu per usulan); HOD tanpa nomor WA tercatat, tidak hilang diam-diam
   const perHod = new Map<string, ItemAgenda[]>();
+  const jenisHod = new Map<string, string>();
   for (const h of hod) {
     const it = items.find((x) => x.rencana_id === Number(h.rencana_id));
     if (it) perHod.set(String(h.hod_id), [...(perHod.get(String(h.hod_id)) ?? []), it]);
+    jenisHod.set(String(h.hod_id), String(h.jenis));
   }
   for (const [hodId, daftar] of perHod) {
     const w = await waHod(hodId);
     if (!w) { kirim.push({ kunci: `hod-pendapat-forum:${tgl}:${hodId}`, ke: "-", terkirim: false, alasan: "HOD tanpa nomor WA" }); continue; }
-    kirim.push(await kirimSekali(`hod-pendapat-forum:${tgl}:${hodId}`, "hod", w.wa, pesanPendapatForum(w.nama, tgl, daftar)));
+    kirim.push(await kirimSekali(`hod-pendapat-forum:${tgl}:${hodId}`, "hod", w.wa,
+      pesanPendapatForum(w.nama, tgl, daftar, jenisHod.get(hodId) === "bisnis")));
   }
   return { tgl, agenda_a: items.filter((x) => x.jenis === "A").length, agenda_b: items.filter((x) => x.jenis === "B").length, kirim };
 }
@@ -224,11 +234,17 @@ export async function runPenawaranPagi(sekarang = new Date()) {
   const tgl = tanggalWib(sekarang);
   const baris = await sebagaiJob(async (tx) => ANTREAN_SQL(tx, "Admin Sales · Terbitkan Penawaran"));
   if (baris.length === 0) return { tgl, jumlah: 0, kirim: [] };
-  const isi = pesanDaftar(`Penawaran KSO siap diterbitkan — ${tanggalManusia(tgl)}`, baris as never, "Hanya mandat yang masih berlaku. Di bawah harga lantai ditolak sistem.");
-  // satu orang bisa memegang dua centang → satu pesan per nomor WA
-  const penerima = [...new Map([...(await penerimaFitur("kso-komite-sekretariat")), ...(await penerimaFitur("kso-komite-penawaran"))]
-    .map((p) => [p.wa, p])).values()];
-  return { tgl, jumlah: baris.length, kirim: await kirimKe(penerima, `penawaran:${tgl}`, "admin_sales", isi) };
+  const judul = `Penawaran KSO siap diterbitkan — ${tanggalManusia(tgl)}`;
+  const penutup = "Hanya mandat yang masih berlaku. Di bawah harga lantai ditolak sistem.";
+  // satu orang bisa memegang dua centang → satu pesan per nomor WA. Sekretariat menerima capex; Admin Sales saja TIDAK (10 Nov).
+  const sekretariat = await penerimaFitur("kso-komite-sekretariat");
+  const waSekretariat = new Set(sekretariat.map((p) => p.wa));
+  const adminSales = [...new Map((await penerimaFitur("kso-komite-penawaran")).filter((p) => !waSekretariat.has(p.wa)).map((p) => [p.wa, p])).values()];
+  const kirim = [
+    ...(await kirimKe([...new Map(sekretariat.map((p) => [p.wa, p])).values()], `penawaran:${tgl}`, "admin_sales", pesanDaftar(judul, baris as never, penutup))),
+    ...(await kirimKe(adminSales, `penawaran:${tgl}`, "admin_sales", pesanDaftar(judul, baris as never, penutup, false))),
+  ];
+  return { tgl, jumlah: baris.length, kirim };
 }
 
 /** Tiap malam — isi ulang referensi kso.* (cabang/HOD/AM/alat/faskes/piutang) dari tabel OS (migrasi 228). */
@@ -246,7 +262,7 @@ export async function runVerifikasiBulan6(sekarang = new Date()) {
 export async function notifHodMasukAntrean(rencanaId: number, sekarang = new Date()) {
   const { r, seats } = await sebagaiJob(async (tx) => {
     const [r] = await tx`select id::int, nomor, faskes_nama, alat_nama, capex::float8 as capex, status::text, diajukan_at from kso.v_rencana where id = ${rencanaId}`;
-    const seats = r ? await tx`select hod_id, kso.batas_putusan_hod(${r.diajukan_at}::timestamptz) as batas from kso.hod_untuk(${rencanaId})` : [];
+    const seats = r ? await tx`select hod_id, jenis::text as jenis, kso.batas_putusan_hod(${r.diajukan_at}::timestamptz) as batas from kso.hod_untuk(${rencanaId})` : [];
     return { r, seats };
   });
   if (!r || !["JALUR_CEPAT", "JALUR_FORUM"].includes(String(r.status))) return { rencanaId, kirim: [] };
@@ -256,7 +272,8 @@ export async function notifHodMasukAntrean(rencanaId: number, sekarang = new Dat
     const w = await waHod(String(s.hod_id));
     if (!w) { kirim.push({ kunci: `hod-${jenis}:${rencanaId}:${s.hod_id}`, ke: "-", terkirim: false, alasan: "HOD tanpa nomor WA" }); continue; }
     const batas = jenis === "putusan" ? jamWib(s.batas as string) : `${tanggalManusia(forumBerikutnya(sekarang))} 16.00 WIB`;
-    kirim.push(await kirimSekali(`hod-${jenis}:${rencanaId}:${s.hod_id}`, "hod", w.wa, pesanHod(jenis, w.nama, r as never, batas)));
+    // kursi HOD Sales ('area') tanpa capex; HOD Business ('bisnis') tetap (keputusan 10 Nov)
+    kirim.push(await kirimSekali(`hod-${jenis}:${rencanaId}:${s.hod_id}`, "hod", w.wa, pesanHod(jenis, w.nama, r as never, batas, s.jenis === "bisnis")));
   }
   return { rencanaId, jenis, kirim };
 }
