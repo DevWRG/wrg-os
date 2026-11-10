@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bacaIsianFormat, bacaKlausul, bacaPilihanFaskes, bacaYaTidak, cariAlat, isianLengkapiDariFormat, namaTampilFaskes, peringkatFaskes, putuskanFaskes,
+  bacaIsianFormat, bacaKlausul, bacaPilihanFaskes, bacaYaTidak, cariAlat, isianLengkapiDariFormat, jenisFaskes, namaTampilFaskes, peringkatFaskes, putuskanFaskes,
   semuaKataFaskes, skorFaskes, SKOR_FASKES_MIRIP, type AlatKatalog, type FaskesKatalog, type HasilOcrCprr,
 } from "./kso-format.js";
 import {
@@ -410,4 +410,31 @@ test("putuskanFaskes: cariAkun yakin tapi nama tak persis → tetap konfirmasi Y
     { kind: "one", id: "9101", nama: "Faskes 0AB123", baru: false });
   const inv = [{ id: "9102", nama: "SEJAHTERA, RS UMUM KAB. CONTOH", cabang: null, baru: false }];
   assert.equal(putuskanFaskes("RS UMUM SEJAHTERA KAB CONTOH", inv, { yakin: { id: "9102", nama: inv[0].nama } }).kind, "one");
+});
+
+test("jenisFaskes: RS/RSUD/RUMAH SAKIT, PKM/PUSKESMAS, klinik, lab; tak tertulis → null", () => {
+  assert.equal(jenisFaskes("RSUD CONTOH"), "rs");
+  assert.equal(jenisFaskes("CONTOH, RSIA KAB. UJI"), "rs");
+  assert.equal(jenisFaskes("RUMAH SAKIT CONTOH"), "rs");
+  assert.equal(jenisFaskes("CONTOH, PKM KAB. UJI"), "pkm");
+  assert.equal(jenisFaskes("PUSKESMAS CONTOH"), "pkm");
+  assert.equal(jenisFaskes("KLINIK CONTOH"), "klinik");
+  assert.equal(jenisFaskes("LAB CONTOH"), "lab");
+  assert.equal(jenisFaskes("CONTOH"), null);
+});
+
+test("putuskanFaskes: jenis yang ditulis AM memutus seri — RSUD X tidak ditawari PKM X (kasus prod 10 Nov)", () => {
+  const kat = [
+    { id: "r1", nama: "CONTOHSARI, RSUD KAB. UJI", cabang: "A" },
+    { id: "p1", nama: "CONTOHSARI, PKM KAB. UJI", cabang: "A" },
+  ];
+  for (const k of [kat, [...kat].reverse()]) {
+    const h = putuskanFaskes("RSUD CONTOHSARI", k);
+    assert.equal(h.kind, "saran");
+    assert.equal(h.kind === "saran" && h.saran[0].id, "r1");
+    const p = putuskanFaskes("PUSKESMAS CONTOHSARI", k);
+    assert.equal(p.kind === "saran" && p.saran[0].id, "p1");
+  }
+  // jenis tak ditulis → urutan lama (nama lebih pendek) tetap berlaku
+  assert.deepEqual(peringkatFaskes("CONTOHSARI", kat).map((x) => x.id), ["p1", "r1"]);
 });
