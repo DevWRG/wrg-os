@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useHodOptions } from "@/components/watchpoint/hod-options";
+import { PagedTable } from "@/components/ui/paged-table";
 
 const ALL = "__all__";
 // Batas baris per muat. Lebih dari ini → banner "menampilkan X dari Y" (bukan
@@ -248,27 +249,22 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
                 Persempit rentang tanggal supaya rekap &amp; CSV lengkap.
               </p>
             )}
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Kode</TableHead>
-                  <TableHead>Tanggal</TableHead>
-                  <TableHead>Pengaju</TableHead>
-                  <TableHead>Estimasi</TableHead>
-                  <TableHead>Pekerjaan</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Aksi</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.length === 0 && (
+            <PagedTable
+              label="pengajuan" resetKey={`${status}|${from}|${to}`} colSpan={7} empty="Belum ada pengajuan."
+              header={
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={7} className="text-muted-foreground text-center text-sm">
-                      Belum ada pengajuan.
-                    </TableCell>
+                    <TableHead>Kode</TableHead>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead>Pengaju</TableHead>
+                    <TableHead>Estimasi</TableHead>
+                    <TableHead>Pekerjaan</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Aksi</TableHead>
                   </TableRow>
-                )}
-                {rows.map((r) => (
+                </TableHeader>
+              }
+              rows={rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="font-mono text-xs">{r.kode}</TableCell>
                     <TableCell>{r.tanggal_lembur}</TableCell>
@@ -344,8 +340,7 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
                     </TableCell>
                   </TableRow>
                 ))}
-              </TableBody>
-            </Table>
+            />
           </CardContent>
         </Card>
       )}

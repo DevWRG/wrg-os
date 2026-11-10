@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatCard } from "@/components/dashboard/stat-card";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 
 import {
@@ -14,6 +14,7 @@ import {
   type BarisBulanan, type BarisTransaksi,
 } from "./insentif-format";
 import { InsentifLeadSelect } from "./insentif-lead-select";
+import { PagedTable } from "@/components/ui/paged-table";
 
 /** Status rekap yang tipe lead-nya masih boleh diubah — cermin STATUS_LEAD_BOLEH_UBAH
  *  di apps/api/src/repo/insentif.ts. Server tetap yang menolak; ini cuma supaya kontrol
@@ -129,24 +130,26 @@ export function InsentifRincian({
           ) : (
             // Tabel lebar → scroll di dalam containernya sendiri, bukan mendorong halaman.
             <div className="w-full overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Invoice</TableHead>
-                    <TableHead>Tanggal</TableHead>
-                    <TableHead>Lead</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">GP</TableHead>
-                    <TableHead className="text-right">MR</TableHead>
-                    <TableHead className="text-right">NCR</TableHead>
-                    <TableHead className="text-right">Umur lunas</TableHead>
-                    <TableHead className="text-right">CF</TableHead>
-                    <TableHead className="text-right">Pengali</TableHead>
-                    <TableHead className="text-right">Insentif</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transaksi.map((t) => (
+              <PagedTable
+                label="transaksi"
+                header={
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Invoice</TableHead>
+                      <TableHead>Tanggal</TableHead>
+                      <TableHead>Lead</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead className="text-right">GP</TableHead>
+                      <TableHead className="text-right">MR</TableHead>
+                      <TableHead className="text-right">NCR</TableHead>
+                      <TableHead className="text-right">Umur lunas</TableHead>
+                      <TableHead className="text-right">CF</TableHead>
+                      <TableHead className="text-right">Pengali</TableHead>
+                      <TableHead className="text-right">Insentif</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                }
+                rows={transaksi.map((t) => (
                     <TableRow key={t.invoice_no}>
                       <TableCell className="font-medium whitespace-nowrap">{t.invoice_no}</TableCell>
                       <TableCell className="whitespace-nowrap">{tanggalSingkat(t.tanggal)}</TableCell>
@@ -211,8 +214,7 @@ export function InsentifRincian({
                       </TableCell>
                     </TableRow>
                   ))}
-                </TableBody>
-              </Table>
+              />
             </div>
           )}
 
