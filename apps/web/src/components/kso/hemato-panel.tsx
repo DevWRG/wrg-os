@@ -167,16 +167,30 @@ export function HematoPanel({
     overheadKontrol: hasil.overheadKontrol,
     sellPerTest: hasil.sellPerTest,
     rows: hasil.rows,
-    kontrol: {
-      free: kontrolNow.free,
-      nQc: kontrolNow.nQc,
-      nCal: kontrolNow.nCal,
-      ctrl: kontrolNow.ctrl,
-      ctrlXr: kontrolNow.ctrlXr,
-      cal: kontrolNow.cal,
-      exz8000: isExz8000,
-      hariKerja: umum.workDays,
-      overheadPerTest: hasil.overheadKontrol,
+    asumsi: {
+      alat: { nama: judulAlat, harga: { price: s.price, disc: s.disc } },
+      backup:
+        umum.backupOn && backupAnalyzer
+          ? { nama: backupAnalyzer.label, harga: { price: umum.backupPrice, disc: umum.backupDisc } }
+          : null,
+      ups: umum.ups,
+      lis: umum.lis,
+      kso: s.kso,
+      tests: s.tests,
+      workDays: umum.workDays,
+      markup: s.markup,
+      modeTest: isExz8000 ? (MODE_EXZ.find((m) => m.key === exzMode)?.label ?? null) : null,
+      reagen: hasil.rows.map((r) => ({ nama: r.nama, harga: hargaNow[r.kode] })),
+      kontrol: {
+        free: kontrolNow.free,
+        nQc: kontrolNow.nQc,
+        nCal: kontrolNow.nCal,
+        ctrl: kontrolNow.ctrl,
+        ctrlXr: kontrolNow.ctrlXr,
+        cal: kontrolNow.cal,
+        exz8000: isExz8000,
+        overheadPerTest: hasil.overheadKontrol,
+      },
     },
   };
 
