@@ -73,9 +73,12 @@ test("putuskanFaskes: tak ada yang mirip → faskes baru", () => {
   assert.deepEqual(putuskanFaskes("RS UJI COBA", KATALOG), { kind: "baru" });
 });
 
-test("putuskanFaskes: pasti dari cariAkun → dipakai; nama persis faskes baru lama → dipakai ulang", () => {
-  assert.deepEqual(putuskanFaskes("rs sejahtera", KATALOG, { yakin: { id: "9001", nama: "x" } }),
+test("putuskanFaskes: cariAkun pasti + nama persis → dipakai; tak persis → konfirmasi; nama persis faskes baru lama → dipakai ulang", () => {
+  assert.deepEqual(putuskanFaskes("RS UMUM SEJAHTERA (KOTA CONTOH)", KATALOG, { yakin: { id: "9001", nama: "x" } }),
     { kind: "one", id: "9001", nama: "SEJAHTERA, RS UMUM KOTA CONTOH", baru: false });
+  const r = putuskanFaskes("rs sejahtera", KATALOG, { yakin: { id: "9001", nama: "x" } });
+  assert.equal(r.kind, "saran");
+  assert.equal(r.kind === "saran" && r.saran[0].id, "9001");
   assert.deepEqual(putuskanFaskes("rs anggrek  fiktif.", KATALOG), { kind: "one", id: "BARU-7", nama: "RS ANGGREK FIKTIF", baru: true });
 });
 
@@ -397,4 +400,14 @@ test("alat dari PDF Simulator: analyzer yang menunjuk tepat satu kode dipakai; t
   const t = teksAlatDariPdf("KIMIA MEREKX", { kode: "EXC200", nama: "Zybio EXC200", analyzer: "ZYBIO EXC-200" }, "D70");
   assert.match(t, /dipakai alat dari PDF Simulator: EXC200 .*Balas #KSO D70 ALAT: KODE\./);
   assert.deepEqual(polaTerlarang(t), []);
+});
+
+test("putuskanFaskes: cariAkun yakin tapi nama tak persis → tetap konfirmasi YA/TIDAK", () => {
+  const kat = [{ id: "9101", nama: "Faskes 0AB123", cabang: "KOTA FIKTIF", baru: false }];
+  const r = putuskanFaskes("Faskes 0AB12B", kat, { yakin: { id: "9101", nama: "Faskes 0AB123" } });
+  assert.equal(r.kind, "saran");
+  assert.deepEqual(putuskanFaskes("faskes  0ab123", kat, { yakin: { id: "9101", nama: "Faskes 0AB123" } }),
+    { kind: "one", id: "9101", nama: "Faskes 0AB123", baru: false });
+  const inv = [{ id: "9102", nama: "SEJAHTERA, RS UMUM KAB. CONTOH", cabang: null, baru: false }];
+  assert.equal(putuskanFaskes("RS UMUM SEJAHTERA KAB CONTOH", inv, { yakin: { id: "9102", nama: inv[0].nama } }).kind, "one");
 });
