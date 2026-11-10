@@ -6558,6 +6558,7 @@ app.patch("/permintaan-produk/param", async (c) => {
   const oleh = ppOleh(b);
   if (!oleh) return c.json({ error: "oleh wajib (diisi BFF dari sesi)" }, 400);
   try { return c.json(await ppUbahParam(b, oleh)); } catch (e) { return ppErr(c, e); }
+});
 // F70 PIP 90-Day Tracker + Improvement (migrasi 236, repo/pip.ts). Menu/izin = fitur 'karyawan'
 // (dijaga BFF requireFeature "/karyawan"); scope data = resolveScope seperti /raport/*. Pelaku `oleh`
 // dari sesi (BFF), bukan dari pengguna.
