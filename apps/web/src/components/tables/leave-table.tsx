@@ -70,6 +70,6 @@ export function LeaveTable({ leave, nameById, users }: { leave: Leave[]; nameByI
   );
 
   return (
-    <DataTable columns={columns} data={filtered} getKey={(l) => l.id} searchPlaceholder="Cari karyawan / jenis…" pageSize={25} toolbar={toolbar} />
+    <DataTable columns={columns} data={filtered} getKey={(l) => l.id} searchPlaceholder="Cari karyawan / jenis…" toolbar={toolbar} />
   );
 }

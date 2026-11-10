@@ -63,6 +63,6 @@ export function MaintenanceTable({ schedules }: { schedules: MaintenanceSchedule
   ];
 
   return (
-    <DataTable columns={columns} data={schedules} getKey={(s) => s.id} searchPlaceholder="Cari alat / customer…" pageSize={25} />
+    <DataTable columns={columns} data={schedules} getKey={(s) => s.id} searchPlaceholder="Cari alat / customer…" />
   );
 }

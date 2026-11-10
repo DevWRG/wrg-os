@@ -515,7 +515,6 @@ export default function DashboardPage() {
                   data={orang}
                   getKey={(r) => r.am_id}
                   searchPlaceholder="Cari nama / cabang / role…"
-                  pageSize={25}
                   onRowClick={(r) => router.push(`/plan-report/drilldown?am_id=${r.am_id}`)}
                   toolbar={
                     <>
@@ -582,7 +581,6 @@ export default function DashboardPage() {
                   data={hod}
                   getKey={(r) => r.hod}
                   searchPlaceholder="Cari HOD…"
-                  pageSize={25}
                   columns={[
                     { id: "hod", header: "HOD", sortable: true, accessor: (r) => r.hod, cell: (r) => <span className="font-medium">{r.hod}</span> },
                     { id: "nama", header: "Nama Lengkap", sortable: true, accessor: (r) => r.hod_nama ?? "", cell: (r) => <span className="text-muted-foreground">{r.hod_nama ?? "—"}</span> },
@@ -608,7 +606,6 @@ export default function DashboardPage() {
                     data={compliance?.rows ?? []}
                     getKey={(r) => r.am_id}
                     searchPlaceholder="Cari nama / cabang…"
-                    pageSize={25}
                     toolbar={
                       <ExportButton<ComplianceRow>
                         filename="compliance"
@@ -644,7 +641,6 @@ export default function DashboardPage() {
                   data={groups}
                   getKey={(r) => r.key}
                   searchPlaceholder={tab === "divisi" ? "Cari divisi…" : "Cari cabang…"}
-                  pageSize={25}
                   columns={[
                     { id: "key", header: tab === "divisi" ? "Divisi" : "Cabang", sortable: true, accessor: (r) => r.key, cell: (r) => <span className="font-medium">{r.key}</span> },
                     { id: "count", header: "Orang", align: "right", sortable: true, accessor: (r) => r.count },

@@ -61,6 +61,6 @@ export function ServiceTicketsTable({ tickets }: { tickets: ServiceTicket[] }) {
   ];
 
   return (
-    <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari customer / komplain…" pageSize={25} />
+    <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari customer / komplain…" />
   );
 }

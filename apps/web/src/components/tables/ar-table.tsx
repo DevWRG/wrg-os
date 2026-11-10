@@ -46,7 +46,7 @@ export function ArTable({ invoices }: { invoices: Invoice[] }) {
   const [detail, setDetail] = useState<string | null>(null);
   return (
     <>
-      <DataTable columns={columns} data={invoices} getKey={(inv) => `${inv.customer_id}-${inv.invoice_no}`} searchPlaceholder="Cari customer / invoice / bucket…" pageSize={25} onRowClick={(inv) => setDetail(inv.invoice_no)} />
+      <DataTable columns={columns} data={invoices} getKey={(inv) => `${inv.customer_id}-${inv.invoice_no}`} searchPlaceholder="Cari customer / invoice / bucket…" onRowClick={(inv) => setDetail(inv.invoice_no)} />
       <InvoiceDetailDialog no={detail} onClose={() => setDetail(null)} />
     </>
   );

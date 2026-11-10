@@ -62,7 +62,6 @@ export function ArBreakdownTabs({
         data={data}
         getKey={(r, i) => `${r.key}-${i}`}
         searchPlaceholder={`Cari ${active.head.toLowerCase()}…`}
-        pageSize={25}
         empty="Tidak ada piutang OPEN."
       />
     </div>

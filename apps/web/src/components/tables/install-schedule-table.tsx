@@ -31,5 +31,5 @@ export function InstallScheduleTable({ schedule }: { schedule: InstallSchedule[]
     { id: "aksi", header: "Aksi", align: "right", cell: (s) => <ScheduleRowActions row={s} /> },
   ];
 
-  return <DataTable columns={columns} data={schedule} getKey={(s) => s.id} searchPlaceholder="Cari alat / customer…" pageSize={25} />;
+  return <DataTable columns={columns} data={schedule} getKey={(s) => s.id} searchPlaceholder="Cari alat / customer…" />;
 }

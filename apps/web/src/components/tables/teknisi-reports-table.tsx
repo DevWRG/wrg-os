@@ -27,5 +27,5 @@ export function TeknisiReportsTable({ reports }: { reports: TeknisiReport[] }) {
     { id: "waktu", header: "Waktu", sortable: true, accessor: (r) => r.created_at, cell: (r) => <span className="whitespace-nowrap">{waktu(r.created_at)}</span> },
   ];
 
-  return <DataTable columns={columns} data={reports} getKey={(r) => r.id} searchPlaceholder="Cari isi laporan…" pageSize={25} />;
+  return <DataTable columns={columns} data={reports} getKey={(r) => r.id} searchPlaceholder="Cari isi laporan…" />;
 }

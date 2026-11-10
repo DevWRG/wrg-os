@@ -142,5 +142,5 @@ export function AtkStockOpnameTable({ rows, items }: { rows: AtkStockOpnameRow[]
     { id: "cabang", header: "Cabang", sortable: true, accessor: (r) => r.cabang ?? "", cell: (r) => r.cabang ?? "—" },
     { id: "aksi", header: "Aksi", align: "right" as const, cell: (r) => <OpnameRowActions row={r} items={items} /> },
   ];
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari opname…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari opname…" />;
 }

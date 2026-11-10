@@ -66,5 +66,5 @@ const columns: DataColumn<SupplierEtaRow>[] = [
 ];
 
 export function SupplierEtaTable({ rows }: { rows: SupplierEtaRow[] }) {
-  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari supplier / barang / PO…" pageSize={25} />;
+  return <DataTable columns={columns} data={rows} getKey={(r) => r.id} searchPlaceholder="Cari supplier / barang / PO…" />;
 }

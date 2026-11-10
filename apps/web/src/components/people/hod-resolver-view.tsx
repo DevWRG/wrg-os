@@ -98,7 +98,7 @@ export function HodResolverView({ data }: { data: HodResolution }) {
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama / atasan…" className="h-8 w-56 bg-card border-border" />
       </div>
 
-      <DataTable data={filtered} columns={columns} getKey={(r) => r.id} initialSort={{ id: "status", dir: "asc" }} pageSize={25} empty="Tidak ada baris cocok." />
+      <DataTable data={filtered} columns={columns} getKey={(r) => r.id} initialSort={{ id: "status", dir: "asc" }} empty="Tidak ada baris cocok." />
       </CardContent></Card>
       {dialog}
     </div>

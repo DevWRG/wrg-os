@@ -88,5 +88,5 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
     },
   ];
 
-  return <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari tiket…" pageSize={25} />;
+  return <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari tiket…" />;
 }

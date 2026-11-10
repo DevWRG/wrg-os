@@ -260,7 +260,6 @@ export function KsoAlatView({ data, bolehMutasi = false }: { data: KsoAlat; bole
             data={rows}
             getKey={(r) => String(r.assetId)}
             searchPlaceholder="Cari alat, SN, faskes, kota…"
-            pageSize={25}
             empty="Tidak ada alat pada filter ini."
           />
         </CardContent>

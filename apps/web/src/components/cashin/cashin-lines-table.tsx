@@ -33,7 +33,7 @@ export function CashinLinesTable({
   const [rows, setRows] = useState<CashinLine[]>([]);
   const [totalRows, setTotalRows] = useState(0);
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(10);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
   const [kategori, setKategori] = useState("");

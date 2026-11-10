@@ -113,7 +113,7 @@ export function InboxView({ data }: { data: InboxHasil }) {
         </div>
         <DataTable
           columns={kolom} data={tampil} getKey={(r) => `${r.jenis}:${r.id}`}
-          searchPlaceholder="Cari kode, perihal, atau pengaju…" pageSize={25}
+          searchPlaceholder="Cari kode, perihal, atau pengaju…"
           empty="Tidak ada yang menunggu keputusan."
           initialSort={{ id: "umur", dir: "desc" }}
         />

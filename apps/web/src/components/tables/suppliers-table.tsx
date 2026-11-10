@@ -62,7 +62,7 @@ export function SuppliersTable({ vendors }: { vendors: AccurateVendor[] }) {
 
   return (
     <>
-      <DataTable columns={columns} data={vendors} getKey={(v) => v.id} searchPlaceholder="Cari vendor…" pageSize={25} onRowClick={openDetail} />
+      <DataTable columns={columns} data={vendors} getKey={(v) => v.id} searchPlaceholder="Cari vendor…" onRowClick={openDetail} />
 
       <Dialog open={!!sel} onOpenChange={(o) => !o && setSel(null)}>
         <DialogContent>

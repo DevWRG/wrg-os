@@ -85,7 +85,6 @@ export function KontrakView({ daftar, kelengkapan, canEdit }: { daftar: DaftarKo
                 data={data}
                 getKey={(r) => r.id}
                 searchPlaceholder="Cari faskes / nomor MoU…"
-                pageSize={25}
                 initialSort={{ id: "bucket", dir: "asc" }}
                 onRowClick={(r) => setBuka(r.id)}
                 empty="Tidak ada kontrak yang cocok dengan filter."

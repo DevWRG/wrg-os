@@ -40,5 +40,5 @@ const columns: DataColumn<ReminderItem>[] = [
 ];
 
 export function RemindersTable({ reminders }: { reminders: ReminderItem[] }) {
-  return <DataTable columns={columns} data={reminders} getKey={(r) => r.id} searchPlaceholder="Cari AM / note / customer…" pageSize={25} />;
+  return <DataTable columns={columns} data={reminders} getKey={(r) => r.id} searchPlaceholder="Cari AM / note / customer…" />;
 }

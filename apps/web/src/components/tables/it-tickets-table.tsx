@@ -68,6 +68,6 @@ export function ItTicketsTable({ tickets, users = [] }: { tickets: ItTicket[]; u
   ];
 
   return (
-    <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari aset / masalah…" pageSize={25} />
+    <DataTable columns={columns} data={tickets} getKey={(t) => t.id} searchPlaceholder="Cari aset / masalah…" />
   );
 }

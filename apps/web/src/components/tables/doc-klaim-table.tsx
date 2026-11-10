@@ -150,5 +150,5 @@ export function DocKlaimTable({ klaim, pemutus }: { klaim: DocKlaim[]; pemutus: 
     },
   ];
 
-  return <DataTable columns={columns} data={klaim} getKey={(k) => k.id} searchPlaceholder="Cari pengirim/dokumen…" pageSize={25} />;
+  return <DataTable columns={columns} data={klaim} getKey={(k) => k.id} searchPlaceholder="Cari pengirim/dokumen…" />;
 }

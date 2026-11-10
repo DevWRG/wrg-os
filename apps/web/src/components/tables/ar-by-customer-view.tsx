@@ -85,7 +85,6 @@ export function ArByCustomerView({ customers, invoices }: { customers: ArCustome
         data={filtered}
         getKey={(c) => c.id}
         searchPlaceholder="Cari customer / AM…"
-        pageSize={25}
         initialSort={{ id: "total", dir: "desc" }}
         onRowClick={setSel}
         empty="Tidak ada piutang di filter ini."

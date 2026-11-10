@@ -159,7 +159,6 @@ export function CourierPerformanceClient({ initialSummary }: { initialSummary: K
               data={summary.by_kurir}
               getKey={(r) => r.kurir.toLowerCase()}
               searchPlaceholder="Cari kurir…"
-              pageSize={25}
               initialSort={{ id: "total", dir: "desc" }}
             />
           )}

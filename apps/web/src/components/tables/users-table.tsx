@@ -42,5 +42,5 @@ const columns: DataColumn<User>[] = [
 ];
 
 export function UsersTable({ users }: { users: User[] }) {
-  return <DataTable columns={columns} data={users} getKey={(u) => u.am_id} searchPlaceholder="Cari nama / inisial / cabang / role…" pageSize={25} />;
+  return <DataTable columns={columns} data={users} getKey={(u) => u.am_id} searchPlaceholder="Cari nama / inisial / cabang / role…" />;
 }
