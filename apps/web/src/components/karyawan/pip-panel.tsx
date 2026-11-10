@@ -6,9 +6,11 @@ import { Info, Plus, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SkeletonLines } from "@/components/ui/loading";
 import { Textarea } from "@/components/ui/textarea";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { EVENT_LABEL, fmtDelta, fmtScore, fmtSisaHari, fmtTgl, MILESTONE_LABEL, OUTCOME_LABEL, PIP_STATUS_LABEL, type PipStatus } from "@/components/karyawan/pip-format";
 
 // F70 — perjalanan improvement satu karyawan (drilldown /karyawan/[amId]): profil employee,
@@ -115,6 +117,9 @@ function PipCase({ id, onChanged }: { id: number; onChanged: () => void }) {
   const [goal, setGoal] = useState({ goal: "", target: "" });
   const [ms, setMs] = useState({ judul: "", due: "" });
   const [outcome, setOutcome] = useState({ outcome: "graduate", catatan: "", end_date: "" });
+  const { confirm, dialog } = useConfirm();
+  // Tahapan yang sedang ditandai "tidak tercapai" (dialog alasan; pengganti window.prompt).
+  const [gagal, setGagal] = useState<{ id: number; judul: string; alasan: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -176,10 +181,7 @@ function PipCase({ id, onChanged }: { id: number; onChanged: () => void }) {
               {aktif ? (
                 <>
                   <Button size="xs" variant="soft" onClick={() => run("PATCH", `milestones/${m.id}`, { status: "tercapai" })}>Tercapai</Button>
-                  <Button size="xs" variant="soft" onClick={() => {
-                    const alasan = window.prompt("Alasan tahapan ini tidak tercapai:");
-                    if (alasan) void run("PATCH", `milestones/${m.id}`, { status: "tidak_tercapai", catatan: alasan });
-                  }}>Tidak tercapai</Button>
+                  <Button size="xs" variant="soft" onClick={() => setGagal({ id: m.id, judul: m.judul, alasan: "" })}>Tidak tercapai</Button>
                   {m.status !== "belum" ? <Button size="xs" variant="ghost" onClick={() => run("PATCH", `milestones/${m.id}`, { status: "belum" })}>Buka lagi</Button> : null}
                 </>
               ) : null}
@@ -221,10 +223,15 @@ function PipCase({ id, onChanged }: { id: number; onChanged: () => void }) {
               {outcome.outcome === "extend" ? <Input type="date" value={outcome.end_date} onChange={(e) => setOutcome({ ...outcome, end_date: e.target.value })} className="max-w-44" aria-label="Tanggal berakhir baru" title="Tanggal berakhir baru" /> : null}
             </div>
             <Textarea placeholder="Catatan hasil akhir (wajib) — dasar keputusan" rows={2} value={outcome.catatan} onChange={(e) => setOutcome({ ...outcome, catatan: e.target.value })} />
-            <Button size="sm" variant={outcome.outcome === "terminate" ? "destructive" : "default"} onClick={() => {
-              if (!window.confirm(`Catat hasil akhir: ${OUTCOME_LABEL[outcome.outcome as keyof typeof OUTCOME_LABEL]}? Tercatat di riwayat dan tidak bisa diubah.`)) return;
-              void run("POST", `cases/${id}/outcome`, { outcome: outcome.outcome, catatan: outcome.catatan, end_date: outcome.outcome === "extend" ? outcome.end_date : undefined });
-            }}>Catat hasil akhir</Button>
+            <Button size="sm" variant={outcome.outcome === "terminate" ? "destructive" : "default"} onClick={() => confirm(
+              {
+                title: "Catat hasil akhir PIP?",
+                description: `${OUTCOME_LABEL[outcome.outcome as keyof typeof OUTCOME_LABEL]}. Tercatat di riwayat dan tidak bisa diubah.`,
+                confirmLabel: "Catat hasil akhir",
+                destructive: outcome.outcome === "terminate",
+              },
+              () => void run("POST", `cases/${id}/outcome`, { outcome: outcome.outcome, catatan: outcome.catatan, end_date: outcome.outcome === "extend" ? outcome.end_date : undefined }),
+            )}>Catat hasil akhir</Button>
           </section>
         ) : null}
 
@@ -234,6 +241,27 @@ function PipCase({ id, onChanged }: { id: number; onChanged: () => void }) {
             {d.timeline.map((t, i) => <li key={i}>{fmtTgl(t.occurred_at)} {t.occurred_at.slice(11, 16)} · {EVENT_LABEL[t.event_type] ?? t.event_type}{t.actor ? ` · ${t.actor}` : ""}</li>)}
           </ul>
         </section>
+        {dialog}
+        <Dialog open={gagal !== null} onOpenChange={(o) => { if (!o) setGagal(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Tahapan tidak tercapai</DialogTitle>
+              <DialogDescription>{gagal?.judul} — tulis alasannya; tercatat di riwayat PIP.</DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              <Textarea autoFocus rows={3} placeholder="Alasan tahapan ini tidak tercapai" value={gagal?.alasan ?? ""}
+                onChange={(e) => setGagal((g) => (g ? { ...g, alasan: e.target.value } : g))} />
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setGagal(null)}>Batal</Button>
+              <Button disabled={!gagal?.alasan.trim()} onClick={() => {
+                if (!gagal) return;
+                const g = gagal; setGagal(null);
+                void run("PATCH", `milestones/${g.id}`, { status: "tidak_tercapai", catatan: g.alasan.trim() });
+              }}>Simpan</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
