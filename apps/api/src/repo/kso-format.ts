@@ -28,8 +28,9 @@ const POLA_LABEL: [LabelKso, RegExp][] = [
   ["masa", /^(?:masa(?:\s+kso)?|tenor)\b/i],
   ["harga", /^(?:permintaan\s+harga|harga(?:\s+(?:per\s+)?(?:tes|test))?)\b/i],
   ["tes", /^(?:jumlah\s+)?(?:tes|test|volume)(?:\s*\/\s*(?:tes|test))?\b/i],
-  ["faskes", /^(?:nama\s+)?(?:faskes|rumah\s+sakit)\b/i],
-  ["alat", /^(?:alat|analy[sz]er)\b/i],
+  // "NAMA CUSTOMER ; RS X" / "NAMA RS: X" / "CUSTOMER: X" (varian pesan AM 10 Nov) — "RS" saja BUKAN label
+  ["faskes", /^(?:nama\s+(?:faskes|customer|pelanggan|rs|rumah\s+sakit)|faskes|rumah\s+sakit|customer)\b/i],
+  ["alat", /^(?:nama\s+)?(?:alat|analy[sz]er)\b/i],
   ["fee", /^fee\b/i],
   ["kompetitor", /^(?:kompetitor|pesaing)\b/i],
   ["klausul", /^klausul\b/i],
@@ -56,7 +57,8 @@ export function bacaBarisLabel(baris: string): [LabelKso, string] | null {
   const t = baris.replace(NOMOR_BARIS, "").trim();
   for (const [k, re] of POLA_LABEL) {
     const m = re.exec(t);
-    if (m) return [k, t.slice(m[0].length).replace(/^\s*[:=：]+\s*|^\s+/, "").trim()];
+    // pemisah ":" "=" ";" (spasi bebas), atau " - " tanpa titik dua ("KOMPETITOR : -" tetap bernilai "-")
+    if (m) return [k, t.slice(m[0].length).replace(/^\s*[:=：;]+\s*|^\s+[-–—]\s+|^\s+/, "").trim()];
   }
   return null;
 }
@@ -407,16 +409,20 @@ export type HasilAlat =
   | { kind: "one"; kode: string; nama: string; kategori: string | null; skor: number }
   | { kind: "saran"; ambigu: boolean; saran: SaranAlat[] };
 
-/** Kata kategori/derau yang bukan kode model. Kategori dipakai sebagai petunjuk peringkat. */
-const KATEGORI_PETUNJUK: [RegExp, string][] = [
-  [/^HEMA(TO(LOGY|LOGI)?)?$|^CBC$/, "HEMA"],
-  [/^(KIMIA|CHEM(ISTRY)?|BIOKIMIA)$/, "KIMIA"],
-  [/^(IMUN(O|OASAI|OLOGI)?|IMMUNO(ASSAY|LOGY)?|CLIA|ELISA)$/, "IMUN"],
-  [/^(ELEKTROLIT|ELECTROLYTE|ELEKTROLYT)$/, "ELEKTROLIT"],
-  [/^(BGA|AGD|GAS)$/, "GAS"],
-  [/^(URIN(E|ALISA|ALYSIS)?)$/, "URIN"],
-  [/^(KOAGULASI|COAG(ULATION)?|HEMOSTASIS)$/, "KOAG"],
-  [/^(HEMODIALI[SZ]A|HD)$/, "HEMODIALISA"],
+/**
+ * Kata kategori/derau yang bukan kode model. Kategori dipakai sebagai petunjuk peringkat: [kata yang ditulis AM,
+ * kunci, token kategori katalog yang sepadan]. Kategori katalog prod = kode Simulator (HEMATO, CC, CLIA, ELEKTRO, BG,
+ * …), bukan kata Indonesia — "KIMIA KLINIK" harus menunjuk CC.
+ */
+const KATEGORI_PETUNJUK: [RegExp, string, RegExp][] = [
+  [/^HEMA(TO(LOGY|LOGI)?)?$|^CBC$/, "HEMA", /^HEMA/],
+  [/^(KIMIA|CHEM(ISTRY)?|BIOKIMIA)$/, "KIMIA", /^(KIMIA|CC|CHEM|BIOKIMIA)/],
+  [/^(IMUN(O|OASAI|OLOGI)?|IMMUNO(ASSAY|LOGY)?|CLIA|ELISA)$/, "IMUN", /^(IMUN|IMMUN|CLIA|ELISA)/],
+  [/^(ELEKTROLIT|ELECTROLYTE|ELEKTROLYT)$/, "ELEKTROLIT", /^(ELEKTRO|ELECTRO)/],
+  [/^(BGA|AGD|GAS)$/, "GAS", /^(BG|BGA|AGD|GAS)$/],
+  [/^(URIN(E|ALISA|ALYSIS)?)$/, "URIN", /^URIN/],
+  [/^(KOAGULASI|COAG(ULATION)?|HEMOSTASIS)$/, "KOAG", /^(KOAG|COAG|HEMOSTA)/],
+  [/^(HEMODIALI[SZ]A|HD)$/, "HEMODIALISA", /^(HEMODIAL|HD)$/],
 ];
 const DERAU = new Set(["ANALYZER", "ANALISER", "ANALYSER", "ANALIZER", "ALAT", "MESIN", "AUTO", "AUTOMATIC", "AUTOMATED",
   "OTOMATIS", "UNIT", "BARU", "KSO", "TIPE", "TYPE", "SERI", "SERIES", "DIFF", "PART", "KLINIK", "CLINICAL", "BLOOD",
@@ -431,6 +437,11 @@ function petunjukKategori(tokens: string[]): Set<string> {
   const s = new Set<string>();
   for (const t of tokens) for (const [re, k] of KATEGORI_PETUNJUK) if (re.test(t)) s.add(k);
   return s;
+}
+/** Kategori katalog ("CC", "Kimia klinik", "HEMATO") sepadan dengan salah satu petunjuk? */
+function kategoriSepadan(petunjuk: Set<string>, kategori: string | null | undefined): boolean {
+  const tk = tokenAlat(kategori ?? "");
+  return KATEGORI_PETUNJUK.some(([, k, kat]) => petunjuk.has(k) && tk.some((t) => kat.test(t)));
 }
 function tokenModel(tokens: string[]): string[] {
   return tokens.filter((t) => !DERAU.has(t) && !KATEGORI_PETUNJUK.some(([re]) => re.test(t)) && !/^\d$/.test(t));
@@ -475,6 +486,10 @@ export function skorAlat(teks: string, a: AlatKatalog): number {
   const model = tokenModel(tokens);
   const cand = kandidatKode(model);
   const gabung = model.join("");
+  // angka murni yang didahului huruf kode ("CM 250") = kode model alat itu sendiri, bukan salah baca OCR "Z50" → 250.
+  // OCR PDF "250" (tanpa huruf di depan) tetap boleh dibaca sebagai Z50.
+  const angkaBerawalan = new Set(model.filter((t, i) => /^\d+$/.test(t) && i > 0 && /^[A-Z]{1,4}$/.test(model[i - 1])));
+  const ocrBoleh = (c: string) => /\d/.test(c) && !angkaBerawalan.has(c);
   // kode entri: kode katalog + kode model di nama/alias ("Easy Diagnosis DN-X6" → DNX6)
   const teksEntri = [a.nama, ...(a.alias ?? [])].join(" ");
   const modelEntri = tokenModel(tokenAlat(teksEntri));
@@ -483,9 +498,9 @@ export function skorAlat(teks: string, a: AlatKatalog): number {
   let s = 0;
   for (const k of kodeEntri) {
     if (cand.includes(k)) s = Math.max(s, 100);
-    else if (/\d/.test(k) && cand.some((c) => /\d/.test(c) && kanonOcr(c) === kanonOcr(k))) s = Math.max(s, 90);
+    else if (/\d/.test(k) && cand.some((c) => ocrBoleh(c) && kanonOcr(c) === kanonOcr(k))) s = Math.max(s, 90);
     else if (k.length >= 4 && gabung.includes(k)) s = Math.max(s, 85);
-    else if (k.length >= 3 && cand.some((c) => c.length >= 3 && /\d/.test(c) && jarakEdit(c, k) === 1)) s = Math.max(s, 60);
+    else if (k.length >= 3 && cand.some((c) => c.length >= 3 && ocrBoleh(c) && jarakEdit(c, k) === 1)) s = Math.max(s, 60);
     const dk = digitDari(k);
     if (dk.length >= 2 && model.some((t) => digitDari(t) === dk)) s = Math.max(s, 50);
   }
@@ -494,9 +509,11 @@ export function skorAlat(teks: string, a: AlatKatalog): number {
   const merek = model.some((t) => /^[A-Z]{3,}$/.test(t) && hurufEntri.has(t));
   if (merek) s += s > 0 ? 20 : 10;
   const p = petunjukKategori(tokens);
-  if (p.size) {
-    const kat = tokenAlat(a.kategori ?? "").join(" ");
-    if ([...p].some((x) => kat.includes(x))) s += 10;
+  if (p.size && a.kategori) {
+    if (kategoriSepadan(p, a.kategori)) s += 10;
+    // kategori yang ditulis AM bertentangan dengan kategori entri: kecocokan tak utuh (OCR/selisih huruf/angka model)
+    // tidak boleh "yakin" — "KIMIA … 250" bukan Z50 hematologi. Kode utuh (100) tetap menang.
+    else if (s < 100) s = Math.min(s, 5);
   }
   return s;
 }
@@ -777,10 +794,11 @@ export interface SaranFaskes {
 }
 export type HasilFaskes =
   | { kind: "one"; id: string; nama: string; baru: boolean }
+  /** SATU calon terbaik untuk dikonfirmasi AM (#KSO YA / TIDAK). Baris tertunda lama (sebelum 10 Nov malam) bisa berisi 3. */
   | { kind: "saran"; saran: SaranFaskes[] }
   | { kind: "baru" };
 
-/** Skor "mirip" (0–1) di atas batas ini = ditawarkan sebagai pilihan, bukan langsung dibuat faskes baru. */
+/** Skor "mirip" (0–1) di atas batas ini = ditanyakan konfirmasi (YA/TIDAK), bukan langsung dibuat faskes baru. */
 export const SKOR_FASKES_MIRIP = 0.5;
 
 const normFaskes = (s: string | null | undefined) => String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
@@ -810,17 +828,49 @@ export function skorFaskes(teks: string, nama: string): number {
   return Math.round(Math.max(d, cakup * 0.9) * 100) / 100;
 }
 
+/** Semua kata inti yang DITULIS AM (termasuk kota, mis. "KOTA CONTOH") ada di nama faskes itu (salah ketik 1 huruf boleh). */
+export function semuaKataFaskes(teks: string, nama: string): boolean {
+  const q = tokenFaskes(teks);
+  const c = tokenFaskes(nama);
+  const sama = (a: string, b: string) => tokenSama(a.toLowerCase(), b.toLowerCase()) || (a.length >= 4 && b.length >= 4 && jarakEdit(a, b) === 1);
+  return q.length > 0 && q.every((t) => c.some((x) => sama(t, x)));
+}
+
+export interface OpsiFaskes {
+  /** cariAkun menunjuk tepat satu faskes master. */
+  yakin?: { id: string; nama: string } | null;
+  /** Nama yang disebut cariAkun ambigu — ikut DIPERINGKAT (skor sebenarnya), bukan disamaratakan. */
+  ambigu?: string[];
+  /** Cabang AM pengirim — pemutus seri. */
+  cabangAm?: string | null;
+}
+
 /**
- * Keputusan faskes untuk usulan #KSO baru (keputusan product owner 10 Nov: faskes boleh customer baru):
+ * Peringkat SEMUA calon faskes yang masuk akal (skor ≥ SKOR_FASKES_MIRIP, atau disebut ambigu oleh cariAkun).
+ * Urutan deterministik: memuat semua kata inti yang ditulis AM (termasuk kota) → skor → cabang sama dengan AM →
+ * nama lebih pendek → abjad. Contoh: "RS PKU X KOTAB" menang atas "PKU X KOTAA, RS" walau keduanya disebut ambigu.
+ */
+export function peringkatFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiFaskes = {}): SaranFaskes[] {
+  const ambigu = new Set((o.ambigu ?? []).map(normFaskes));
+  const cab = normFaskes(o.cabangAm);
+  return katalog
+    .map((x) => ({ x, skor: skorFaskes(teks, x.nama), semua: semuaKataFaskes(teks, x.nama), cabang: !!cab && normFaskes(x.cabang) === cab }))
+    .filter((y) => y.skor >= SKOR_FASKES_MIRIP || (ambigu.has(normFaskes(y.x.nama)) && angkaPembeda(teks) === angkaPembeda(y.x.nama)))
+    .sort((a, b) => Number(b.semua) - Number(a.semua) || b.skor - a.skor || Number(b.cabang) - Number(a.cabang)
+      || a.x.nama.length - b.x.nama.length || a.x.nama.localeCompare(b.x.nama))
+    .map(({ x, skor }) => ({ id: x.id, nama: x.nama, cabang: x.cabang ?? null, baru: !!x.baru, skor }));
+}
+
+/**
+ * Keputusan faskes untuk usulan #KSO baru (keputusan product owner 10 Nov: "bot yang mencocokkan nama customer,
+ * AM hanya konfirmasi ya atau tidak"):
  *   - `yakin` (cariAkun menunjuk tepat satu faskes master) atau nama persis sama (huruf/tanda baca diabaikan)
- *     dengan tepat satu faskes → "one";
- *   - ada yang mirip (skor ≥ SKOR_FASKES_MIRIP, atau nama yang disebut cariAkun ambigu) → "saran" (maks 3) —
- *     AM memilih nomor atau FASKES BARU; tidak pernah membuat faskes kembar diam-diam;
+ *     dengan tepat satu faskes → "one" (dipakai tanpa bertanya);
+ *   - ada calon yang masuk akal → "saran" berisi SATU calon terbaik (peringkatFaskes) — AM menjawab #KSO YA / TIDAK;
+ *     tidak pernah daftar, tidak pernah membuat faskes kembar diam-diam;
  *   - tidak ada yang mirip → "baru" (faskes sementara dibuat).
  */
-export function putuskanFaskes(
-  teks: string, katalog: FaskesKatalog[], o: { yakin?: { id: string; nama: string } | null; ambigu?: string[] } = {},
-): HasilFaskes {
+export function putuskanFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiFaskes = {}): HasilFaskes {
   if (o.yakin) {
     const f = katalog.find((x) => x.id === o.yakin!.id);
     return { kind: "one", id: o.yakin.id, nama: f?.nama ?? o.yakin.nama, baru: !!f?.baru };
@@ -828,17 +878,39 @@ export function putuskanFaskes(
   const n = normFaskes(teks);
   const persis = katalog.filter((x) => n && normFaskes(x.nama) === n);
   if (persis.length === 1) return { kind: "one", id: persis[0].id, nama: persis[0].nama, baru: !!persis[0].baru };
-  const ambigu = new Set((o.ambigu ?? []).map(normFaskes));
-  const saran = katalog
-    .map((x) => {
-      const s = skorFaskes(teks, x.nama);
-      return { x, skor: ambigu.has(normFaskes(x.nama)) || persis.includes(x) ? Math.max(s, 1) : s };
-    })
-    .filter((y) => y.skor >= SKOR_FASKES_MIRIP)
-    .sort((a, b) => b.skor - a.skor || a.x.nama.localeCompare(b.x.nama))
-    .slice(0, 3)
-    .map(({ x, skor }) => ({ id: x.id, nama: x.nama, cabang: x.cabang ?? null, baru: !!x.baru, skor }));
-  return saran.length ? { kind: "saran", saran } : { kind: "baru" };
+  const urut = peringkatFaskes(teks, katalog, o);
+  return urut.length ? { kind: "saran", saran: urut.slice(0, 1) } : { kind: "baru" };
+}
+
+const JENIS_FASKES = /^(?:RS\w*|RUMAH\s+SAKIT|KLINIK|PUSKESMAS|LAB(?:ORATORIUM)?|UTD|BALAI|APOTEK|PT|CV)\b/i;
+const PENANDA_KOTA = /(?:^|\s)((?:KOTA|KAB(?:UPATEN)?\.?)\s+.+)$/i;
+
+/**
+ * Nama faskes yang enak dibaca. Nama master Accurate sering terbalik "INTI, JENIS KOTA" ("SEJAHTERA, RS UMUM KAB.
+ * CONTOH") → "RS UMUM SEJAHTERA (KAB. CONTOH)". Pola tak berlaku (tanpa koma, bagian sesudah koma bukan jenis faskes
+ * atau kota) → apa adanya.
+ */
+export function namaTampilFaskes(nama: string): string {
+  const t = nama.trim().replace(/\s+/g, " ");
+  const i = t.indexOf(",");
+  if (i <= 0 || t.indexOf(",", i + 1) >= 0) return t;
+  const inti = t.slice(0, i).trim();
+  const belakang = t.slice(i + 1).trim();
+  if (!inti || !belakang) return t;
+  const mk = PENANDA_KOTA.exec(belakang);
+  const kota = mk ? mk[1].trim() : null;
+  const jenis = (mk ? belakang.slice(0, mk.index) : belakang).trim();
+  if (jenis && !JENIS_FASKES.test(jenis)) return t;
+  if (!jenis && !kota) return t;
+  return `${jenis ? `${jenis} ` : ""}${inti}${kota ? ` (${kota})` : ""}`;
+}
+
+/** Jawaban konfirmasi "#KSO YA" / "#KSO TIDAK" (dan variannya). null = bukan jawaban ya/tidak. */
+export function bacaYaTidak(s: string): "ya" | "tidak" | null {
+  const t = s.trim().replace(/[.!]+$/, "").trim();
+  if (/^(?:ya|y|iya|iyo|yes|benar|betul|bener)$/i.test(t)) return "ya";
+  if (/^(?:tidak|t|tdk|bukan|no|enggak|nggak|gak)$/i.test(t)) return "tidak";
+  return null;
 }
 
 /** Isian "#KSO FASKES …" untuk usulan tertunda: nomor pilihan, FASKES BARU, atau nama yang ditulis ulang. */
