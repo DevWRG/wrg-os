@@ -312,7 +312,7 @@ import {
   MAKS_DOKUMEN, perpanjangKontrak, ubahKontrak, ubahStatusKontrak, unggahDokumen,
 } from "./repo/kso-kontrak.js";
 import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./repo/bukti-pembayaran.js";
-import { GalatKso, daftarTab, detailRencana, isAksiKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
+import { GalatKso, berkasLampiran, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
@@ -2864,6 +2864,37 @@ app.get("/kso-komite/:tab/rencana/:id", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
   try { return c.json(await detailRencana(u, tab, id)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// 302: daftar "Belum lengkap" (DRAFT/DITAHAN + kurang) dan "Lolos tanpa forum" (DIPUTUS_AM/DIPUTUS_HOD + mandat), dalam akses tab.
+app.get("/kso-komite/:tab/daftar/:filter", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const filter = c.req.param("filter");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !isFilterKso(filter)) return c.json({ error: "permintaan tidak sah" }, 400);
+  try { return c.json(await daftarFilter(u, tab, filter)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// 302: berkas PDF lampiran (Simulator CPRR) — izin tab Komite KSO + RLS boleh_lihat; path tetap wajib di dalam MEDIA_ROOT.
+app.get("/kso-komite/:tab/rencana/:id/lampiran/:lid", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const id = Number(c.req.param("id"));
+  const lid = Number(c.req.param("lid"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0 || !Number.isInteger(lid) || lid <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  let p: string;
+  try { p = await berkasLampiran(u, tab, id, lid); } catch (e) { return ksoKomiteErr(c, e); }
+  const abs = resolve(p);
+  if (!isInsideRoot(abs, MEDIA_ROOT)) return c.json({ error: "berkas di luar root media" }, 403);
+  try {
+    const buf = await readFile(abs);
+    return c.body(buf, 200, { "content-type": "application/pdf", "cache-control": "private, max-age=3600",
+                              "content-disposition": `inline; filename="lampiran-kso-${id}-${lid}.pdf"` });
+  } catch {
+    return c.json({ error: "berkas tak ditemukan" }, 404);
+  }
 });
 app.post("/kso-komite/rencana/:id/:aksi", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

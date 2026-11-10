@@ -11,7 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import type { TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
+import { persenFee } from "@/lib/kso-komite-daftar";
+
 import { LabelStatus } from "./label-status";
+import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
 import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
@@ -87,8 +90,10 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       </header>
       <AngkaKunci d={d} />
       <Peringatan d={d} />
+      <BagianKurang d={d} />
       {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
       <Gerbang d={d} />
+      <BagianLampiran tab={tab} d={d} />
       <HargaZona d={d} />
       <Isian d={d} />
       {d.pendapat.length > 0 && (
@@ -145,16 +150,19 @@ function Blok({ judul, children }: { judul: string; children: React.ReactNode })
   );
 }
 
-/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · TENOR · HARI KERJA · GPM · ZONA). */
+/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · FEE · HARGA BERSIH · TENOR · HARI KERJA · GPM · ZONA). */
 function AngkaKunci({ d }: { d: Detail }) {
   const r = d.rencana, g = d.angka_gpm;
   const isi: [string, React.ReactNode][] = [
     ["Capex", rpJt(r.capex)],
     ["Volume", r.volume_estimasi != null ? `${r.volume_estimasi.toLocaleString("id-ID")} test/bln` : "—"],
     ["Harga/test", rp(r.harga_per_test)],
+    // 302: fee ke RS/perantara; GPM di bawah dihitung dari harga bersih fee
+    ["Fee", r.fee_persen === undefined ? "—" : r.fee_persen == null ? <span className="text-amber-700 dark:text-amber-400">belum diisi</span> : persenFee(r.fee_persen)],
+    ["Harga bersih", rp(r.harga_bersih ?? (r.harga_per_test == null ? null : r.harga_per_test * (1 - (r.fee_persen ?? 0) / 100)))],
     ["Tenor", r.tenor_bulan != null ? `${r.tenor_bulan} bln` : "—"],
     ["Hari kerja", r.hari_kerja != null ? `${r.hari_kerja} hari/bln` : r.hari_kerja_default != null ? `${r.hari_kerja_default} hari/bln (default)` : "—"],
-    ["GPM deal", g?.hd ? "Hemodialisa" : persen(g?.gpm ?? r.gpm_deal)],
+    ["GPM deal", g?.hd ? "Hemodialisa" : <>{persen(g?.gpm ?? r.gpm_deal)}{r.fee_persen ? <span className="text-muted-foreground text-xs font-normal"> bersih fee</span> : null}</>],
     ["Zona", r.zona ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span> : "—"],
   ];
   return (
@@ -194,7 +202,9 @@ function Isian({ d }: { d: Detail }) {
       {/* kalimat AM apa adanya, dalam tanda kutip — bukan kategori turunan */}
       <li><span className="text-muted-foreground">Bukti volume:</span> {r.volume_sumber ? <i>“{r.volume_sumber}”</i> : "—"}
         {r.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400"> · diverifikasi Sekretaris</span>}</li>
+      {r.kompetitor_alat && <li><span className="text-muted-foreground">Kompetitor:</span> {r.kompetitor_alat}</li>}
       {r.harga_pesaing != null && <li><span className="text-muted-foreground">Harga pesaing:</span> {rp(r.harga_pesaing)}/test</li>}
+      {r.klausul_ada != null && <li><span className="text-muted-foreground">Klausul dari RS:</span> {r.klausul_ada ? <>ADA{r.klausul_detail ? <> — <i>“{r.klausul_detail}”</i></> : " (isinya belum ditulis)"}</> : "TIDAK"}</li>}
       {r.alasan_strategis && <li><span className="text-muted-foreground">Alasan strategis:</span> <i>“{r.alasan_strategis}”</i></li>}
       <li><span className="text-muted-foreground">Klausul khusus:</span> {d.klausul.length ? d.klausul.map((k) => k.label).join(", ") : "tidak ada"}</li>
       {d.pendukung.map((p, i) => <li key={i}><span className="text-muted-foreground">Pendukung:</span> {p.nama} ({p.tipe.replace(/_/g, " ")}){p.kontak_terakhir_tanggal ? ` · kontak ${p.kontak_terakhir_tanggal}` : ""}</li>)}

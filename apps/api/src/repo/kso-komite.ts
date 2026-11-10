@@ -12,6 +12,7 @@
 import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
+import { daftarKurang, type CocokIsian, type ItemKurang } from "./kso-format.js";
 
 export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
 type PeranKso = "am" | "hod" | "komite" | "direksi" | "sekretaris" | "admin_sales" | "teknik";
@@ -178,7 +179,9 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     const [pks] = await tx`select harga_deal::float8 as harga_deal, pks_tenor_bulan, pks_volume_minimum, pks_klausul,
                                   zona, zona_dasar, gpm_deal::float8 as gpm_deal, alasan_strategis, harga_pesaing::float8 as harga_pesaing,
                                   volume_terverifikasi, volume_verifikasi_catatan, volume_verifikasi_at::text as volume_verifikasi_at,
-                                  hari_kerja, coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default
+                                  hari_kerja, coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
+                                  fee_persen::float8 as fee_persen, klausul_ada, klausul_detail, kompetitor_alat,
+                                  (harga_per_test * (1 - coalesce(fee_persen, 0) / 100))::float8 as harga_bersih
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
     // angka GPM per zona (268) — hanya untuk rencana yang boleh dilihat peran tab ini
@@ -200,8 +203,15 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
       // pilihan centang form PKS: klausul khusus RS (yang "tanpa_*" = kebalikan perlindungan wajib, tak perlu dicentang)
       tx`select kode, label from kso.klausul_khusus where kode not like 'tanpa%' order by urut`,
     ]);
+    // 302: lampiran PDF Simulator CPRR (terbaru dulu) + daftar "Belum lengkap" (sumber sama dengan balasan WA)
+    const lampiran = await tx`select id::int, wa_message_id, lolos, cocok, hasil_ocr->'isian' as isian, hasil_ocr->>'galat' as galat,
+                                     coalesce((hasil_ocr->>'ok')::boolean, false) as ok, hasil_ocr->'peringatan' as peringatan,
+                                     hasil_ocr->'isian'->>'tanggal' as tanggal, dibuat_at::text, media_path is not null as ada_berkas
+                                from kso.rencana_lampiran where rencana_id = ${id} order by dibuat_at desc, id desc`;
+    const [kd] = await bahanKurang(tx, [id]);
     return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
-             forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null };
+             forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null,
+             lampiran_terakhir: lampiran[0] ?? null, lampiran, kurang: kd ? kurangDari(kd) : [] };
   });
   // Nama pelaku dibaca DI LUAR transaksi peran (koneksi biasa API): wrg_app tak dijamin boleh
   // membaca app_user di setiap lingkungan, dan nama akun bukan data KSO yang perlu RLS.
@@ -211,6 +221,77 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
   if (ids.length) for (const u of await db()`SELECT id::text, name FROM app_user WHERE id::text = ANY(${ids})`) nama.set(String(u.id), String(u.name));
   d.riwayat = riwayat.map(({ oleh_user, ...h }) => ({ ...h, oleh_nama: oleh_user ? nama.get(oleh_user) ?? null : null })) as never;
   return d;
+}
+
+// ---------------------------------------------------------------- 302: belum lengkap · lolos tanpa forum · berkas PDF
+
+interface BarisKurang {
+  id: number; status: string; volume_estimasi: number | null; tenor_bulan: number | null; harga_per_test: number | null;
+  fee_persen: number | null; kolom_dinyatakan: string[]; klausul_ada: boolean | null; klausul_detail: string | null;
+  pendukung: { nama: string; tipe: string }[]; unit_status: string | null; volume_sumber: string | null; zona_dasar: string | null;
+  alasan_strategis: string | null; hd: boolean | null;
+  lampiran: { lolos: boolean; cocok: Record<string, CocokIsian> | null; galat: string | null } | null;
+}
+
+/** Bahan daftarKurang per rencana (RLS peran tab berlaku: hanya rencana yang boleh dilihat). */
+async function bahanKurang(tx: Tx, ids: number[]): Promise<BarisKurang[]> {
+  if (!ids.length) return [];
+  return (await tx`
+    select r.id::int, r.status::text, r.volume_estimasi, r.tenor_bulan, r.harga_per_test::float8, r.fee_persen::float8, r.kolom_dinyatakan,
+           r.klausul_ada, r.klausul_detail, r.unit_status::text, r.volume_sumber, r.zona_dasar, r.alasan_strategis,
+           coalesce((select json_agg(json_build_object('nama', p.nama, 'tipe', p.tipe)) from kso.rencana_pendukung p where p.rencana_id = r.id), '[]') as pendukung,
+           (select g.hd from kso.app_angka_gpm(r.id) g) as hd,
+           (select json_build_object('lolos', l.lolos, 'cocok', l.cocok,
+                                     'galat', case when coalesce((l.hasil_ocr->>'ok')::boolean, false) then null
+                                                   else coalesce(l.hasil_ocr->>'galat', 'tidak-terbaca') end)
+              from kso.rencana_lampiran l where l.rencana_id = r.id order by l.dibuat_at desc, l.id desc limit 1) as lampiran
+      from kso.rencana_kso r where r.id = any(${ids})`) as unknown as BarisKurang[];
+}
+const kurangDari = (b: BarisKurang): ItemKurang[] =>
+  daftarKurang({ ...b, angka: b.hd == null ? null : { hd: b.hd } }, `D${b.id}`);
+
+export type FilterKso = "belum-lengkap" | "lolos-tanpa-forum";
+export function isFilterKso(f: string): f is FilterKso {
+  return f === "belum-lengkap" || f === "lolos-tanpa-forum";
+}
+
+/**
+ * Daftar per filter, dalam akses tab (AM = miliknya, Komite/Sekretariat/Direksi = semua; RLS boleh_lihat):
+ *   belum-lengkap     : DRAFT/DITAHAN yang daftar kurangnya tidak kosong (+ kurang per baris)
+ *   lolos-tanpa-forum : DIPUTUS_AM (zona AM, mandat otomatis) dan DIPUTUS_HOD (jalur cepat) + mandatnya
+ */
+export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKso): Promise<Record<string, unknown>> {
+  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+    const status = filter === "belum-lengkap" ? ["DRAFT", "DITAHAN"] : ["DIPUTUS_AM", "DIPUTUS_HOD"];
+    const baris = await tx`
+      select r.id::int, r.nomor, r.status::text, r.jalur::text as jalur, v.am_nama, v.cabang, v.faskes_nama, v.alat_nama,
+             r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm_deal, r.harga_per_test::float8 as harga_per_test, r.fee_persen::float8 as fee_persen,
+             (r.harga_per_test * (1 - coalesce(r.fee_persen, 0) / 100))::float8 as harga_bersih, r.volume_estimasi, r.tenor_bulan,
+             r.dibuat_at::text, r.diajukan_at::text, r.diubah_at::text,
+             (select json_build_object('id', l.id, 'lolos', l.lolos, 'tanggal', l.hasil_ocr->'isian'->>'tanggal', 'dibuat_at', l.dibuat_at)
+                from kso.rencana_lampiran l where l.rencana_id = r.id order by l.dibuat_at desc, l.id desc limit 1) as lampiran,
+             (select json_build_object('harga_pembuka', m.harga_pembuka, 'harga_target', m.harga_target, 'harga_lantai', m.harga_lantai,
+                                       'volume_terbukti', m.volume_terbukti, 'berlaku_sampai', m.berlaku_sampai, 'sumber', m.sumber)
+                from kso.mandat m where m.rencana_id = r.id) as mandat
+        from kso.rencana_kso r join kso.v_rencana v on v.id = r.id
+       where r.status::text = any(${status})
+       order by coalesce(r.diajukan_at, r.diubah_at) desc
+       limit 500`;
+    if (filter === "lolos-tanpa-forum") return { tab, filter, baris };
+    const bahan = new Map((await bahanKurang(tx, baris.map((b) => Number(b.id)))).map((b) => [b.id, b]));
+    const isi = baris.map((b) => ({ ...b, kurang: bahan.has(Number(b.id)) ? kurangDari(bahan.get(Number(b.id))!) : [] }))
+      .filter((b) => b.kurang.length > 0);
+    return { tab, filter, baris: isi };
+  });
+}
+
+/** Path berkas PDF lampiran — hanya bila rencananya boleh dilihat peran tab ini (RLS). API yang menyajikan berkasnya. */
+export async function berkasLampiran(userId: string, tab: TabKso, id: number, lampiranId: number): Promise<string> {
+  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+    const [l] = await tx`select media_path from kso.rencana_lampiran where id = ${lampiranId} and rencana_id = ${id}`;
+    if (!l?.media_path) throw new GalatKso(404, "Lampiran tidak ada, atau di luar akses tab ini.");
+    return String(l.media_path);
+  });
 }
 
 // ---------------------------------------------------------------- aksi

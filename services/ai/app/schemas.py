@@ -504,3 +504,47 @@ class TranskripResponse(BaseModel):
     model: str
     dry_run: bool = False
     galat: Optional[str] = None
+
+
+# === F170 Komite KSO: baca lampiran PDF "KSO CPRR" (OCR lokal, tanpa LLM) ===
+
+
+class KsoCprrIsian(BaseModel):
+    judul: Optional[str] = None
+    tanggal: Optional[str] = None
+    nama_sales: Optional[str] = None
+    nama_faskes: Optional[str] = None
+    kota: Optional[str] = None
+    # Baris nilai header apa adanya + apakah pemisahan 3 kolomnya pasti
+    # (celah lebar terbaca). False = tebakan → bandingkan longgar.
+    header_mentah: Optional[str] = None
+    header_pasti: bool = False
+    analyzer: Optional[str] = None
+    capex_total: Optional[int] = None
+    masa_bulan: Optional[int] = None
+    test_per_bulan: Optional[int] = None
+    total_target_test: Optional[int] = None
+    hari_kerja: Optional[int] = None
+    markup_persen: Optional[float] = None
+    capex_per_test: Optional[int] = None
+    reagen_per_test: Optional[int] = None
+    qc_per_test: Optional[int] = None
+    base_cost_per_test: Optional[int] = None
+    cprr_per_test: Optional[int] = None
+    kompetitor_teks: Optional[str] = None
+
+
+class KsoOcrCprrRequest(BaseModel):
+    pdf_base64: str
+    dry_run: bool = False
+
+
+class KsoOcrCprrResponse(BaseModel):
+    ok: bool = False
+    galat: Optional[str] = None
+    halaman: int = 0
+    teks_ocr: str = ""
+    isian: KsoCprrIsian = Field(default_factory=KsoCprrIsian)
+    # Cek silang angka (mis. capex/test ≠ capex ÷ total test) — penanda salah
+    # baca, bukan penolak.
+    peringatan: List[str] = []
