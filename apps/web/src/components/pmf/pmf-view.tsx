@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
@@ -100,25 +101,26 @@ export function PmfView({ data }: { data: PmfScorecard }) {
         East/West; sisanya &quot;Tanpa region&quot;.
       </p>
 
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Brand × region</h2>
-          <ExportButton filename={namaFile} columns={kolomExport} data={data.sel} label="Export CSV" />
-        </div>
-        <DataTable columns={kolom("Region")} data={data.sel} getKey={(s) => `${s.brand}|${s.region}`}
-          searchPlaceholder="Cari brand atau region…" pageSize={25} empty="Belum ada deal tertutup pada kuartal ini."
-          initialSort={{ id: "n", dir: "desc" }} />
-      </section>
+      {/* Tabel di kartu putih + paginasi 10 baris (standar tabel dashboard). */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Brand × region</CardTitle></CardHeader>
+        <CardContent>
+          <DataTable columns={kolom("Region")} data={data.sel} getKey={(s) => `${s.brand}|${s.region}`}
+            searchPlaceholder="Cari brand atau region…" pageSize={10} empty="Belum ada deal tertutup pada kuartal ini."
+            initialSort={{ id: "n", dir: "desc" }}
+            toolbar={<ExportButton filename={namaFile} columns={kolomExport} data={data.sel} label="Export CSV" />} />
+        </CardContent>
+      </Card>
 
-      <section className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Per brand (semua region)</h2>
-          <ExportButton filename={`${namaFile}-per-brand`} columns={kolomExport} data={data.per_brand} label="Export CSV" />
-        </div>
-        <DataTable columns={kolom("Cakupan")} data={data.per_brand} getKey={(s) => s.brand}
-          searchPlaceholder="Cari brand…" pageSize={25} empty="Belum ada deal tertutup pada kuartal ini."
-          initialSort={{ id: "n", dir: "desc" }} />
-      </section>
+      <Card>
+        <CardHeader><CardTitle className="text-base">Per brand (semua region)</CardTitle></CardHeader>
+        <CardContent>
+          <DataTable columns={kolom("Cakupan")} data={data.per_brand} getKey={(s) => s.brand}
+            searchPlaceholder="Cari brand…" pageSize={10} empty="Belum ada deal tertutup pada kuartal ini."
+            initialSort={{ id: "n", dir: "desc" }}
+            toolbar={<ExportButton filename={`${namaFile}-per-brand`} columns={kolomExport} data={data.per_brand} label="Export CSV" />} />
+        </CardContent>
+      </Card>
     </div>
   );
 }
