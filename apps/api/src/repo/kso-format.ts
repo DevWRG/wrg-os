@@ -551,7 +551,7 @@ export interface HasilCekLampiran {
   cocok: Record<string, CocokIsian>;
   /** Kalimat per ketidakcocokan (untuk balasan WA). */
   beda: string[];
-  /** Info tambahan, bukan penghalang (CPRR vs permintaan harga, peringatan hitungan OCR). */
+  /** Info tambahan, bukan penghalang (harga pesaing beda tulis, peringatan hitungan OCR). Tidak dikirim ke AM. */
   info: string[];
   hari_kerja: number | null;
   tanggal: string | null;
@@ -560,8 +560,8 @@ export interface HasilCekLampiran {
 const GALAT_OCR: Record<string, string> = {
   "dry-run": "pembaca PDF sedang mode uji",
   "pdf-rusak": "berkas PDF rusak / tidak bisa dibuka",
-  "bukan-cprr": "PDF bukan cetakan Simulator KSO (judul \"KSO CPRR\")",
-  "cprr-tidak-terbaca": "angka CPRR di PDF tidak terbaca — cetak ulang dari Simulator",
+  "bukan-cprr": "PDF bukan cetakan Simulator KSO",
+  "cprr-tidak-terbaca": "angka di PDF tidak terbaca — cetak ulang dari Simulator",
 };
 export function teksGalatOcr(g: string | null | undefined): string {
   return GALAT_OCR[String(g)] ?? "pembaca PDF sedang gangguan — kirim ulang PDF-nya beberapa menit lagi";
@@ -604,8 +604,8 @@ const rpTeks = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 
 /**
  * Cocokkan isi PDF Simulator dengan draft. Lolos = semua isian yang dicek cocok. Isian PDF yang tak terbaca (null)
- * atau isian WA yang belum diisi = belum bisa dicocokkan = tidak lolos (disebut di balasan). CPRR vs harga & peringatan
- * hitungan OCR hanya info.
+ * atau isian WA yang belum diisi = belum bisa dicocokkan = tidak lolos (disebut di balasan). Peringatan hitungan OCR hanya
+ * info. Angka biaya PDF (capex, reagen, QC, base cost, CPRR) TIDAK dibandingkan dan tidak masuk teks apa pun.
  */
 export function cocokkanLampiran(h: HasilOcrCprr, d: DraftUntukLampiran, katalog: AlatKatalog[]): HasilCekLampiran {
   const x = h.isian ?? {};
@@ -643,11 +643,7 @@ export function cocokkanLampiran(h: HasilOcrCprr, d: DraftUntukLampiran, katalog
       info.push(`Harga pesaing di PDF ("${x.kompetitor_teks}") tidak sama persis dengan ${rpTeks(hp)} — periksa.`);
   }
 
-  if (x.cprr_per_test != null && d.harga_per_test != null) {
-    const c = Number(x.cprr_per_test);
-    info.push(`CPRR Simulator ${rpTeks(c)}/test vs permintaan harga ${rpTeks(d.harga_per_test)}/test` +
-      (d.harga_per_test < c ? " — permintaan DI BAWAH CPRR." : "."));
-  }
+  // 10 Nov (product owner): perbandingan CPRR vs permintaan harga = angka HPP → tidak lagi disusun (balasan ke AM).
   for (const p of h.peringatan ?? []) info.push(`Catatan baca PDF: ${p}`);
 
   const beda: string[] = [];
@@ -709,7 +705,13 @@ export function daftarKurang(d: DataKurang, ref: string): ItemKurang[] {
     if (d.klausul_ada === true && !d.klausul_detail) t("klausul", "Detail KLAUSUL dari RS (KLAUSUL: ADA belum ada isinya)", "KLAUSUL: ADA - minimal volume 500");
     else t("klausul", "KLAUSUL — ADA (sebut isinya) atau TIDAK", "KLAUSUL: TIDAK");
   }
-  if (!d.lampiran) t("lampiran", "LAMPIRAN — PDF Simulator KSO (KSO CPRR) kirim di chat ini, sekaligus bukti volume", "lalu kirim PDF-nya dalam 10 menit");
+  // Contoh lampiran bukan baris berlabel: PDF dikirim sebagai berkas, captionnya "#KSO <ref>".
+  if (!d.lampiran)
+    q.push({
+      kunci: "lampiran",
+      teks: "LAMPIRAN — PDF Simulator KSO kirim di chat ini, sekaligus bukti volume",
+      contoh: `kirim PDF Simulator di chat ini dengan caption #KSO ${ref}`,
+    });
   else if (!d.lampiran.lolos) {
     const b = d.lampiran.galat ? [teksGalatOcr(d.lampiran.galat)] : bedaDariCocok(d.lampiran.cocok);
     t("lampiran", `LAMPIRAN PDF belum cocok${b.length ? `: ${b.join("; ")}` : ""}`, "LABEL: ISI YANG BENAR, atau kirim ulang PDF");
@@ -718,6 +720,7 @@ export function daftarKurang(d: DataKurang, ref: string): ItemKurang[] {
   if (!d.unit_status) t("status_unit", "STATUS UNIT — baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal", "STATUS UNIT: baru");
   if (!d.volume_sumber?.trim() && d.lampiran?.lolos) t("sumber", "SUMBER volume (bukti tertulis)", "SUMBER: rekap LIS 3 bulan");
   if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alasan_strategis?.trim())
-    t("alasan", "ALASAN strategis — GPM di bawah batas Forum (zona Direktur)", "ALASAN: referensi wilayah");
+    // teks tanpa margin: daftar ini juga dikirim ke AM (keputusan 10 Nov)
+    t("alasan", "ALASAN strategis — diperlukan untuk usulan ini", "ALASAN: referensi wilayah");
   return q;
 }

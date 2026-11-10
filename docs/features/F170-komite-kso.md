@@ -152,13 +152,13 @@ tanpa LLM). Jalur teks bebas (`/kso/ekstrak`) dan voice note dimatikan di API (a
 6. FEE : 5%                    ← GPM dari harga × (1 − fee); harga minimum per zona = harga kotor biaya÷(1−g)÷(1−fee)
 7. KOMPETITOR : MEREK-MODEL-11.500
 8. KLAUSUL : ADA - isinya      ← detail tak dikenali = kode 'lainnya' (gerbang 7 merah)
-9. LAMPIRAN : ADA              ← PDF "KSO CPRR" di chat yang sama ±10 menit (pengirim sama, urutan bebas)
+9. LAMPIRAN : ADA              ← PDF Simulator KSO di chat yang sama ±10 menit (pengirim sama, urutan bebas)
 ```
 
 - Susulan: `#KSO D62 LABEL: isi` (PENDUKUNG, STATUS UNIT, ALASAN, KLAUSUL, HARI KERJA, JUMLAH, SUMBER, atau salah satu dari 9 label).
 - Alat tak pasti → draft BELUM dibuat (alat_kode NOT NULL + FK); isian disimpan di `kso.intake_tertunda`, AM memilih `#KSO ALAT 1` / `#KSO ALAT: Z50` (24 jam).
 - PDF dibaca `services/ai /kso/ocr-cprr`, dicocokkan (sales, faskes, alat, tes/bulan, masa, merek kompetitor), disimpan di `kso.rencana_lampiran`.
-  Cocok → hari kerja + sumber volume "Lampiran Simulator CPRR <tanggal>" (label `data`; Sekretariat tetap verifikasi untuk Forum).
+  Cocok → hari kerja + sumber volume "Lampiran Simulator KSO <tanggal>" (label `data`; Sekretariat tetap verifikasi untuk Forum).
   Koreksi isian lewat WA memicu pencocokan ulang lampiran terakhir (tak perlu kirim PDF ulang).
 - Wajib sebelum diajukan (satu daftar `daftarKurang`, dipakai WA + dashboard): 9 isian + pendukung ≥ 1 bertipe + status unit +
   bukti volume + alasan strategis (zona Direktur, kecuali HD) + detail klausul (bila ADA) + lampiran cocok.
@@ -166,3 +166,51 @@ tanpa LLM). Jalur teks bebas (`/kso/ekstrak`) dan voice note dimatikan di API (a
 - Dashboard API: `GET /kso-komite/:tab/daftar/belum-lengkap|lolos-tanpa-forum`, detail rencana memuat `fee_persen`, `harga_bersih`,
   `lampiran_terakhir`, `lampiran[]`, `kurang[]`; berkas PDF `GET /kso-komite/:tab/rencana/:id/lampiran/:lid` (izin tab + RLS).
 - Uji: `scripts/qa/kso-komite/918_uji_fee_lampiran.sql`, `apps/api/src/repo/kso-format.test.ts`.
+
+## Balasan WA = 7 gerbang · margin & HPP tak terlihat di luar yang berhak (10 Nov 2026)
+
+Keputusan product owner. **A.** Semua balasan WA ke AM yang menunjukkan keadaan draft (baru, susulan, lampiran
+diproses, `#KSO D62`, `#KSO kirim` yang masih kurang) memakai SATU bentuk (`formatBalasanGerbang`, `kso-intake.ts`):
+
+```
+D63 · RS CONTOH · Z50 · 4/7 HIJAU
+
+1. GPM deal              ❌ MERAH
+2. Volume terbukti       ❌ MERAH (belum ada bukti)
+3. Relokasi dulu         ✅ HIJAU
+4. Coverage + teknisi    ❌ MERAH (belum ada data)
+5. Piutang faskes        ✅ HIJAU
+6. Tenor                 ✅ HIJAU
+7. Klausul standar       ✅ HIJAU
+
+Kurang: lampiran PDF, pendukung, status unit, alasan
+(contoh: #KSO D63 lalu kirim PDF-nya dalam 10 menit)
+```
+
+Biner: `hijau` = ✅ HIJAU; `merah` dan `belum` = ❌ MERAH + alasan pendek TANPA angka (`alasanGerbang`, `kso-saring.ts`);
+gerbang 1 merah tanpa alasan; KLAUSUL belum dijawab = gerbang 7 MERAH. Lengkap & diajukan otomatis → baris Kurang
+diganti hasil jalur dalam kata (`teksHasilAjukan`: ZONA AM / ZONA 2 HOD / ZONA FORUM / ZONA DIREKTUR, tanpa GPM/harga).
+
+**B.** Margin & HPP hanya untuk **HOD Business, Komite, Sekretariat, Direksi** (+ superuser, role admin/direktur,
+Finance pengisi angka Bottom Line). TIDAK untuk **AM, HOD Sales, Admin Sales, Teknik**.
+
+- WA ke AM: tanpa GPM %, biaya/tes, cicilan/HPP, harga minimum per zona, volume minimum Forum, dasar GPM, CPRR
+  (baris "CPRR vs permintaan harga" dihapus dari `cocokkanLampiran`), harga mandat (zona AM, `#KSO D12 volume 900`).
+- WA ke kursi HOD Sales (`kso.hod_untuk` jenis `area`) dan Admin Sales (pagi penawaran): tanpa capex.
+  HOD Business & Sekretariat tetap menerima capex.
+- API (bukan hanya layar) — `modeSaringTab` (`kso-komite.ts`) + penyaring murni `kso-saring.ts`, untuk
+  `GET /kso-komite/:tab`, `/:tab/rencana/:id`, `/:tab/daftar/:filter`:
+  - tab `saya` (AM): selalu disaring;
+  - tab `hod`, `penawaran`, `teknik`: disaring kecuali akunnya berhak (`bolehLihatAngka`);
+  - kolom dibuang: `capex`, `capex_disetujui`, `payback_bulan`, `biaya_instalasi`, `gpm_deal`, `zona_dasar`, `harga_bersih`,
+    `angka_gpm` (→ null), harga mandat (`harga_pembuka`/`harga_target`/`harga_lantai`/`capex_maks`; Admin Sales tetap
+    menerima `harga_pembuka` = harga di penawaran yang mereka terbitkan), `usulan[].mandat_usulan`, isian OCR biaya
+    (`capex_total`, `capex_per_test`, `reagen_per_test`, `qc_per_test`, `base_cost_per_test`, `cprr_per_test`, `markup_persen`),
+    peringatan OCR yang menyebut biaya; nilai gerbang 1 → "Memenuhi" / "Belum memenuhi …". Respons diberi `tanpa_angka: true`.
+  - berkas PDF Simulator (`/:tab/rencana/:id/lampiran/:lid`) → 403 untuk tab yang disaring (PDF memuat capex/reagen/CPRR).
+- Bottom Line Alat & Tinjauan Portofolio: `izinBottomLine(u, eff, konteks)` menolak AM, HOD Sales, Admin Sales walau
+  grupnya dicentang `kso-komite-bottomline` lihat (ditegakkan di kode).
+- **Jenis HOD** = `kso.hod.jenis` (`bisnis` = HOD Business, `area` = HOD Sales), diisi malam oleh `kso.segarkan_referensi()`
+  dari `master_hod.peran` ("Business …" / "Sales …"). Kursi akun = `app_user.hod_key` **dan** `kso.hod_akun.hod_id`
+  (keduanya dibaca; memegang kursi Business = boleh). Kursi tak dikenal = disaring (tertutup).
+- Uji: `apps/api/src/repo/kso-saring.test.ts`, `kso-intake.test.ts` (penjaga `polaTerlarang`), `kso-jadwal.test.ts`.

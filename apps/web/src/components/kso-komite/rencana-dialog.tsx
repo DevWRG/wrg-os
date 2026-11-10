@@ -150,24 +150,27 @@ function Blok({ judul, children }: { judul: string; children: React.ReactNode })
   );
 }
 
-/** Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · FEE · HARGA BERSIH · TENOR · HARI KERJA · GPM · ZONA). */
+/**
+ * Kisi angka kunci (CAPEX · VOLUME · HARGA/TEST · FEE · HARGA BERSIH · TENOR · HARI KERJA · GPM · ZONA). Respons yang
+ * disaring (d.tanpa_angka — AM, HOD Sales, Admin Sales, Teknik) tidak membawa capex/harga bersih/GPM → ubinnya tak tampil.
+ */
 function AngkaKunci({ d }: { d: Detail }) {
   const r = d.rencana, g = d.angka_gpm;
-  const isi: [string, React.ReactNode][] = [
-    ["Capex", rpJt(r.capex)],
+  const isi: ([string, React.ReactNode] | false)[] = [
+    r.capex != null && ["Capex", rpJt(r.capex)],
     ["Volume", r.volume_estimasi != null ? `${r.volume_estimasi.toLocaleString("id-ID")} test/bln` : "—"],
     ["Harga/test", rp(r.harga_per_test)],
     // 302: fee ke RS/perantara; GPM di bawah dihitung dari harga bersih fee
     ["Fee", r.fee_persen === undefined ? "—" : r.fee_persen == null ? <span className="text-amber-700 dark:text-amber-400">belum diisi</span> : persenFee(r.fee_persen)],
-    ["Harga bersih", rp(r.harga_bersih ?? (r.harga_per_test == null ? null : r.harga_per_test * (1 - (r.fee_persen ?? 0) / 100)))],
+    !d.tanpa_angka && ["Harga bersih", rp(r.harga_bersih ?? (r.harga_per_test == null ? null : r.harga_per_test * (1 - (r.fee_persen ?? 0) / 100)))],
     ["Tenor", r.tenor_bulan != null ? `${r.tenor_bulan} bln` : "—"],
     ["Hari kerja", r.hari_kerja != null ? `${r.hari_kerja} hari/bln` : r.hari_kerja_default != null ? `${r.hari_kerja_default} hari/bln (default)` : "—"],
-    ["GPM deal", g?.hd ? "Hemodialisa" : <>{persen(g?.gpm ?? r.gpm_deal)}{r.fee_persen ? <span className="text-muted-foreground text-xs font-normal"> bersih fee</span> : null}</>],
+    !d.tanpa_angka && ["GPM deal", g?.hd ? "Hemodialisa" : <>{persen(g?.gpm ?? r.gpm_deal)}{r.fee_persen ? <span className="text-muted-foreground text-xs font-normal"> bersih fee</span> : null}</>],
     ["Zona", r.zona ? <span className={cn("rounded-full px-2 py-0.5 text-xs font-semibold", ZONA_CLS[r.zona])}>{LABEL_ZONA[r.zona]}</span> : "—"],
   ];
   return (
     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 border-y py-3 sm:grid-cols-3">
-      {isi.map(([l, v]) => (
+      {isi.filter((x) => x !== false).map(([l, v]) => (
         <div key={l}>
           <dt className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">{l}</dt>
           <dd className="mt-0.5 font-semibold tabular-nums">{v}</dd>
@@ -271,16 +274,18 @@ function Gerbang({ d }: { d: Detail }) {
 
 function Mandat({ d }: { d: Detail }) {
   const m = d.mandat!;
+  // respons disaring: harga mandat tidak dikirim (Admin Sales tetap menerima harga pembuka = harga di penawaran)
+  const ubin = d.tanpa_angka
+    ? (m.harga_pembuka != null ? [<Ubin key="p" label="Harga penawaran (pembuka)" nilai={rp(m.harga_pembuka)} />] : [])
+    : [<Ubin key="p" label="Pembuka" nilai={m.harga_pembuka != null ? rp(m.harga_pembuka) : "—"} ket="GPM ≥ 55%, ≥ usulan AM" />,
+       <Ubin key="t" label="Target" nilai={rp(m.harga_target)} ket="GPM 50%" />,
+       <Ubin key="b" label="Batas bawah" nilai={rp(m.harga_lantai)} ket="GPM 45%" />];
   return (
     <section>
-      <h3 className="mb-1.5 text-sm font-semibold">Batas negosiasi AM <span className="text-muted-foreground font-normal">· mandat {m.sumber}, berlaku s/d {m.berlaku_sampai}</span></h3>
-      <div className="grid grid-cols-3 gap-2">
-        <Ubin label="Pembuka" nilai={m.harga_pembuka != null ? rp(m.harga_pembuka) : "—"} ket="GPM ≥ 55%, ≥ usulan AM" />
-        <Ubin label="Target" nilai={rp(m.harga_target)} ket="GPM 50%" />
-        <Ubin label="Batas bawah" nilai={rp(m.harga_lantai)} ket="GPM 45%" />
-      </div>
+      <h3 className="mb-1.5 text-sm font-semibold">{d.tanpa_angka ? "Mandat" : "Batas negosiasi AM"} <span className="text-muted-foreground font-normal">· mandat {m.sumber}, berlaku s/d {m.berlaku_sampai}</span></h3>
+      {ubin.length > 0 && <div className={cn("grid gap-2", ubin.length === 1 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-3")}>{ubin}</div>}
       <p className="text-muted-foreground mt-1.5 text-xs">
-        Capex maks {rpJt(m.capex_maks)} · tenor maks {m.tenor_maks_bulan} bln · volume min {m.volume_minimum ?? "—"} test/bln
+        {m.capex_maks != null ? `Capex maks ${rpJt(m.capex_maks)} · ` : ""}tenor maks {m.tenor_maks_bulan} bln · volume min {m.volume_minimum ?? "—"} test/bln
         {m.volume_terbukti ? ` · dihitung di ${m.volume_terbukti} test/bln` : ""}
         {m.klausul_dilarang.length > 0 && ` · klausul dilarang: ${m.klausul_dilarang.map((k) => labelKlausul(d, k)).join(", ")}`}
       </p>
@@ -311,7 +316,9 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
     return (
       <div className="space-y-3">
         <FormAngka judul="Terbitkan penawaran"
-          label={`Harga per test (Rp) — ${d.mandat?.harga_pembuka != null ? `pembuka ${rp(d.mandat.harga_pembuka)}, ` : ""}target ${rp(d.mandat?.harga_target)}, batas bawah ${rp(d.mandat?.harga_lantai)}`}
+          label={`Harga per test (Rp) — ${[d.mandat?.harga_pembuka != null && `pembuka ${rp(d.mandat.harga_pembuka)}`,
+            d.mandat?.harga_target !== undefined && `target ${rp(d.mandat.harga_target)}`,
+            d.mandat?.harga_lantai !== undefined && `batas bawah ${rp(d.mandat.harga_lantai)}`].filter(Boolean).join(", ") || "sesuai mandat"}`}
           awal={d.mandat?.harga_pembuka ?? d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} aksi="penawaran" kunci="harga" jalankan={jalankan} />
         <FormTeks judul="Catat kalah" nada="amber" label="Alasan kalah" aksi="kalah" kunci="alasan" jalankan={jalankan} />
       </div>

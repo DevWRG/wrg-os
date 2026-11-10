@@ -223,13 +223,14 @@ const D = {
   volume_estimasi: 700, tenor_bulan: 36, kompetitor_alat: "MEREKA-XN450", harga_pesaing: 11500, harga_per_test: 11800,
 };
 
-test("cocokkanLampiran: semua cocok → lolos, hari kerja & tanggal dari PDF, CPRR vs harga sebagai info", () => {
+test("cocokkanLampiran: semua cocok → lolos, hari kerja & tanggal dari PDF; angka CPRR TIDAK masuk teks (10 Nov)", () => {
   const c = cocokkanLampiran(OCR, D, KAT);
   assert.ok(c.lolos, JSON.stringify(c.beda));
   assert.equal(c.hari_kerja, 26);
   assert.equal(c.tanggal, "2026-11-10");
   assert.deepEqual(Object.keys(c.cocok).sort(), ["alat", "faskes", "kompetitor", "sales", "tenor", "volume"]);
-  assert.ok(c.info.some((i) => /CPRR Simulator Rp\s?12\.100\/test vs permintaan harga Rp\s?11\.800\/test — permintaan DI BAWAH CPRR/.test(i)));
+  assert.ok(!c.info.some((i) => /CPRR|12\.100/.test(i)), JSON.stringify(c.info));
+  assert.ok(!JSON.stringify(c.cocok).includes("12100"));
 });
 
 test("cocokkanLampiran: OCR '250' untuk Z50 dan header tak pasti dibandingkan longgar", () => {
@@ -263,7 +264,7 @@ test("daftarKurang: lengkap = kosong; lampiran wajib; kontak label per item", ()
   const lengkap: DataKurang = {
     volume_estimasi: 700, tenor_bulan: 36, harga_per_test: 11800, fee_persen: 5, kolom_dinyatakan: ["klausul", "kompetitor_alat"],
     klausul_ada: false, pendukung: [{ nama: "dr. Contoh", tipe: "kepala_instalasi" }], unit_status: "baru",
-    volume_sumber: "Lampiran Simulator CPRR 2026-11-10", zona_dasar: "am", lampiran: { lolos: true },
+    volume_sumber: "Lampiran Simulator KSO 2026-11-10", zona_dasar: "am", lampiran: { lolos: true },
   };
   assert.deepEqual(daftarKurang(lengkap, "D62"), []);
   const q = daftarKurang({ ...lengkap, lampiran: null, fee_persen: null }, "D62");

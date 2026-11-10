@@ -13,6 +13,7 @@ import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
 import { daftarKurang, type CocokIsian, type ItemKurang } from "./kso-format.js";
+import { saringDaftarFilter, saringDaftarTab, saringDetail, type ModeSaring } from "./kso-saring.js";
 
 export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
 type PeranKso = "am" | "hod" | "komite" | "direksi" | "sekretaris" | "admin_sales" | "teknik";
@@ -73,6 +74,82 @@ export function refUntuk(u: PenggunaKso, tab: TabKso): { ok: true; ref: string |
   return { ok: true, ref: null };
 }
 
+// ---------------------------------------------------------------- siapa boleh melihat margin & HPP (10 Nov 2026)
+
+/** Tab yang pemegangnya memang melihat angka (Komite, Sekretariat, Direksi; KPI = Komite). */
+const TAB_BERANGKA: TabKso[] = ["agenda", "sekretariat", "direksi", "kpi"];
+
+/** Bahan keputusan "boleh melihat margin/HPP" untuk satu pengguna. */
+export interface KonteksAngka {
+  superuser: boolean;
+  role: string | null;
+  am_id: string | null;
+  /** Jenis kursi HOD milik akun (kso.hod.jenis): 'bisnis' = HOD Business, 'area' = HOD Sales. Bisa lebih dari satu. */
+  jenisHod: string[];
+  /** Tab Komite KSO yang boleh dilihat akun ini (putuskanIzin view). */
+  tabLihat: TabKso[];
+  /** Finance pengisi angka Bottom Line / pemegang real bottom (kso-komite-bottomline-angka ubah, -real). */
+  pengisiAngka?: boolean;
+}
+
+/**
+ * Keputusan product owner 10 Nov: yang boleh melihat margin & HPP hanya HOD Business, Komite, Sekretariat, Direksi
+ * (+ superuser, role admin/direktur, Finance pengisi angka). Akun yang memegang KEDUA kursi HOD (Sales & Business)
+ * = HOD Business (boleh).
+ */
+export function bolehLihatAngka(k: KonteksAngka): boolean {
+  if (k.superuser || k.role === "admin" || k.role === "direktur") return true;
+  if (k.jenisHod.includes("bisnis")) return true;
+  if (k.tabLihat.some((t) => TAB_BERANGKA.includes(t))) return true;
+  return !!k.pengisiAngka;
+}
+
+/**
+ * Penyaring respons untuk satu tab. Tab AM selalu disaring (tab milik AM sendiri). Tab HOD, Admin Sales, Teknik
+ * disaring kecuali akunnya berhak (bolehLihatAngka) — akun yang juga Komite melihat angka yang sama di tab Agenda.
+ * Admin Sales tetap menerima harga pembuka mandat (harga di penawaran yang mereka terbitkan).
+ */
+export function modeSaringTab(tab: TabKso, k: KonteksAngka): ModeSaring | null {
+  const peran = TAB_KSO[tab].peran;
+  if (peran === "am") return "semua";
+  if (peran === "komite" || peran === "direksi" || peran === "sekretaris") return null;
+  if (bolehLihatAngka(k)) return null;
+  return peran === "admin_sales" ? "pembuka" : "semua";
+}
+
+/** Bottom Line Alat (biaya, HPP, GPM per model) tertutup untuk AM, HOD Sales, Admin Sales — walau grupnya diberi centang lihat. */
+export function bottomLineTerbatas(k: KonteksAngka): boolean {
+  if (bolehLihatAngka(k)) return false;
+  return !!k.am_id || k.jenisHod.length > 0 || k.tabLihat.includes("penawaran") || k.tabLihat.includes("hod") || k.tabLihat.includes("saya");
+}
+
+/**
+ * Jenis kursi HOD akun: app_user.hod_key DAN kso.hod_akun (keduanya, bukan coalesce — akun yang punya kursi Sales dan
+ * Business dihitung Business). Sumber = kso.hod.jenis (disegarkan malam dari master_hod.peran "Sales …"/"Business …");
+ * cadangan master_hod.peran bila kursinya belum ada di kso.hod. Galat = [] (tertutup: diperlakukan bukan HOD Business).
+ */
+export async function jenisKursiHod(userId: string): Promise<string[]> {
+  try {
+    const rows = await db()`
+      SELECT DISTINCT COALESCE(h.jenis::text, CASE WHEN mh.peran ~* '^business' THEN 'bisnis' WHEN mh.peran ~* '^sales' THEN 'area' END) AS jenis
+        FROM (SELECT NULLIF(btrim(u.hod_key), '') AS k FROM app_user u WHERE u.id::text = ${userId}
+              UNION SELECT ha.hod_id FROM kso.hod_akun ha WHERE ha.user_id = ${userId}) s
+        LEFT JOIN kso.hod h ON h.id = s.k LEFT JOIN master_hod mh ON mh.hod_key = s.k
+       WHERE s.k IS NOT NULL`;
+    return rows.map((r) => r.jenis).filter((j): j is string => typeof j === "string");
+  } catch {
+    return [];
+  }
+}
+
+/** Susun KonteksAngka dari pengguna + izin efektif (satu kueri kursi HOD). */
+export async function konteksAngka(u: PenggunaKso, eff: Effective, pengisiAngka = false): Promise<KonteksAngka> {
+  return {
+    superuser: eff.superuser, role: u.role, am_id: u.am_id, jenisHod: await jenisKursiHod(u.id),
+    tabLihat: SEMUA_TAB.filter((t) => putuskanIzin(u, eff, t, "view")), pengisiAngka,
+  };
+}
+
 export class GalatKso extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -104,7 +181,7 @@ export async function tabBoleh(userId: string): Promise<{ tab: TabKso; bolehAksi
 type Tx = TransactionSql<Record<string, unknown>>;
 
 /** Jalankan fn dalam satu transaksi dengan identitas + peran tab — SETELAH izin Akses Grup diperiksa. */
-async function sebagaiPengguna<T>(userId: string, tab: TabKso, aksi: Action, fn: (tx: Tx, u: PenggunaKso) => Promise<T>): Promise<T> {
+async function sebagaiPengguna<T>(userId: string, tab: TabKso, aksi: Action, fn: (tx: Tx, u: PenggunaKso, eff: Effective) => Promise<T>): Promise<T> {
   const u = await bacaPengguna(userId);
   if (!u) throw new GalatKso(401, "Sesi tidak dikenal.");
   const eff = await effectivePermissions(userId);
@@ -119,7 +196,7 @@ async function sebagaiPengguna<T>(userId: string, tab: TabKso, aksi: Action, fn:
     await tx`set local role wrg_app`;
     await tx`select set_config('wrg.kso_user', ${u.id}, true), set_config('wrg.kso_peran', ${TAB_KSO[tab].peran}, true),
                     set_config('wrg.kso_ref', ${r.ref ?? ""}, true)`;
-    return fn(tx as unknown as Tx, u);
+    return fn(tx as unknown as Tx, u, eff);
   })) as T;
 }
 
@@ -135,12 +212,21 @@ const ANTREAN: Record<Exclude<TabKso, "kpi">, string[]> = {
   teknik: ["Teknik · Jadwal Pasang"],
 };
 
+/** Penyaring margin/HPP untuk tab ini (null = tampil apa adanya). Dihitung di luar transaksi peran. */
+async function modeUntuk(u: PenggunaKso, eff: Effective, tab: TabKso): Promise<ModeSaring | null> {
+  const peran = TAB_KSO[tab].peran;
+  if (peran === "komite" || peran === "direksi" || peran === "sekretaris") return null;
+  return modeSaringTab(tab, await konteksAngka(u, eff));
+}
+
 export async function daftarTab(userId: string, tab: TabKso): Promise<Record<string, unknown>> {
-  return sebagaiPengguna(userId, tab, "view", async (tx, u) => {
+  return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
+    const mode = await modeUntuk(u, eff, tab);
+    const saring = (d: Record<string, unknown>) => (mode ? saringDaftarTab(d, mode) : d);
     const [ringkasan] = await tx`select * from kso.v_ringkasan`;
     if (tab === "kpi") {
       const kpi = await tx`select * from kso.v_kpi_am order by periode desc, am_nama`;
-      return { tab, ringkasan, kpi };
+      return saring({ tab, ringkasan, kpi });
     }
     const label = ANTREAN[tab];
     const pemilik = tab === "saya" ? u.am_id : tab === "hod" ? u.hod_key : null;
@@ -167,12 +253,14 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
                     and r.status in ('DIAJUKAN','JALUR_FORUM','DIAGENDAKAN')
                   order by r.diajukan_at`
       : [];
-    return { tab, ringkasan, baris, agenda, verifikasi };
+    return saring({ tab, ringkasan, baris, agenda, verifikasi });
   });
 }
 
 export async function detailRencana(userId: string, tab: TabKso, id: number): Promise<Record<string, unknown>> {
-  const d = await sebagaiPengguna(userId, tab, "view", async (tx) => {
+  let mode = null as ModeSaring | null;
+  const d = await sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
+    mode = await modeUntuk(u, eff, tab);
     const [r] = await tx`select *, capex::float8 as capex from kso.v_rencana where id = ${id}`;
     if (!r) throw new GalatKso(404, "Rencana tidak ada, atau di luar akses tab ini.");
     // isi PKS (migrasi 242) tidak ada di v_rencana — dibaca dari tabelnya (RLS boleh_lihat sama)
@@ -220,7 +308,7 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
   const nama = new Map<string, string>();
   if (ids.length) for (const u of await db()`SELECT id::text, name FROM app_user WHERE id::text = ANY(${ids})`) nama.set(String(u.id), String(u.name));
   d.riwayat = riwayat.map(({ oleh_user, ...h }) => ({ ...h, oleh_nama: oleh_user ? nama.get(oleh_user) ?? null : null })) as never;
-  return d;
+  return mode ? saringDetail(d, mode) : d;
 }
 
 // ---------------------------------------------------------------- 302: belum lengkap · lolos tanpa forum · berkas PDF
@@ -261,7 +349,9 @@ export function isFilterKso(f: string): f is FilterKso {
  *   lolos-tanpa-forum : DIPUTUS_AM (zona AM, mandat otomatis) dan DIPUTUS_HOD (jalur cepat) + mandatnya
  */
 export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKso): Promise<Record<string, unknown>> {
-  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+  return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
+    const mode = await modeUntuk(u, eff, tab);
+    const saring = (d: Record<string, unknown>) => (mode ? saringDaftarFilter(d, mode) : d);
     const status = filter === "belum-lengkap" ? ["DRAFT", "DITAHAN"] : ["DIPUTUS_AM", "DIPUTUS_HOD"];
     const baris = await tx`
       select r.id::int, r.nomor, r.status::text, r.jalur::text as jalur, v.am_nama, v.cabang, v.faskes_nama, v.alat_nama,
@@ -277,17 +367,19 @@ export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKs
        where r.status::text = any(${status})
        order by coalesce(r.diajukan_at, r.diubah_at) desc
        limit 500`;
-    if (filter === "lolos-tanpa-forum") return { tab, filter, baris };
+    if (filter === "lolos-tanpa-forum") return saring({ tab, filter, baris });
     const bahan = new Map((await bahanKurang(tx, baris.map((b) => Number(b.id)))).map((b) => [b.id, b]));
     const isi = baris.map((b) => ({ ...b, kurang: bahan.has(Number(b.id)) ? kurangDari(bahan.get(Number(b.id))!) : [] }))
       .filter((b) => b.kurang.length > 0);
-    return { tab, filter, baris: isi };
+    return saring({ tab, filter, baris: isi });
   });
 }
 
 /** Path berkas PDF lampiran — hanya bila rencananya boleh dilihat peran tab ini (RLS). API yang menyajikan berkasnya. */
 export async function berkasLampiran(userId: string, tab: TabKso, id: number, lampiranId: number): Promise<string> {
-  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+  return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
+    // PDF Simulator memuat capex, reagen, QC, base cost, CPRR per tes (HPP) → hanya untuk yang berhak melihat angka
+    if (await modeUntuk(u, eff, tab)) throw new GalatKso(403, "Berkas PDF Simulator memuat angka biaya — tidak dibuka untuk tab ini.");
     const [l] = await tx`select media_path from kso.rencana_lampiran where id = ${lampiranId} and rencana_id = ${id}`;
     if (!l?.media_path) throw new GalatKso(404, "Lampiran tidak ada, atau di luar akses tab ini.");
     return String(l.media_path);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CircleAlert, ClipboardList, ShieldCheck } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -79,7 +79,8 @@ function Galat({ judul, err, muatUlang }: { judul: string; err: string; muatUlan
 }
 
 function ChipZona({ b }: { b: Pick<BarisDaftar, "zona" | "gpm_deal"> }) {
-  if (!b.zona) return <span className="text-muted-foreground text-xs">GPM {persen(b.gpm_deal)}</span>;
+  // gpm_deal tidak ada = respons disaring (AM / HOD Sales / Admin Sales, 10 Nov) → hanya zona (bila sudah ada)
+  if (!b.zona) return <span className="text-muted-foreground text-xs">{b.gpm_deal === undefined ? "—" : `GPM ${persen(b.gpm_deal)}`}</span>;
   return (
     <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap tabular-nums", ZONA_CLS[b.zona])}>
       {LABEL_ZONA[b.zona]}{b.gpm_deal != null ? ` · ${persen(b.gpm_deal)}` : ""}
@@ -99,12 +100,17 @@ function SelRencana({ b, children }: { b: BarisDaftar; children?: React.ReactNod
   );
 }
 
+/** Fee + harga bersih; harga bersih tidak ada di respons yang disaring → fee saja. */
+const teksFee = (b: BarisDaftar) =>
+  b.fee_persen == null ? "fee belum diisi" : b.fee_persen === 0 ? "tanpa fee"
+    : `fee ${persenFee(b.fee_persen)}${b.harga_bersih !== undefined ? ` → ${rp(b.harga_bersih)}` : ""}`;
+
 function SelHarga({ b }: { b: BarisDaftar }) {
   return (
     <div className="tabular-nums">
       <div className="font-medium">{rp(b.harga_per_test)}</div>
       <div className="text-muted-foreground text-xs whitespace-nowrap">
-        {b.fee_persen == null ? "fee belum diisi" : b.fee_persen === 0 ? "tanpa fee" : `fee ${persenFee(b.fee_persen)} → ${rp(b.harga_bersih)}`}
+        {teksFee(b)}
       </div>
     </div>
   );
@@ -132,14 +138,14 @@ export function DaftarBelumLengkap({ tab, cakupan, onBuka, segar }: Props) {
           {/* layar sempit: kolom lain disembunyikan → ringkasannya ikut di sini */}
           <div className="space-y-1.5 pt-1 md:hidden">
             <div className="flex flex-wrap items-center gap-1.5"><ChipZona b={b} /><ChipLampiran status={statusLampiran(b.lampiran)} /></div>
-            <div className="text-xs tabular-nums">{rp(b.harga_per_test)} · {b.fee_persen == null ? "fee belum diisi" : b.fee_persen === 0 ? "tanpa fee" : `fee ${persenFee(b.fee_persen)} → ${rp(b.harga_bersih)}`}</div>
+            <div className="text-xs tabular-nums">{rp(b.harga_per_test)} · {teksFee(b)}</div>
             <SelLengkap b={b} />
           </div>
         </SelRencana>
       ),
     },
     { id: "harga", header: "Harga → bersih", align: "right", sortable: true, searchable: false, className: "hidden md:table-cell",
-      accessor: (b) => b.harga_bersih, cell: (b) => <SelHarga b={b} /> },
+      accessor: (b) => b.harga_bersih ?? b.harga_per_test, cell: (b) => <SelHarga b={b} /> },
     { id: "zona", header: "GPM · lampiran", sortable: true, className: "hidden md:table-cell",
       accessor: (b) => statusLampiran(b.lampiran),
       cell: (b) => <div className="flex flex-col items-start gap-1"><ChipZona b={b} /><ChipLampiran ringkas status={statusLampiran(b.lampiran)} /></div> },
@@ -211,11 +217,15 @@ function SelBerlaku({ b, hariIni }: { b: BarisDaftar; hariIni: string }) {
 function SelMandat({ b }: { b: BarisDaftar }) {
   const m = b.mandat;
   if (!m) return <span className="text-muted-foreground text-xs">mandat belum ada</span>;
+  // respons disaring: harga mandat tidak dikirim (Admin Sales tetap menerima pembuka)
+  const isi = ([["Pembuka", m.harga_pembuka, true], ["Target", m.harga_target, false], ["Batas bawah", m.harga_lantai, false]] as const)
+    .filter(([, v]) => v !== undefined);
+  if (isi.length === 0) return <span className="text-xs">mandat terbit</span>;
   return (
     <dl className="grid grid-cols-[auto_auto] gap-x-2 text-xs tabular-nums">
-      <dt className="text-muted-foreground">Pembuka</dt><dd className="text-right font-semibold">{rp(m.harga_pembuka)}</dd>
-      <dt className="text-muted-foreground">Target</dt><dd className="text-right">{rp(m.harga_target)}</dd>
-      <dt className="text-muted-foreground">Batas bawah</dt><dd className="text-right">{rp(m.harga_lantai)}</dd>
+      {isi.map(([l, v, tebal]) => (
+        <Fragment key={l}><dt className="text-muted-foreground">{l}</dt><dd className={cn("text-right", tebal && "font-semibold")}>{rp(v)}</dd></Fragment>
+      ))}
     </dl>
   );
 }
@@ -248,7 +258,7 @@ export function DaftarLolos({ tab, cakupan, onBuka, segar }: Props) {
       ),
     },
     { id: "zona", header: "Zona · GPM", sortable: true, searchable: false, className: "hidden md:table-cell",
-      accessor: (b) => b.gpm_deal, cell: (b) => <ChipZona b={b} /> },
+      accessor: (b) => b.gpm_deal ?? null, cell: (b) => <ChipZona b={b} /> },
     { id: "mandat", header: "Mandat (Rp/test)", sortable: true, searchable: false, className: "hidden md:table-cell",
       accessor: (b) => b.mandat?.harga_pembuka ?? null, cell: (b) => <SelMandat b={b} /> },
     { id: "berlaku", header: "Berlaku s/d", sortable: true, searchable: false, className: "hidden md:table-cell",
