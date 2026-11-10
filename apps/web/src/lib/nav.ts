@@ -43,7 +43,7 @@ import { canViewRaportList } from "@/lib/raport-access";
 import { canViewReportLibrary } from "@/lib/report-library";
 import { canViewExecutive } from "@/lib/executive-access";
 import { canViewSalesCommand } from "@/lib/sales-command-access";
-import { FITUR_HARGA_BELI, canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
+import { FITUR_HARGA_BELI, FITUR_BASIS_BELI, canBukaDaftarAlat, canViewKso } from "@/lib/kso-access";
 import { canViewNpkAm, canViewNpkAmSelf } from "@/lib/npk-access";
 import { canViewInsentifTim } from "@/lib/insentif-access";
 import { canViewOvertime } from "@/lib/overtime-access";
@@ -176,8 +176,9 @@ export const NAV: NavGroup[] = [
       // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
       // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
       { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso,
-        // F145 Fase B (migrasi 264): kelola harga beli reagen & HPP alat — Finance
-        features: [FITUR_HARGA_BELI] },
+        // F145 Fase B (migrasi 264): kelola harga beli reagen & HPP alat — Finance;
+        // basis "Harga beli" (lihat saja) — Komite / Finance / HOD Business
+        features: [FITUR_HARGA_BELI, FITUR_BASIS_BELI] },
       // Produktivitas KSO — sisi lain dari Simulator: bukan menghitung skema di
       // depan faskes, tapi membaca hasilnya. Realisasi tes (spreadsheet master
       // aset) disandingkan dengan revenue Accurate untuk menghasilkan Rp/tes per

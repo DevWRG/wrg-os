@@ -21,3 +21,17 @@ export function terapkanBasis(m: KsoMaster, basis: BasisHarga): KsoMaster {
     parameters: m.parameters.map((p) => (p.hargaBeli != null ? { ...p, hargaDp: p.hargaBeli, hargaPl: p.hargaBeli } : p)),
   };
 }
+
+/** Master tanpa angka harga beli/HPP alat — untuk user yang tak berizin melihat basis "beli". */
+export function sembunyikanHargaBeli(m: KsoMaster): KsoMaster {
+  return {
+    ...m,
+    analyzers: m.analyzers.map((a) => ({
+      ...a,
+      hppAlat: null,
+      hppSumber: null,
+      reagents: a.reagents.map((r) => ({ ...r, hargaBeli: null })),
+    })),
+    parameters: m.parameters.map((p) => ({ ...p, hargaBeli: null })),
+  };
+}
