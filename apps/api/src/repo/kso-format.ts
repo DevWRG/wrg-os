@@ -871,12 +871,20 @@ export function peringkatFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiF
  *   - tidak ada yang mirip → "baru" (faskes sementara dibuat).
  */
 export function putuskanFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiFaskes = {}): HasilFaskes {
+  const n = normFaskes(teks);
+  // "Persis" = sama sesudah huruf/tanda baca diabaikan, terhadap nama master ATAU bentuk tampilnya (nama Accurate
+  // terbalik "INTI, JENIS KOTA"). Hanya itu yang dipakai tanpa bertanya — keputusan pemilik 10 Nov: bot yang
+  // mencocokkan, AM cukup konfirmasi YA/TIDAK.
+  const samaPersis = (nama: string) => !!n && (normFaskes(nama) === n || normFaskes(namaTampilFaskes(nama)) === n);
   if (o.yakin) {
     const f = katalog.find((x) => x.id === o.yakin!.id);
-    return { kind: "one", id: o.yakin.id, nama: f?.nama ?? o.yakin.nama, baru: !!f?.baru };
+    const nama = f?.nama ?? o.yakin.nama;
+    if (samaPersis(nama)) return { kind: "one", id: o.yakin.id, nama, baru: !!f?.baru };
+    // cariAkun menunjuk satu akun, tapi nama yang ditulis tidak persis sama (uji dev 10 Nov: "…01A06B" langsung
+    // dipakai sebagai "…01A068") → tetap ditanyakan YA/TIDAK.
+    return { kind: "saran", saran: [{ id: o.yakin.id, nama, cabang: f?.cabang ?? null, baru: !!f?.baru, skor: skorFaskes(teks, nama) }] };
   }
-  const n = normFaskes(teks);
-  const persis = katalog.filter((x) => n && normFaskes(x.nama) === n);
+  const persis = katalog.filter((x) => samaPersis(x.nama));
   if (persis.length === 1) return { kind: "one", id: persis[0].id, nama: persis[0].nama, baru: !!persis[0].baru };
   const urut = peringkatFaskes(teks, katalog, o);
   return urut.length ? { kind: "saran", saran: urut.slice(0, 1) } : { kind: "baru" };
