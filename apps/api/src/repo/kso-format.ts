@@ -619,6 +619,19 @@ export function teksGalatOcr(g: string | null | undefined): string {
 const STOP_FASKES = new Set(["RS", "RSU", "RSUD", "RSIA", "RSI", "RSAB", "RSK", "RSKIA", "RSB", "RUMAH", "SAKIT", "UMUM", "DAERAH",
   "KLINIK", "PRATAMA", "UTAMA", "LAB", "LABORATORIUM", "PUSKESMAS", "TIPE", "KELAS", "KOTA", "KABUPATEN", "KAB", "SWASTA",
   "IBU", "ANAK", "DAN", "THE", "DR", "HOSPITAL", "MEDIKA", "MEDICAL"]);
+/**
+ * Jenis faskes yang tertulis: "rs" (RS/RSUD/RSIA/…/RUMAH SAKIT), "pkm" (PKM/PUSKESMAS/PUSTU), "klinik", "lab"; null bila
+ * tak tertulis. Kata jenis dibuang dari token pembanding (STOP_FASKES / tak membedakan), jadi tanpa ini "RSUD X" dan
+ * "X, PKM KAB. Y" seri dan yang menang nama yang lebih pendek — kasus prod 10 Nov: RSUD ditawari PKM bernama sama.
+ */
+export function jenisFaskes(s: string | null | undefined): "rs" | "pkm" | "klinik" | "lab" | null {
+  const t = String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").split(/\s+/);
+  if (t.some((x) => /^RS[A-Z]{0,4}$/.test(x)) || /\bRUMAH SAKIT\b/.test(t.join(" "))) return "rs";
+  if (t.some((x) => x === "PKM" || x === "PUSKESMAS" || x === "PUSTU")) return "pkm";
+  if (t.includes("KLINIK")) return "klinik";
+  if (t.some((x) => x === "LAB" || x === "LABORATORIUM")) return "lab";
+  return null;
+}
 function tokenFaskes(s: string | null | undefined): string[] {
   return String(s ?? "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").split(/\s+/).filter((t) => t.length >= 2 && !STOP_FASKES.has(t));
 }
@@ -847,16 +860,19 @@ export interface OpsiFaskes {
 
 /**
  * Peringkat SEMUA calon faskes yang masuk akal (skor ≥ SKOR_FASKES_MIRIP, atau disebut ambigu oleh cariAkun).
- * Urutan deterministik: memuat semua kata inti yang ditulis AM (termasuk kota) → skor → cabang sama dengan AM →
+ * Urutan deterministik: memuat semua kata inti yang ditulis AM (termasuk kota) → jenis faskes sama dengan yang ditulis AM
+ * (RS/RSUD vs PKM vs klinik vs lab) → skor → cabang sama dengan AM →
  * nama lebih pendek → abjad. Contoh: "RS PKU X KOTAB" menang atas "PKU X KOTAA, RS" walau keduanya disebut ambigu.
  */
 export function peringkatFaskes(teks: string, katalog: FaskesKatalog[], o: OpsiFaskes = {}): SaranFaskes[] {
   const ambigu = new Set((o.ambigu ?? []).map(normFaskes));
   const cab = normFaskes(o.cabangAm);
+  const jenisAm = jenisFaskes(teks);
   return katalog
-    .map((x) => ({ x, skor: skorFaskes(teks, x.nama), semua: semuaKataFaskes(teks, x.nama), cabang: !!cab && normFaskes(x.cabang) === cab }))
+    .map((x) => ({ x, skor: skorFaskes(teks, x.nama), semua: semuaKataFaskes(teks, x.nama), cabang: !!cab && normFaskes(x.cabang) === cab,
+                   jenis: !!jenisAm && jenisFaskes(x.nama) === jenisAm }))
     .filter((y) => y.skor >= SKOR_FASKES_MIRIP || (ambigu.has(normFaskes(y.x.nama)) && angkaPembeda(teks) === angkaPembeda(y.x.nama)))
-    .sort((a, b) => Number(b.semua) - Number(a.semua) || b.skor - a.skor || Number(b.cabang) - Number(a.cabang)
+    .sort((a, b) => Number(b.semua) - Number(a.semua) || Number(b.jenis) - Number(a.jenis) || b.skor - a.skor || Number(b.cabang) - Number(a.cabang)
       || a.x.nama.length - b.x.nama.length || a.x.nama.localeCompare(b.x.nama))
     .map(({ x, skor }) => ({ id: x.id, nama: x.nama, cabang: x.cabang ?? null, baru: !!x.baru, skor }));
 }
