@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageHeader } from "@/components/dashboard/page-header";
+import { PipPanel } from "@/components/karyawan/pip-panel";
 import { RaportView } from "@/components/raport/raport-view";
 import { sessionUser } from "@/lib/admin-guard";
 import { canViewRaportList } from "@/lib/raport-access";
@@ -27,6 +28,9 @@ export default async function KaryawanDetailPage({ params }: { params: Promise<{
         action={<Link href="/karyawan" className="text-primary text-sm hover:underline">← Kembali ke daftar</Link>}
       />
       <RaportView endpoint={`/api/raport/${encodeURIComponent(amId)}`} />
+      <div className="mt-8">
+        <PipPanel amId={amId} />
+      </div>
     </>
   );
 }
