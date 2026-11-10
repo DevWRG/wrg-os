@@ -147,8 +147,9 @@ export function saringLolos<T extends { zona: string | null; mandat: { berlaku_s
 // ---------------------------------------------------------------- format #KSO
 
 /**
- * Templat format #KSO — SALINAN dari KSO_BANTUAN di apps/api/src/repo/kso-intake.ts (belum ada endpoint).
- * Ubah keduanya bersamaan. Contoh nama/faskes sengaja fiktif.
+ * Templat format #KSO — SALINAN PERSIS KSO_FORMAT_ISIAN di apps/api/src/repo/kso-intake.ts (web tak bisa mengimpor
+ * modul API; belum ada endpoint). Uji kso-komite-daftar.test.ts membandingkan keduanya — ubah bersamaan.
+ * Contoh nama/faskes sengaja fiktif. KOTA tidak diminta: master customer / area AM.
  */
 export const FORMAT_KSO =
   "#KSO BUDI\n" +
@@ -160,10 +161,14 @@ export const FORMAT_KSO =
   "6. FEE : 5% (tulis 0 bila tidak ada fee)\n" +
   "7. KOMPETITOR : MEREK-MODEL-HARGA (atau TIDAK ADA)\n" +
   "8. KLAUSUL : TIDAK (atau ADA - isi klausulnya)\n" +
-  "9. LAMPIRAN : ADA — kirim PDF Simulator KSO (KSO CPRR) di chat ini dalam 10 menit";
+  "9. LAMPIRAN : ADA — kirim PDF Simulator KSO di chat ini dalam 10 menit\n" +
+  "10. STATUS UNIT : BARU / RELOKASI IDLE / EKS KSO / EKS DEMO / REFURBISH / PINJAMAN PRINCIPAL\n" +
+  "11. BUKTI VOLUME : REKAP LIS 6 BULAN / PEMBELIAN REAGEN / SURAT RS\n" +
+  "12. PENDUKUNG : dr. NAMA, JABATAN (mis. kepala instalasi lab)\n" +
+  "(10 dan 11 pilih SATU. Tambahan bila perlu: JUMLAH : 2 bila lebih dari 1 unit · " +
+  "HARI KERJA : 26 bila beda dari default · ALASAN : … hanya bila diminta bot)";
 
 export const FORMAT_KSO_TAMBAHAN: [string, string][] = [
-  ["Boleh ditambah di pesan yang sama", "PENDUKUNG: dr. Contoh, kepala instalasi lab · STATUS UNIT: baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal · HARI KERJA: 26 · JUMLAH: 1 · ALASAN: alasan strategis (wajib bila GPM zona Direktur)"],
   ["Melengkapi / koreksi", "#KSO D12 LABEL: ISI (mis. #KSO D12 PENDUKUNG: dr. Contoh, kepala instalasi lab)"],
   ["PDF menyusul", "kirim \"#KSO D12\" lalu PDF-nya dalam 10 menit"],
   ["Diajukan", "data lengkap + PDF cocok → diajukan otomatis; manual: #KSO kirim D12"],

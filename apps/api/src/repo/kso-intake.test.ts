@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KSO_BANTUAN, formatBalasanGerbang, gerbangUntukAm, hargaBersih, kurangDraft, parseKsoPerintah, perkiraanZona, balasanFormatSalah, balasanSaranAlat, balasanVolumeTurun, pilihAlat, teksHasilAjukan, teksZonaForum, terjemahGalatKso, volumeDariTeks, type DraftTampil } from "./kso-intake.js";
+import { KSO_BANTUAN, KSO_FORMAT_ISIAN, formatBalasanGerbang, gerbangUntukAm, hargaBersih, kurangDraft, parseKsoPerintah, perkiraanZona, balasanFormatSalah, balasanSaranAlat, balasanVolumeTurun, pilihAlat, teksHasilAjukan, teksZonaForum, terjemahGalatKso, volumeDariTeks, type DraftTampil } from "./kso-intake.js";
 import { bacaIsianFormat } from "./kso-format.js";
 import { polaTerlarang } from "./kso-saring.js";
 import { detectKind } from "./inbound.js";
@@ -224,19 +224,29 @@ test("jumlah tak disebut = 1 unit, tidak ditanyakan", () => {
   assert.ok(!kurangDraft(d).some((q) => q.kunci === "jumlah"));
 });
 
-test("bantuan #KSO = format sembilan isian berlabel, tanpa kurung sudut", () => {
-  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9]) assert.match(KSO_BANTUAN, new RegExp(`\\n${n}\\. `));
-  for (const l of ["FASKES", "ALAT", "TES", "MASA KSO", "PERMINTAAN HARGA", "FEE", "KOMPETITOR", "KLAUSUL", "LAMPIRAN", "PENDUKUNG:", "STATUS UNIT:"])
+test("bantuan #KSO = format dua belas isian berlabel, tanpa KOTA, tanpa kurung sudut", () => {
+  for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) assert.match(KSO_BANTUAN, new RegExp(`\\n${n}\\. `));
+  for (const l of ["FASKES", "ALAT", "TES", "MASA KSO", "PERMINTAAN HARGA", "FEE", "KOMPETITOR", "KLAUSUL", "LAMPIRAN",
+    "10. STATUS UNIT : BARU / RELOKASI IDLE / EKS KSO / EKS DEMO / REFURBISH / PINJAMAN PRINCIPAL",
+    "11. BUKTI VOLUME : REKAP LIS 6 BULAN / PEMBELIAN REAGEN / SURAT RS",
+    "12. PENDUKUNG : dr. NAMA, JABATAN (mis. kepala instalasi lab)",
+    "ALASAN : … hanya bila diminta bot", "JUMLAH : 2 bila lebih dari 1 unit", "HARI KERJA : 26 bila beda dari default"])
     assert.ok(KSO_BANTUAN.includes(l), l);
-  assert.match(KSO_BANTUAN, /relokasi idle/);
+  assert.ok(KSO_BANTUAN.includes(KSO_FORMAT_ISIAN));
+  assert.doesNotMatch(KSO_BANTUAN, /KOTA/);
   assert.match(KSO_BANTUAN, /Voice note tidak diproses/);
   assert.doesNotMatch(KSO_BANTUAN, /[<>]/);
-  // contoh di bantuan bisa diurai pengurai format itu sendiri
-  const x = bacaIsianFormat(KSO_BANTUAN.split("\n").slice(2, 11).join("\n"));
+  // contoh di bantuan bisa diurai pengurai format itu sendiri; isian 10–12 (templat apa adanya) TIDAK dipilihkan
+  const x = bacaIsianFormat(KSO_FORMAT_ISIAN.split("\n").slice(1).join("\n"));
   assert.equal(x.volume, 700);
   assert.equal(x.harga, 11800);
   assert.equal(x.fee, 5);
   assert.equal(x.tenor, 36);
+  assert.equal(x.status_unit, undefined);
+  assert.equal(x.sumber, undefined);
+  assert.deepEqual(x.pendukung, []);
+  assert.deepEqual(x.tidakTerbaca.map((t) => t.label), ["status_unit", "sumber", "pendukung"]);
+  assert.deepEqual(x.barisAsing.map((b) => b.slice(0, 3)), ["(10"], "baris catatan tambahan bukan label");
 });
 
 test("teks bebas → balasan format; saran alat bernomor + cara memilih", () => {

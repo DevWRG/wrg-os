@@ -153,9 +153,18 @@ tanpa LLM). Jalur teks bebas (`/kso/ekstrak`) dan voice note dimatikan di API (a
 7. KOMPETITOR : MEREK-MODEL-11.500
 8. KLAUSUL : ADA - isinya      ← detail tak dikenali = kode 'lainnya' (gerbang 7 merah)
 9. LAMPIRAN : ADA              ← PDF Simulator KSO di chat yang sama ±10 menit (pengirim sama, urutan bebas)
+10. STATUS UNIT : RELOKASI IDLE ← templat: BARU / RELOKASI IDLE / EKS KSO / EKS DEMO / REFURBISH / PINJAMAN PRINCIPAL
+11. BUKTI VOLUME : REKAP LIS 6 BULAN ← templat: REKAP LIS 6 BULAN / PEMBELIAN REAGEN / SURAT RS (label `data`, gerbang 2)
+12. PENDUKUNG : dr. NAMA, JABATAN (mis. kepala instalasi lab)
 ```
 
-- Susulan: `#KSO D62 LABEL: isi` (PENDUKUNG, STATUS UNIT, ALASAN, KLAUSUL, HARI KERJA, JUMLAH, SUMBER, atau salah satu dari 9 label).
+- Sejak 10 Nov (kedua): templat bantuan (`KSO_FORMAT_ISIAN`/`KSO_BANTUAN`, `kso-intake.ts`) dan dialog web "Format #KSO"
+  (`FORMAT_KSO`, salinan persis — diuji `kso-komite-daftar.test.ts`) memuat isian 10–12 supaya usulan bisa lengkap SATU pesan;
+  tambahan opsional ringkas: `JUMLAH : 2` (> 1 unit), `HARI KERJA : 26` (beda dari default), `ALASAN : …` (hanya bila diminta bot).
+  Nilai yang mendaftar beberapa pilihan (templat ditempel apa adanya, pemisah `/` `|` "atau") dan pendukung `dr. NAMA, JABATAN`
+  dilaporkan "tidak terbaca", tidak dipilihkan. KOTA tidak ada di templat lagi (lihat migrasi 304 di bawah).
+
+- Susulan: `#KSO D62 LABEL: isi` (PENDUKUNG, STATUS UNIT, ALASAN, KLAUSUL, HARI KERJA, JUMLAH, BUKTI VOLUME/SUMBER, atau salah satu dari 9 label).
 - Alat tak pasti → draft BELUM dibuat (alat_kode NOT NULL + FK); isian disimpan di `kso.intake_tertunda`, AM memilih `#KSO ALAT 1` / `#KSO ALAT: Z50` (24 jam).
 - PDF dibaca `services/ai /kso/ocr-cprr`, dicocokkan (sales, faskes, alat, tes/bulan, masa, merek kompetitor), disimpan di `kso.rencana_lampiran`.
   Cocok → hari kerja + sumber volume "Lampiran Simulator KSO <tanggal>" (label `data`; Sekretariat tetap verifikasi untuk Forum).
@@ -244,3 +253,9 @@ Keputusan faskes untuk usulan baru (`putuskanFaskes`, `kso-format.ts`; dipanggil
   (customer baru masuk sesudah penyegaran malam). Detail rencana memuat `faskes_saran_master` (5 akun termirip) untuk tab itu.
 - Dashboard: `faskes_baru` + `faskes_kota` di antrean, daftar belum-lengkap/lolos, detail → lencana "Faskes baru".
 - Uji: `scripts/qa/kso-komite/919_uji_faskes_baru.sql`, `apps/api/src/repo/kso-faskes-baru.test.ts`.
+- **Kota tidak ditanyakan (migrasi 304, 10 Nov 2026)** — keputusan product owner: "kota bisa dicek dari kota customer ataupun
+  area AM". Faskes master: kota/cabang dari master customer (`area_customer`, 228), tak ada perubahan. Faskes sementara tanpa
+  label KOTA: `kota` = `kso.am.cabang` pengusul (area AM — sumber yang sama dengan `faskes.cabang`), `kso.faskes.kota_dari_area
+  = true`. Kota dari PDF Simulator atau label `KOTA:` (masih diterima diam-diam) mengganti default itu; kota tertulis tak pernah
+  ditimpa. Baris balasan "Kota faskes belum ada — tulis #KSO Dxx KOTA" dihapus; KOTA untuk faskes master diabaikan tanpa balasan.
+  Uji: `scripts/qa/kso-komite/920_uji_kota_area_am.sql`.
