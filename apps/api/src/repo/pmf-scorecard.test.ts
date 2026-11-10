@@ -5,11 +5,13 @@ import {
   AMBANG_POIN,
   MIN_DEAL,
   TANPA_BRAND,
+  TANPA_PRODUK,
   TANPA_REGION,
   bacaParamKuartal,
   hitungScorecard,
   kuartalDefault,
   kuartalDari,
+  normProduk,
   regionDariCabang,
   rentangKuartal,
   statusSel,
@@ -134,8 +136,47 @@ test("bacaParamKuartal: kosong = null; di luar rentang / bukan angka = pesan gal
   assert.deepEqual(bacaParamKuartal(undefined, undefined), { tahun: null, kuartal: null });
   assert.deepEqual(bacaParamKuartal("2026", "3"), { tahun: 2026, kuartal: 3 });
   assert.deepEqual(bacaParamKuartal("", " "), { tahun: null, kuartal: null });
-  assert.equal(bacaParamKuartal("2026", "9"), "kuartal harus 1-4");
-  assert.equal(bacaParamKuartal("2026", "2.5"), "kuartal harus 1-4");
-  assert.equal(bacaParamKuartal("abc", "1"), "tahun harus angka 2000-2100");
-  assert.equal(bacaParamKuartal("1999", "1"), "tahun harus angka 2000-2100");
+  assert.equal(bacaParamKuartal("2026", "9"), "kuartal harus 1-4 atau semua");
+  assert.equal(bacaParamKuartal("2026", "2.5"), "kuartal harus 1-4 atau semua");
+  assert.equal(bacaParamKuartal("abc", "1"), "tahun harus angka 2000-2100 atau semua");
+  assert.equal(bacaParamKuartal("1999", "1"), "tahun harus angka 2000-2100 atau semua");
+  assert.deepEqual(bacaParamKuartal("2026", "semua"), { tahun: 2026, kuartal: "semua" });
+  assert.deepEqual(bacaParamKuartal("Semua", undefined), { tahun: "semua", kuartal: null });
+});
+
+test("normProduk: huruf besar, spasi tunggal, awalan brand dibuang, kosong = (tanpa produk)", () => {
+  assert.equal(normProduk("ZYBIO EXR110", "ZYBIO"), "EXR110");
+  assert.equal(normProduk("  zybio   exr110 ", "Zybio"), "EXR110");
+  assert.equal(normProduk("Z52", "ZYBIO"), "Z52");
+  assert.equal(normProduk("ZYBIOX 1", "ZYBIO"), "ZYBIOX 1"); // bukan awalan kata utuh
+  assert.equal(normProduk("ZYBIO", "ZYBIO"), "ZYBIO"); // tak tersisa apa pun → biarkan
+  assert.equal(normProduk("  ", "ZYBIO"), TANPA_PRODUK);
+  assert.equal(normProduk(null, null), TANPA_PRODUK);
+});
+
+test("per_produk: brand × produk, varian penulisan yang sama dilebur, status relatif portofolio", () => {
+  const sc = hitungScorecard(
+    [
+      ...banyak(3, { brand: "ZYBIO", produk: "ZYBIO EXR110", menang: false }),
+      ...banyak(2, { brand: "ZYBIO", produk: "exr110", menang: false }),
+      ...banyak(5, { brand: "ZYBIO", produk: "Z52", menang: true }),
+      deal({ brand: "ZYBIO", produk: null, menang: true, impor: true }), // impor tak ikut
+    ],
+    2026, 4,
+  );
+  const exr = sc.per_produk.find((s) => s.produk === "EXR110")!;
+  assert.equal(exr.n, 5);
+  assert.equal(exr.status, "KALAH");
+  assert.equal(sc.per_produk.find((s) => s.produk === "Z52")!.status, "MENANG");
+  assert.equal(sc.per_produk.some((s) => s.produk === TANPA_PRODUK), false);
+  assert.equal(sc.per_produk[0].region, "Semua region");
+});
+
+test("periode semua: tahun/kuartal null, periode tanpa batas; setahun dari parameter periode", () => {
+  const semua = hitungScorecard(banyak(5, { menang: true }), null, null);
+  assert.equal(semua.tahun, null);
+  assert.deepEqual(semua.periode, { dari: null, sampai: null });
+  const setahun = hitungScorecard(banyak(5, { menang: true }), 2026, null, { dari: "2026-01-01", sampai: "2026-12-31" });
+  assert.equal(setahun.kuartal, null);
+  assert.equal(setahun.periode.sampai, "2026-12-31");
 });
