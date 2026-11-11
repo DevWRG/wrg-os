@@ -22,6 +22,7 @@ import { EcatalogView, STATUS_LABEL as ECAT_STATUS, type EcatalogData } from "@/
 import { KeaslianView, STATUS_LABEL as KEASLIAN_STATUS, type KeaslianData } from "@/components/sales-analytics/keaslian-view";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { usePrompt } from "@/components/ui/use-prompt";
 
 // Tombol sekunder toolbar: tint teal lembut (bukan putih) — kontras di atas bg terang.
 const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-primary/15";
@@ -303,9 +304,13 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
     void loadViews();
   }, [loadViews]);
 
-  const saveCurrentView = async () => {
-    const name = window.prompt("Nama view:");
-    if (!name) return;
+  // Nama view lewat dialog template (bukan window.prompt bawaan browser).
+  const { prompt, dialog: promptDialog } = usePrompt();
+  const saveCurrentView = () => prompt(
+    { title: "Simpan tampilan", description: "Filter periode dan tab saat ini disimpan dengan nama ini.", placeholder: "mis. Pipeline Q4 Jatim", required: true, maxLength: 100 },
+    (name) => void simpanView(name),
+  );
+  const simpanView = async (name: string) => {
     await fetch("/api/sales-analytics/views", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ view_name: name, view_type: VIEW_TYPE[tab], filter_config: { from, to, tab } }),
@@ -377,6 +382,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "leaderboard" && cur != null && <PipelineLeaderboardView data={cur as LeaderboardRow[]} />}
       {tab === "ecatalog" && cur != null && <EcatalogView data={cur as EcatalogData} />}
       {tab === "keaslian" && cur != null && <KeaslianView data={cur as KeaslianData} />}
+      {promptDialog}
     </div>
   );
 }
