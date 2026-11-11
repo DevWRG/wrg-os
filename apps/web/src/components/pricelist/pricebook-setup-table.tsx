@@ -115,16 +115,18 @@ export function PricebookSetupTable({
   const [busy, setBusy] = useState(false);
   const [konfirmPublishAll, setKonfirmPublishAll] = useState(false);
   const [massal, setMassal] = useState(false);
+  const [errPublish, setErrPublish] = useState<string | null>(null);
 
   async function publishSemua() {
     setBusy(true);
+    setErrPublish(null);
     try {
       const res = await fetch("/api/pricebook/setup/publish", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        alert(d.error ?? "Gagal publish");
+        setErrPublish(d.error ?? "Gagal publish");
         return;
       }
       router.refresh();
@@ -298,6 +300,7 @@ export function PricebookSetupTable({
 
   return (
     <div className="space-y-4">
+      {errPublish && <p className="text-destructive text-sm">{errPublish}</p>}
       {ringkas && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Kpi label="SKU keagenan" value={fmtNum(ringkas.total)} sub={`periode ${ringkas.periode}`} />

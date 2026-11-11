@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { FilterSelect } from "@/components/ui/filter-select";
+import { usePrompt } from "@/components/ui/use-prompt";
 import { cn } from "@/lib/utils";
 
 // F90 Antrean Order (apps/api/src/repo/order-wa.ts). Pesanan AM dari WhatsApp #ORDER yang sudah
@@ -36,11 +37,20 @@ export function OrderView({ awal, bisaUbah }: { awal: DataOrder | null; bisaUbah
   const [buka, setBuka] = useState<string | null>(null);
   const [sibuk, setSibuk] = useState(false);
   const [pesan, setPesan] = useState<{ ok: boolean; teks: string } | null>(null);
+  const { prompt, dialog } = usePrompt();
 
-  async function ubah(o: Order, ke: Status) {
-    const isi: Record<string, string> = { status: ke };
-    if (ke === "selesai") { const so = prompt(`Nomor SO Accurate untuk O${o.id}?`)?.trim(); if (!so) return; isi.so_number = so; }
-    if (ke === "batal") { const a = prompt(`Alasan membatalkan O${o.id}?`)?.trim(); if (!a) return; isi.alasan = a; }
+  function ubah(o: Order, ke: Status) {
+    if (ke === "selesai") {
+      prompt({ title: `Selesaikan O${o.id}`, description: "Isi nomor SO Accurate untuk order ini.", placeholder: "Nomor SO", required: true, confirmLabel: "Selesai" },
+        (so) => void simpan(o, ke, { so_number: so }));
+    } else if (ke === "batal") {
+      prompt({ title: `Batalkan O${o.id}?`, placeholder: "Alasan membatalkan", required: true, multiline: true, confirmLabel: "Batalkan", destructive: true },
+        (alasan) => void simpan(o, ke, { alasan }));
+    } else void simpan(o, ke, {});
+  }
+
+  async function simpan(o: Order, ke: Status, tambahan: Record<string, string>) {
+    const isi: Record<string, string> = { status: ke, ...tambahan };
     setSibuk(true); setPesan(null);
     try {
       const r = await fetch(`/api/order-wa/${o.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(isi) });
@@ -118,6 +128,7 @@ export function OrderView({ awal, bisaUbah }: { awal: DataOrder | null; bisaUbah
             toolbar={<FilterSelect label="AM" value={am} onChange={setAm} options={opsiAm} />} />
         </CardContent>
       </Card>
+      {dialog}
     </div>
   );
 }
