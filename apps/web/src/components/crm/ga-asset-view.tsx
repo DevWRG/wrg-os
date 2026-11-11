@@ -6,34 +6,32 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GaAssetsTable, type GaAsset } from "@/components/tables/ga-assets-table";
 import { GaAssetCategoriesTable, type GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
-import { ItTicketsTable, type ItTicket } from "@/components/tables/it-tickets-table";
 import { GaMaintenanceTable, type GaMaintenance } from "@/components/tables/ga-maintenance-table";
 import { GaVendorTable, type GaVendor } from "@/components/tables/ga-vendor-table";
 import { AddGaAssetButton } from "@/components/crm/add-ga-asset-button";
 import { AddGaAssetCategoryButton } from "@/components/crm/add-ga-asset-category-button";
-import { AddItTicketButton } from "@/components/crm/add-it-ticket-button";
 import { AddGaMaintenanceButton } from "@/components/crm/add-ga-maintenance-button";
 import { AddGaVendorButton } from "@/components/crm/add-ga-vendor-button";
 import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 
-// Satu menu, LIMA tab: Aset + Kategori (F132), Tiket IT (F52), Maintenance &
-// Vendor GA (F137) — arahan Direktur eksplisit "1 menu, jangan terpisah".
+// Satu menu, EMPAT tab: Aset + Kategori (F132), Maintenance & Vendor GA (F137)
+// — arahan Direktur eksplisit "1 menu, jangan terpisah". Tab Tiket IT (F52)
+// dicabut 11 Nov 2026: laporan kerusakan aset pindah ke Helpdesk GA (migrasi 306).
 // F133 (assignment PIC) tidak menambah tab: itu aksi inline di tabel Aset,
 // karena itu `users` dipakai dua tab sekaligus (picker PIC & approver).
 // `AppUserOption` di ga-maintenance-actions bentuknya identik dengan yang di
 // ga-asset-pic-actions ({ id, name }), jadi satu prop cukup untuk keduanya.
 export function GaAssetView({
-  assets, categories, tickets, users, schedules, vendors, canApproveFinance,
+  assets, categories, users, schedules, vendors, canApproveFinance,
 }: {
   assets: GaAsset[];
   categories: GaAssetCategory[];
-  tickets: ItTicket[] | null;
   users: AppUserOption[];
   schedules: GaMaintenance[];
   vendors: GaVendor[];
   canApproveFinance: boolean;
 }) {
-  const [tab, setTab] = useState<"aset" | "kategori" | "tiket" | "maintenance" | "vendor">("aset");
+  const [tab, setTab] = useState<"aset" | "kategori" | "maintenance" | "vendor">("aset");
   const activeCategories = categories.filter((c) => c.active);
   const activeAssets = assets.filter((a) => a.active);
   const activeVendors = vendors.filter((v) => v.status === "active");
@@ -43,7 +41,6 @@ export function GaAssetView({
   const TABS = [
     ["aset", "Aset"],
     ["kategori", "Kategori"],
-    ["tiket", "Tiket IT"],
     ["maintenance", "Maintenance"],
     ["vendor", "Vendor GA"],
   ] as const;
@@ -69,9 +66,6 @@ export function GaAssetView({
         </div>
         {tab === "aset" && <AddGaAssetButton categories={activeCategories} />}
         {tab === "kategori" && <AddGaAssetCategoryButton />}
-        {/* `users` sudah ditarik halaman ini (GET /app-users) untuk picker PIC
-            aset & approver — dipakai ulang di sini, tanpa fetch baru. */}
-        {tab === "tiket" && <AddItTicketButton assets={activeAssets} users={users} />}
         {tab === "maintenance" && (
           <AddGaMaintenanceButton
             assets={assetOptions}
@@ -107,25 +101,6 @@ export function GaAssetView({
                 <EmptyState title="Belum ada kategori" description='Klik "Tambah Kategori" untuk mulai.' />
               ) : (
                 <GaAssetCategoriesTable categories={categories} />
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {tab === "tiket" && (
-        <div role="tabpanel" id="panel-tiket" aria-labelledby="tab-tiket">
-          <Card>
-            <CardContent className="pt-6">
-              {!tickets ? (
-                <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terisi." />
-              ) : tickets.length === 0 ? (
-                <EmptyState
-                  title="Belum ada tiket"
-                  description={activeAssets.length === 0 ? 'Belum ada aset aktif — tambah dulu di tab "Aset".' : 'Klik "Buat Tiket" untuk mulai.'}
-                />
-              ) : (
-                <ItTicketsTable tickets={tickets} users={users} />
               )}
             </CardContent>
           </Card>

@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { GaHelpdeskView } from "@/components/crm/ga-helpdesk-view";
 import type { GaTicket } from "@/components/tables/ga-tickets-table";
 import type { GaTicketCategory } from "@/components/tables/ga-ticket-categories-table";
-import type { AppUserOption } from "@/components/crm/add-ga-ticket-button";
+import type { AppUserOption, AssetOption } from "@/components/crm/add-ga-ticket-button";
 import type { TeknisiOption } from "@/components/crm/ga-ticket-assign-button";
 
 export const dynamic = "force-dynamic";
@@ -56,15 +56,32 @@ async function getTeknisi(): Promise<TeknisiOption[]> {
   }
 }
 
+// Pilihan aset (opsional) di form tiket — sejak migrasi 306 Helpdesk menyerap
+// Tiket IT (F52), kerusakan laptop/PC dilaporkan di sini dengan menunjuk asetnya.
+async function getAssets(): Promise<AssetOption[]> {
+  try {
+    const res = await gatewayFetch("/ga-assets");
+    if (!res.ok) return [];
+    const data = (await res.json()) as { assets: (AssetOption & { active?: boolean })[] };
+    return (data.assets ?? [])
+      .filter((a) => a.active !== false)
+      .map((a) => ({ id: a.id, asset_code: a.asset_code, nama: a.nama, is_critical: a.is_critical }));
+  } catch {
+    return [];
+  }
+}
+
 export default async function GaHelpdeskPage() {
-  const [tickets, categories, users, teknisi] = await Promise.all([getTickets(), getCategories(), getUsers(), getTeknisi()]);
+  const [tickets, categories, users, teknisi, assets] = await Promise.all([
+    getTickets(), getCategories(), getUsers(), getTeknisi(), getAssets(),
+  ]);
   return (
     <>
       <PageHeader
         title="Helpdesk GA"
-        description="Ticketing kendala operasional — SLA otomatis per kategori, tracking progres, eskalasi overdue ke assignee + HoD."
+        description="Ticketing kendala operasional, termasuk kerusakan laptop/PC & aset kantor lain — SLA otomatis per kategori, tracking progres, eskalasi overdue ke assignee + HoD."
       />
-      <GaHelpdeskView tickets={tickets} categories={categories} users={users} teknisi={teknisi} />
+      <GaHelpdeskView tickets={tickets} categories={categories} users={users} teknisi={teknisi} assets={assets} />
     </>
   );
 }
