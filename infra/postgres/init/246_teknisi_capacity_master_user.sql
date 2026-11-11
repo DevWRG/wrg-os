@@ -17,7 +17,7 @@
 -- PK uuid sengaja dipertahankan: 5 tabel (install_schedule, installation_unit,
 -- maintenance_schedule, service_ticket, teknisi_report) FK ke sana.
 --
--- Baris tanpa am_id (dummy Hesti/Fajar/Gilang di dev, isian manual lama)
+-- Baris tanpa am_id (dummy Sri/Agus/Joko di dev, isian manual lama)
 -- dinonaktifkan — histori FK tetap utuh. Pengecualian: baris bypass grup uji
 -- ber-nama '[UJI] ...' (lihat wa-test-bypass.ts) dibiarkan.
 --

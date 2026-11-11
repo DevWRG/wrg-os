@@ -133,7 +133,7 @@ export function normNamaTeknisi(s: string | null | undefined): string {
 
 // Identitas pengirim laporan teknisi (#install/#servis/#training/#kalibrasi).
 // Dulu `nama ILIKE '%pushname%'` = POTONGAN nama: pushname "a" / "jar" dari grup
-// sembarang lolos sebagai "Teknisi Fajar" (uji dev 11 Okt 2026). Keputusan user
+// sembarang lolos sebagai "Teknisi Agus" (uji dev 11 Okt 2026). Keputusan user
 // (opsi a): sah kalau pushname SAMA PERSIS dengan nama di roster (dinormalisasi)
 // atau dengan panggilan master_user-nya (246), ATAU lewat chat PRIBADI dari
 // nomor yang tercatat (di grup `sender_jid` = JID grup, nomor orangnya tak

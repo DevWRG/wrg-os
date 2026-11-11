@@ -14,7 +14,7 @@
 -- 2026-09-03 atas `accurate_customer` prod menemukan nama KANONIK penuh
 -- memang unik (0 kembar), tapi nama pendek seperti yang diketik orang di form
 -- ini menabrak banyak customer sekaligus — 174 nama pendek bertabrakan, mis.
--- "IKA" → 8 customer, "PERTAMEDIKA IHC" → 7, "BHAYANGKARA" → 6. Menebak di
+-- satu nama pendek bisa cocok ke 6–8 customer sekaligus. Menebak di
 -- antara 8 faskes lalu menyimpannya sebagai FK = data salah yang terlihat
 -- sah. Tiket lama tetap NULL; yang baru tertaut sejak form dipakai.
 --
