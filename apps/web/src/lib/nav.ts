@@ -3,7 +3,7 @@
 // sini → muncul di sidebar DAN bisa langsung di-sync jadi fitur yg bisa di-gate.
 // feature.key = slug route (lihat featureKey()), selaras infra/postgres/init/044_rbac.sql.
 
-import { CalendarCheck,
+import { CalendarCheck, Inbox,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
   Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
@@ -29,6 +29,7 @@ import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } fr
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { canViewDocTracker } from "@/lib/doc-tracker-access";
+import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
@@ -298,6 +299,9 @@ export const NAV: NavGroup[] = [
       // admin/superuser yang melihatnya (anti-lockout can()).
       { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
+      // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
+      // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
+      { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
       { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
