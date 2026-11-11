@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useHodOptions } from "@/components/watchpoint/hod-options";
 import { PagedTable } from "@/components/ui/paged-table";
+import { useConfirm } from "@/components/ui/use-confirm";
+import { usePrompt } from "@/components/ui/use-prompt";
 
 const ALL = "__all__";
 // Batas baris per muat. Lebih dari ini → banner "menampilkan X dari Y" (bukan
@@ -57,6 +59,9 @@ const statusBadge = (s: Row["status"]) =>
   );
 
 export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; hodOnly?: boolean }) {
+  // Keputusan & hapus lewat dialog template (bukan window.confirm/prompt bawaan browser).
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const { prompt, dialog: promptDialog } = usePrompt();
   const { hods: hodOptions } = useHodOptions();
   const [tab, setTab] = useState<"pengajuan" | "aturan">("pengajuan");
   const [rows, setRows] = useState<Row[]>([]);
@@ -141,16 +146,25 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
     }
   }
 
-  async function decide(r: Row, action: "approve" | "reject") {
-    let note: string | undefined;
+  function decide(r: Row, action: "approve" | "reject") {
     if (action === "reject") {
-      const n = window.prompt(`Alasan menolak ${r.kode} (opsional):`);
-      if (n === null) return;
-      note = n;
-    } else if (!window.confirm(`Setujui ${r.kode} — ${r.nama}, ${durasi(r.estimasi_menit)}?`)) {
+      prompt(
+        {
+          title: `Tolak ${r.kode}?`,
+          description: `${r.nama}, ${durasi(r.estimasi_menit)}. Alasan opsional.`,
+          placeholder: "Alasan menolak",
+          multiline: true,
+          confirmLabel: "Tolak",
+          destructive: true,
+        },
+        (note) => void post(`/api/overtime/${r.id}/decide`, { action, note: note || undefined }, r.id),
+      );
       return;
     }
-    await post(`/api/overtime/${r.id}/decide`, { action, note }, r.id);
+    confirm(
+      { title: `Setujui ${r.kode}?`, description: `${r.nama}, ${durasi(r.estimasi_menit)}.`, confirmLabel: "Setujui" },
+      () => void post(`/api/overtime/${r.id}/decide`, { action }, r.id),
+    );
   }
 
   async function ruleCall(url: string, method: string, body?: unknown) {
@@ -426,9 +440,10 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          if (window.confirm("Hapus aturan ini?")) void ruleCall(`/api/overtime/rules/${r.id}`, "DELETE");
-                        }}
+                        onClick={() => confirm(
+                          { title: "Hapus aturan lembur ini?", confirmLabel: "Hapus", destructive: true },
+                          () => void ruleCall(`/api/overtime/rules/${r.id}`, "DELETE"),
+                        )}
                       >
                         Hapus
                       </Button>
@@ -440,6 +455,8 @@ export function OvertimeBoard({ isAdmin, hodOnly = false }: { isAdmin: boolean; 
           </CardContent>
         </Card>
       )}
+      {confirmDialog}
+      {promptDialog}
     </div>
   );
 }

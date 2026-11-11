@@ -6,6 +6,7 @@ import { FileText, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useConfirm } from "@/components/ui/use-confirm";
 
 import { JENIS_DOKUMEN_LABEL, kirim, type DokumenKontrak, type JenisDokumen } from "./types";
 
@@ -21,6 +22,7 @@ export function DokumenKontrakSection({ kontrakId, awal, canEdit }: { kontrakId:
   const [ket, setKet] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
   const input = useRef<HTMLInputElement>(null);
 
   async function unggah(file: File) {
@@ -43,8 +45,13 @@ export function DokumenKontrakSection({ kontrakId, awal, canEdit }: { kontrakId:
     }
   }
 
-  async function hapus(d: DokumenKontrak) {
-    if (!window.confirm(`Hapus dokumen “${d.nama}”?`)) return;
+  // Konfirmasi lewat dialog template (bukan window.confirm bawaan browser).
+  function hapus(d: DokumenKontrak) {
+    confirm({ title: "Hapus dokumen kontrak?", description: `“${d.nama}” akan dihapus.`, confirmLabel: "Hapus", destructive: true },
+      () => void hapusJalan(d));
+  }
+
+  async function hapusJalan(d: DokumenKontrak) {
     setErr(null);
     setBusy(true);
     try {
@@ -103,6 +110,7 @@ export function DokumenKontrakSection({ kontrakId, awal, canEdit }: { kontrakId:
           <p className="text-muted-foreground text-xs">PDF, JPG, atau PNG · maks. 8 MB</p>
         </div>
       )}
+      {dialog}
     </div>
   );
 }
