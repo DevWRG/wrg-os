@@ -12,12 +12,12 @@
     "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.17",
+    "@hono/node-server": "^1.19.18",
     "exceljs": "^4.4.0",
-    "hono": "^4.13.16",
+    "hono": "^4.13.17",
     "node-cron": "^4.6.0",
     "pdfkit": "^0.20.2",
-    "postgres": "^4.0.0",
+    "postgres": "^4.1.0",
     "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
