@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 // Kartu Sales Performance (target vs realisasi per periode + breakdown region).
-// Data periodik (YTD/kuartal/bulan) dari GET /sales/performance — lihat
+// Data periodik (YTD/kuartal/bulan/minggu/hari) dari GET /sales/performance — lihat
 // apps/api/src/repo/sales.ts:reportSalesPerformance. Target/region diisi via
-// config di apps/api/src/config/*. Target null → tampil "No data".
+// config di apps/api/src/config/*. Target null → tampil "No data". Target minggu &
+// hari = target tahunan ÷ 52 / ÷ 260 (diturunkan di API, tak disimpan).
 
 type Region = "OFFICE" | "West" | "East";
 interface RegionTotal {
@@ -14,7 +15,7 @@ interface RegionTotal {
   total: number;
 }
 interface Period {
-  key: "year" | "quarter" | "month";
+  key: "year" | "quarter" | "month" | "week" | "day";
   label: string;
   from: string;
   to: string;
@@ -46,7 +47,12 @@ function tone(pct: number | null): { bar: string; text: string } {
   return { bar: "bg-danger", text: "text-danger" };
 }
 
-const SHORT: Record<Period["key"], string> = { year: "YTD", quarter: "Quarter", month: "Month" };
+const SHORT: Record<Period["key"], string> = { year: "YTD", quarter: "Quarter", month: "Month", week: "Weekly", day: "Daily" };
+// Asal target periode yang tidak diisi langsung di menu Sales Targets.
+const ASAL_TARGET: Partial<Record<Period["key"], string>> = {
+  week: "Target = tahunan ÷ 52 minggu",
+  day: "Target = tahunan ÷ 260 hari kerja",
+};
 
 function RegionBars({ rows }: { rows: RegionTotal[] }) {
   const max = Math.max(1, ...rows.map((r) => r.total));
@@ -87,6 +93,7 @@ function PeriodCard({ p }: { p: Period }) {
           <div className="bg-muted mt-1 h-2 overflow-hidden rounded-full">
             <div className={cn("h-full rounded-full", t.bar)} style={{ width: `${barW}%` }} />
           </div>
+          {ASAL_TARGET[p.key] && <p className="text-muted-foreground mt-1 text-[11px]">{ASAL_TARGET[p.key]}</p>}
         </div>
 
         <RegionBars rows={p.regions} />
@@ -142,7 +149,7 @@ function MtdVsLastCard({ d }: { d: SalesPerformance["mtd_vs_last"] }) {
 
 export function SalesPerformanceCards({ data }: { data: SalesPerformance }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {data.periods.map((p) => (
         <PeriodCard key={p.key} p={p} />
       ))}
