@@ -7,7 +7,7 @@ import {
   semuaKataFaskes, skorFaskes, SKOR_FASKES_MIRIP, type AlatKatalog, type FaskesKatalog, type HasilOcrCprr,
 } from "./kso-format.js";
 import {
-  alatDariPdf, balasanSaranAlat, balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, ksoBolehLampiran, parseKsoPerintah,
+  alatDariPdf, balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, ksoBolehLampiran, parseKsoPerintah,
   pertanyaanTertunda, tampilCalonFaskes, teksAlatDariPdf, ubahKonfirmasiFaskes, type DraftTampil,
 } from "./kso-intake.js";
 import { saranAkunMaster } from "./kso-komite.js";
@@ -378,13 +378,13 @@ const KAT_SIM: AlatKatalog[] = [
   { kode: "Z52", nama: "Zybio Z52", kategori: "HEMATO" },
 ];
 
-test("alat di luar katalog 'KIMIA KLINIK MEREKX CM 250': bukan Z50 (angka model ≠ salah baca OCR), saran CC di atas", () => {
-  const h = cariAlat("KIMIA KLINIK MEREKX CM 250", KAT_SIM);
-  assert.equal(h.kind, "saran");
-  if (h.kind !== "saran") return;
-  assert.deepEqual(h.saran.slice(0, 2).map((s) => s.kode).sort(), ["EXC200", "EXC400"]);
-  const b = balasanSaranAlat("SALMAN", "KIMIA KLINIK MEREKX CM 250", h, null, KAT_SIM.map((k) => k.kode));
-  assert.match(b, /1\. \*EXC\d00\* — Zybio EXC\d00 \(CC\)\n2\. \*EXC\d00\* — Zybio EXC\d00 \(CC\)/);
+test("alat di luar katalog 'KIMIA KLINIK MEREKX CM 250': bukan Z50, tanpa saran merek lain → alat baru (307)", () => {
+  // product owner 11 Nov: "WIENERLAB CM250 → Z50 ini beda alat" — merek/model lain tidak disarankan, kategori sama pun tidak
+  for (const t of ["KIMIA KLINIK MEREKX CM 250", "WIENERLAB CM250", "WIENERLAB CM 250"]) {
+    const h = cariAlat(t, KAT_SIM);
+    assert.equal(h.kind, "saran", t);
+    if (h.kind === "saran") assert.deepEqual(h.saran, [], t);
+  }
   // OCR PDF "250" tanpa huruf di depan tetap dibaca Z50; kode utuh menang walau kategori bertentangan
   assert.ok(cariAlat("250", KAT_SIM).kind === "one");
   const z = cariAlat("KIMIA Z50", KAT_SIM);
