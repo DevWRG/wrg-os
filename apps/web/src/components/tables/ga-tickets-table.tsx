@@ -17,6 +17,8 @@ export interface GaTicket {
   reporter_name: string | null;
   assignee_name: string | null;
   location: string | null;
+  asset_code: string | null;
+  asset_nama: string | null;
   sla_due_at: string;
   sla_overdue: boolean;
   status: string;
@@ -41,11 +43,14 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       id: "ticket",
       header: "Tiket",
       sortable: true,
-      accessor: (t) => t.ticket_no,
+      accessor: (t) => `${t.ticket_no} ${t.title} ${t.asset_code ?? ""} ${t.asset_nama ?? ""}`,
       cell: (t) => (
         <div>
           <div className="font-medium">{t.ticket_no}</div>
           <div className="text-muted-foreground text-xs">{t.title}</div>
+          {t.asset_code && (
+            <div className="text-muted-foreground text-xs">Aset: {t.asset_code} — {t.asset_nama}</div>
+          )}
         </div>
       ),
     },

@@ -3,11 +3,59 @@ import { sendGaWa } from "../wasend.js";
 
 // F139 — GA Helpdesk Ticket System (Ticketing Kendala Operasional). Standalone
 // dari dev (state machine disederhanakan dari source gais atas pilihan user —
-// lihat 092_ga_helpdesk_ticket_system.sql). SLA kalender biasa (BUKAN 24/5
-// businessHoursFromNow F52 — brief F139 tak sebut 24/5 sama sekali).
+// lihat 092_ga_helpdesk_ticket_system.sql). SLA kalender biasa (brief F139 tak
+// sebut 24/5) — KECUALI tiket yang menempel ke aset GA.
+//
+// Sejak migrasi 306 Helpdesk menyerap Tiket IT (F52): tiket boleh menunjuk satu
+// aset (`asset_id`). Tiket ber-aset mewarisi aturan F52 — SLA "24/5" hari kerja
+// (lihat businessHoursFromNow) dan aset kritis → prioritas critical + SLA 2 jam.
 
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 const toIsoTsOrNull = (x: unknown): string | null => (x == null ? null : toIsoTs(x));
+
+// Dibawa dari repo/it-ticket.ts (F52). Env lama dipertahankan supaya nilai yang
+// sudah diset di server tetap berlaku.
+const ASET_KRITIS_JAM = Number(process.env.IT_TICKET_SLA_KRITIS_JAM) || 2;
+
+async function isWorkdayDate(dateIso: string): Promise<boolean> {
+  const dow = new Date(`${dateIso}T00:00:00Z`).getUTCDay();
+  if (dow === 0 || dow === 6) return false;
+  const sql = db();
+  try {
+    const [h] = await sql`SELECT 1 FROM master_holiday WHERE tanggal = ${dateIso} LIMIT 1`;
+    return !h;
+  } catch {
+    return true;
+  }
+}
+
+// SLA "24/5" (arahan user, insiden nyata: PC Fakturis 11+ jam offline): tiap
+// hari kerja (Senin-Jumat, bukan master_holiday) dihitung 24 jam PENUH, bukan
+// jam kantor 9-5; akhir pekan/libur nasional dilewati TOTAL. Waktu WIB.
+export async function businessHoursFromNow(startMs: number, jam: number): Promise<Date> {
+  let remainingMs = jam * 3_600_000;
+  let cur = startMs;
+  // Batas pengaman: maksimal 60 iterasi (>60 hari kalender).
+  for (let guard = 0; guard < 60 && remainingMs > 0; guard++) {
+    const curWib = new Date(cur + 7 * 3_600_000);
+    const dateIso = curWib.toISOString().slice(0, 10);
+    const endOfDayWib = Date.UTC(curWib.getUTCFullYear(), curWib.getUTCMonth(), curWib.getUTCDate() + 1);
+    const msLeftInDayWib = endOfDayWib - (cur + 7 * 3_600_000);
+
+    if (!(await isWorkdayDate(dateIso))) {
+      cur += msLeftInDayWib; // lompat ke 00:00 WIB hari berikutnya
+      continue;
+    }
+    if (msLeftInDayWib >= remainingMs) {
+      cur += remainingMs;
+      remainingMs = 0;
+    } else {
+      remainingMs -= msLeftInDayWib;
+      cur += msLeftInDayWib;
+    }
+  }
+  return new Date(cur);
+}
 
 export interface ActionResult {
   ok: boolean;
@@ -116,6 +164,9 @@ export interface GaTicketRow {
   assignee_user_id: string | null;
   assignee_name: string | null;
   location: string | null;
+  asset_id: string | null;
+  asset_code: string | null;
+  asset_nama: string | null;
   sla_due_at: string;
   sla_overdue: boolean;
   status: string;
@@ -146,6 +197,9 @@ function mapTicketRow(r: Record<string, unknown>): GaTicketRow {
     assignee_user_id: r.assignee_user_id ? String(r.assignee_user_id) : null,
     assignee_name: r.assignee_name_override ? String(r.assignee_name_override) : r.assignee_user_name ? String(r.assignee_user_name) : null,
     location: r.location ? String(r.location) : null,
+    asset_id: r.asset_id ? String(r.asset_id) : null,
+    asset_code: r.asset_code ? String(r.asset_code) : null,
+    asset_nama: r.asset_nama ? String(r.asset_nama) : null,
     sla_due_at: slaDueAt,
     sla_overdue: !["completed", "closed", "cancelled"].includes(status) && new Date(slaDueAt).getTime() < Date.now(),
     status,
@@ -174,19 +228,23 @@ async function generateTicketNo(): Promise<string> {
 export interface GaTicketListFilter {
   status?: string;
   overdue?: boolean;
+  asset_id?: string;
 }
 
 export async function listTickets(filter: GaTicketListFilter = {}): Promise<GaTicketRow[]> {
   const sql = db();
   const rows = await sql`
     SELECT t.*, c.nama AS category_nama, c.icon AS category_icon,
-      ru.name AS reporter_user_name, au.name AS assignee_user_name
+      ru.name AS reporter_user_name, au.name AS assignee_user_name,
+      a.asset_code, a.nama AS asset_nama
     FROM ga_tickets t
     JOIN ga_ticket_categories c ON c.id = t.category_id
     LEFT JOIN app_user ru ON ru.id = t.reporter_user_id
     LEFT JOIN app_user au ON au.id = t.assignee_user_id
+    LEFT JOIN ga_assets a ON a.id = t.asset_id
     WHERE ${filter.status ? sql`t.status = ${filter.status}` : sql`true`}
       AND ${filter.overdue ? sql`t.sla_due_at < now() AND t.status NOT IN ('completed','closed','cancelled')` : sql`true`}
+      AND ${filter.asset_id ? sql`t.asset_id = ${filter.asset_id}` : sql`true`}
     ORDER BY t.created_at DESC
   `;
   return rows.map(mapTicketRow);
@@ -196,11 +254,13 @@ export async function getTicket(id: string): Promise<GaTicketRow | null> {
   const sql = db();
   const rows = await sql`
     SELECT t.*, c.nama AS category_nama, c.icon AS category_icon,
-      ru.name AS reporter_user_name, au.name AS assignee_user_name
+      ru.name AS reporter_user_name, au.name AS assignee_user_name,
+      a.asset_code, a.nama AS asset_nama
     FROM ga_tickets t
     JOIN ga_ticket_categories c ON c.id = t.category_id
     LEFT JOIN app_user ru ON ru.id = t.reporter_user_id
     LEFT JOIN app_user au ON au.id = t.assignee_user_id
+    LEFT JOIN ga_assets a ON a.id = t.asset_id
     WHERE t.id = ${id}
   `;
   return rows.length ? mapTicketRow(rows[0]) : null;
@@ -215,6 +275,7 @@ export interface CreateTicketInput {
   reporter_name_override?: string | null;
   location?: string | null;
   sla_hours_override?: number | null;
+  asset_id?: string | null;
 }
 
 export async function createTicket(input: CreateTicketInput): Promise<GaTicketRow | ActionResult> {
@@ -227,19 +288,30 @@ export async function createTicket(input: CreateTicketInput): Promise<GaTicketRo
   const [cat] = await sql`SELECT * FROM ga_ticket_categories WHERE id = ${input.category_id} AND active = true`;
   if (!cat) return { ok: false, error: "kategori tidak ditemukan / nonaktif" };
 
-  const priority = input.priority ?? String(cat.default_priority);
-  const slaHours = input.sla_hours_override ?? Number(cat.default_sla_hours);
-  const slaDueAt = new Date(Date.now() + slaHours * 3_600_000);
+  let asset: { is_critical: boolean } | null = null;
+  if (input.asset_id) {
+    const [a] = await sql`SELECT is_critical FROM ga_assets WHERE id = ${input.asset_id} AND active = true`;
+    if (!a) return { ok: false, error: "aset tidak ditemukan / nonaktif" };
+    asset = { is_critical: Boolean(a.is_critical) };
+  }
+
+  // Aset kritis (ga_assets.is_critical) mewarisi aturan F52: prioritas critical
+  // & SLA 2 jam — kecuali pelapor menimpa prioritas/SLA secara eksplisit.
+  const priority = input.priority ?? (asset?.is_critical ? "critical" : String(cat.default_priority));
+  const slaHours = input.sla_hours_override ?? (asset?.is_critical ? ASET_KRITIS_JAM : Number(cat.default_sla_hours));
+  const slaDueAt = asset
+    ? await businessHoursFromNow(Date.now(), slaHours)
+    : new Date(Date.now() + slaHours * 3_600_000);
   const ticketNo = await generateTicketNo();
 
   const rows = await sql`
     INSERT INTO ga_tickets (
       ticket_no, title, description, category_id, priority,
-      reporter_user_id, reporter_name_override, location, sla_hours_override, sla_due_at
+      reporter_user_id, reporter_name_override, location, sla_hours_override, sla_due_at, asset_id
     ) VALUES (
       ${ticketNo}, ${title}, ${input.description ?? null}, ${input.category_id}, ${priority},
       ${input.reporter_user_id ?? null}, ${input.reporter_name_override ?? null}, ${input.location ?? null},
-      ${input.sla_hours_override ?? null}, ${slaDueAt.toISOString()}
+      ${input.sla_hours_override ?? null}, ${slaDueAt.toISOString()}, ${input.asset_id ?? null}
     )
     RETURNING id
   `;
@@ -405,11 +477,13 @@ export async function runGaHelpdeskOverdueAlert(): Promise<{ alerts: number }> {
   const sql = db();
   const rows = await sql`
     SELECT t.*, c.nama AS category_nama, c.icon AS category_icon,
-      ru.name AS reporter_user_name, au.name AS assignee_user_name
+      ru.name AS reporter_user_name, au.name AS assignee_user_name,
+      a.asset_code, a.nama AS asset_nama
     FROM ga_tickets t
     JOIN ga_ticket_categories c ON c.id = t.category_id
     LEFT JOIN app_user ru ON ru.id = t.reporter_user_id
     LEFT JOIN app_user au ON au.id = t.assignee_user_id
+    LEFT JOIN ga_assets a ON a.id = t.asset_id
     WHERE t.status NOT IN ('completed','closed','cancelled') AND t.sla_due_at < now() AND t.sla_alert_sent_at IS NULL
   `;
   if (!rows.length) return { alerts: 0 };
@@ -429,6 +503,7 @@ export async function runGaHelpdeskOverdueAlert(): Promise<{ alerts: number }> {
     const msg = [
       "🎫 *SLA Tiket Helpdesk Terlewati*",
       `${t.ticket_no} — ${t.title}`,
+      ...(t.asset_code ? [`Aset: ${t.asset_code} — ${t.asset_nama ?? ""}`] : []),
       `Kategori: ${t.category_nama} (${t.priority})`,
       `Assignee: ${t.assignee_name ?? "-"}`,
       `Batas SLA: ${t.sla_due_at}`,

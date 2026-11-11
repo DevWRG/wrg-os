@@ -16,10 +16,16 @@ import {
 
 export interface AppUserOption { id: string; name: string | null }
 export interface CategoryOption { id: string; code: string; nama: string; icon: string | null; default_priority: string }
+// Aset GA (opsional). Sejak migrasi 306 Helpdesk menyerap Tiket IT (F52): kerusakan
+// laptop/PC dilaporkan di sini dengan menunjuk asetnya. Aset kritis → prioritas
+// critical & SLA 2 jam hari kerja (dihitung server).
+export interface AssetOption { id: string; asset_code: string; nama: string; is_critical: boolean }
 
 const NONE = "__none__"; // sentinel Select — Base UI Select tak suka value kosong
 
-export function AddGaTicketButton({ categories, users }: { categories: CategoryOption[]; users: AppUserOption[] }) {
+export function AddGaTicketButton({
+  categories, users, assets = [],
+}: { categories: CategoryOption[]; users: AppUserOption[]; assets?: AssetOption[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,6 +37,15 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
   const [reporterUserId, setReporterUserId] = useState("");
   const [reporterName, setReporterName] = useState("");
   const [location, setLocation] = useState("");
+  const [assetId, setAssetId] = useState("");
+  const asset = assets.find((a) => a.id === assetId);
+
+  function pilihAset(v: string) {
+    setAssetId(v);
+    // Laporan aset → kategori Perangkat IT otomatis (masih bisa diganti).
+    const it = categories.find((c) => c.code === "IT");
+    if (v && it) setCategoryId(it.id);
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,11 +63,12 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
           reporter_user_id: reporterUserId || undefined,
           reporter_name_override: reporterUserId ? undefined : reporterName.trim() || undefined,
           location: location.trim() || undefined,
+          asset_id: assetId || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menyimpan");
-      setTitle(""); setDescription(""); setPriority(NONE); setReporterUserId(""); setReporterName(""); setLocation("");
+      setTitle(""); setDescription(""); setPriority(NONE); setReporterUserId(""); setReporterName(""); setLocation(""); setAssetId("");
       setOpen(false);
       router.refresh();
     } catch (err) {
@@ -82,6 +98,30 @@ export function AddGaTicketButton({ categories, users }: { categories: CategoryO
               <Label htmlFor="gt-desc">Deskripsi</Label>
               <Textarea id="gt-desc" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="opsional, detail kendala" />
             </div>
+            {assets.length > 0 && (
+              <div className="grid gap-1.5">
+                <Label>Aset yang bermasalah (opsional)</Label>
+                <Select value={assetId || NONE} onValueChange={(v) => pilihAset(v === NONE ? "" : (v ?? ""))}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Tidak terkait aset">{(v: string) => {
+                      const a = assets.find((x) => x.id === v);
+                      return a ? `${a.asset_code} — ${a.nama}` : "Tidak terkait aset";
+                    }}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>— tidak terkait aset —</SelectItem>
+                    {assets.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.asset_code} — {a.nama}{a.is_critical ? " (kritis)" : ""}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-muted-foreground text-xs">
+                  {asset?.is_critical
+                    ? "Aset kritis: prioritas Critical, batas SLA 2 jam hari kerja."
+                    : "Pilih kalau kendalanya pada barang tertentu, mis. laptop atau PC."}
+                </p>
+              </div>
+            )}
             <div className="grid gap-1.5">
               <Label>Kategori</Label>
               <Select value={categoryId} onValueChange={(v) => setCategoryId(v ?? "")}>
