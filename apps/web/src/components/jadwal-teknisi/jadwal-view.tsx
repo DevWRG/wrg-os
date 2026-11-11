@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { FilterSelect } from "@/components/ui/filter-select";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 
 // F154 Jadwal Kunjungan Rutin Teknisi (apps/api/src/repo/jadwal-teknisi.ts). Penyusunan
@@ -54,6 +55,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
   const [pesan, setPesan] = useState<{ ok: boolean; teks: string } | null>(null);
   const [fTeknisi, setFTeknisi] = useState("");
   const [fStatus, setFStatus] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   async function jalan<T>(f: () => Promise<T>, ok?: (r: T) => string) {
     setSibuk(true); setPesan(null);
@@ -177,14 +179,16 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
               </span>
               {bisaUbah && data.status !== "terbit" && <>
                 <button type="button" disabled={sibuk} onClick={() => void jalan(async () => setPrev(await api(`/api/jadwal-teknisi/pratinjau?bulan=${bulan}`)))} className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50">Pratinjau</button>
-                <button type="button" disabled={sibuk} onClick={async () => { if (data.baris.length && !confirm("Susun ulang? Baris otomatis yang belum diubah akan dihitung ulang; baris yang sudah Anda ubah dipertahankan.")) return;
+                <button type="button" disabled={sibuk} onClick={() => { const susun = async () => {
                   const r = await jalan(() => api<{ disusun: number; tanpa_teknisi: number; melebihi: number }>(`/api/jadwal-teknisi/susun`, "POST", { bulan }), (x) => `${x.disusun} kunjungan disusun${x.tanpa_teknisi ? ` · ${x.tanpa_teknisi} belum ada teknisi` : ""}${x.melebihi ? ` · ${x.melebihi} melebihi hari kerja` : ""}`);
-                  if (r) await muat(bulan); }} className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50">{data.baris.length ? "Susun ulang draft" : "Susun draft"}</button>
+                  if (r) await muat(bulan); };
+                  if (data.baris.length) confirm({ title: "Susun ulang draft?", description: "Baris otomatis yang belum diubah akan dihitung ulang; baris yang sudah Anda ubah dipertahankan.", confirmLabel: "Susun ulang" }, () => void susun());
+                  else void susun(); }} className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground disabled:opacity-50">{data.baris.length ? "Susun ulang draft" : "Susun draft"}</button>
                 <button type="button" disabled={sibuk || !data.baris.length || tanpaTeknisi > 0} title={tanpaTeknisi ? "Tetapkan teknisi untuk semua kunjungan dulu" : undefined}
-                  onClick={async () => { if (!confirm(`Terbitkan jadwal ${lblBulan(bulan)}? Jadwal dikirim ke WA tiap teknisi (bila saklar WA aktif).`)) return;
+                  onClick={() => confirm({ title: `Terbitkan jadwal ${lblBulan(bulan)}?`, description: "Jadwal dikirim ke WA tiap teknisi (bila saklar WA aktif).", confirmLabel: "Terbitkan" }, async () => {
                     const r = await jalan(() => api<{ kirim: { teknisi: string; kunjungan: number; terkirim: boolean; alasan?: string }[] }>(`/api/jadwal-teknisi/terbit`, "POST", { bulan }),
                       (x) => `Terbit. WA: ${x.kirim.map((k) => `${k.teknisi} ${k.terkirim ? "terkirim" : `tidak (${k.alasan ?? "gagal"})`}`).join(" · ") || "—"}`);
-                    if (r) await muat(bulan); }} className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10">Terbitkan</button>
+                    if (r) await muat(bulan); })} className="rounded-md border border-emerald-600 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10">Terbitkan</button>
                 {/* Alasan tombol nonaktif ditulis terlihat, bukan cuma tooltip (uji user 18 Okt: "klik tak ada aksi"). */}
                 {tanpaTeknisi > 0 && (
                   <button type="button" onClick={() => setFTeknisi("__kosong")} className="text-left text-xs text-amber-700 underline-offset-2 hover:underline dark:text-amber-400">
@@ -246,6 +250,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
           <DataTable columns={kolomFrek} data={frek} getKey={(f) => f.account_id} searchPlaceholder="Cari faskes…" empty="Tidak ada faskes KSO." />
         </CardContent></Card>
       )}
+      {dialog}
     </div>
   );
 }

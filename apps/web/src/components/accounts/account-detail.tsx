@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,6 +48,7 @@ const selCls = "h-8 rounded-md border border-border bg-card px-2 text-sm";
 
 export function AccountDetail({ account, owners = [], timeline = null, pembayaran = null }: { account: AccountData; owners?: OwnerOption[]; timeline?: TimelinePage | null; pembayaran?: RingkasPembayaran | null }) {
   const router = useRouter();
+  const { confirm, dialog } = useConfirm();
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const canAssign = owners.length > 0;
@@ -74,10 +76,11 @@ export function AccountDetail({ account, owners = [], timeline = null, pembayara
     }
     router.refresh();
   }
-  async function delContact(id: string) {
-    if (!confirm("Hapus kontak ini?")) return;
-    await fetch(`/api/accounts/${account.id}/contacts/${id}`, { method: "DELETE" });
-    router.refresh();
+  function delContact(id: string) {
+    confirm({ title: "Hapus kontak ini?", confirmLabel: "Hapus", destructive: true }, async () => {
+      await fetch(`/api/accounts/${account.id}/contacts/${id}`, { method: "DELETE" });
+      router.refresh();
+    });
   }
 
   return (
@@ -180,6 +183,7 @@ export function AccountDetail({ account, owners = [], timeline = null, pembayara
 
       {/* F95 — timeline: telepon & catatan + aktivitas AM + tahap deal + faktur */}
       <AccountTimeline accountId={account.id} initial={timeline} pembayaran={pembayaran} />
+      {dialog}
     </div>
   );
 }

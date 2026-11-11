@@ -31,6 +31,7 @@ export function PendingLeaveTable({ pending, users }: { pending: PendingLeave[];
   const [sel, setSel] = useState<PendingLeave | null>(null);
   const [backup, setBackup] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [errTolak, setErrTolak] = useState<string | null>(null);
 
   function openApprove(p: PendingLeave) {
     setSel(p);
@@ -62,6 +63,7 @@ export function PendingLeaveTable({ pending, users }: { pending: PendingLeave[];
 
   async function reject(id: number) {
     setBusy(id);
+    setErrTolak(null);
     try {
       const res = await fetch(`/api/leave/pending/${id}/decide`, {
         method: "POST",
@@ -70,12 +72,12 @@ export function PendingLeaveTable({ pending, users }: { pending: PendingLeave[];
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        alert(`Gagal: ${j.error ?? res.status}`);
+        setErrTolak(`Gagal menolak: ${j.error ?? res.status}`);
       } else {
         router.refresh();
       }
     } catch {
-      alert("Gagal menghubungi server.");
+      setErrTolak("Gagal menghubungi server.");
     } finally {
       setBusy(null);
     }
@@ -83,6 +85,7 @@ export function PendingLeaveTable({ pending, users }: { pending: PendingLeave[];
 
   return (
     <div className="overflow-x-auto">
+      {errTolak && <p className="text-destructive mb-2 text-sm">{errTolak}</p>}
       <table className="w-full text-sm">
         <thead className="text-muted-foreground border-b">
           <tr className="text-left">
