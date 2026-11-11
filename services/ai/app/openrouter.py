@@ -54,35 +54,41 @@ def _post(client: httpx.Client, url: str, **kwargs) -> httpx.Response:
     return client.post(url, **kwargs)
 
 
+# Default primary SEMUA grup teks (11 Nov 2026): gemini-2.5-flash-lite — sama dengan .env.prod sejak 5 Nov
+# (anggaran key $9,50/minggu). Dulu Haiku 4.5: grup yang lupa di-set di env (mis. TICKET_TRIAGE_) diam-diam
+# jatuh ke model mahal. Fallback tetap deepseek-v3.2 = penyedia lain, tak berbagi antrean 429 Google.
+DEFAULT_PRIMARY = "google/gemini-2.5-flash-lite"
+
+
 def daily_models() -> List[str]:
     """Model OpenRouter untuk daily-summary (env-configurable).
 
-    Default: Claude Haiku 4.5 primary, DeepSeek V3.2 fallback. `deepseek/deepseek-r1`
+    Default: Gemini 2.5 Flash Lite primary (DEFAULT_PRIMARY), DeepSeek V3.2 fallback. `deepseek/deepseek-r1`
     (konvensi legacy) dihapus OpenRouter — 404 "no provider serves this model" (5 Nov 2026).
-    Slug OpenRouter native: 'anthropic/claude-haiku-4.5' (bukan 'openrouter/...').
+    Slug OpenRouter native: 'google/gemini-2.5-flash-lite' (bukan 'openrouter/...').
     """
-    primary = os.environ.get("DAILY_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("DAILY_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("DAILY_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def rekap_models() -> List[str]:
     """Model OpenRouter untuk monitor rekap (env-configurable, default sama)."""
-    primary = os.environ.get("REKAP_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("REKAP_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("REKAP_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def resume_models() -> List[str]:
     """Model OpenRouter untuk resume eksekutif (env-configurable, default sama)."""
-    primary = os.environ.get("RESUME_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("RESUME_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("RESUME_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def collection_models() -> List[str]:
     """Model OpenRouter untuk A3 collection drafter (env-configurable, default sama)."""
-    primary = os.environ.get("COLLECTION_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("COLLECTION_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("COLLECTION_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
@@ -90,39 +96,39 @@ def collection_models() -> List[str]:
 def salesdoc_models() -> List[str]:
     """Model OpenRouter untuk A6 sales-doc drafter (token tier HIGH).
 
-    Default Haiku 4.5 primary, DeepSeek R1 fallback (Sonnet tak diperlukan
+    Default flash-lite primary, DeepSeek V3.2 fallback (Sonnet tak diperlukan
     untuk draf sependek ini — biaya). Override lewat env.
     """
-    primary = os.environ.get("SALESDOC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("SALESDOC_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("SALESDOC_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def extract_models() -> List[str]:
-    """Model OpenRouter untuk A8 sentiment/entity (token tier LOW → Haiku)."""
-    primary = os.environ.get("EXTRACT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    """Model OpenRouter untuk A8 sentiment/entity (token tier LOW → flash-lite)."""
+    primary = os.environ.get("EXTRACT_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("EXTRACT_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def ticket_triage_models() -> List[str]:
-    """Model OpenRouter untuk F26 ticket triage (token tier LOW → Haiku)."""
-    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    """Model OpenRouter untuk F26 ticket triage (token tier LOW → flash-lite)."""
+    primary = os.environ.get("TICKET_TRIAGE_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("TICKET_TRIAGE_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis, growth-levers,
-    weekend-briefing, pola-profile (Haiku — Sonnet tak sepadan biayanya)."""
-    primary = os.environ.get("EXEC_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    weekend-briefing, pola-profile (flash-lite — Sonnet/Haiku tak sepadan biayanya)."""
+    primary = os.environ.get("EXEC_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("EXEC_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
 
 def raport_models() -> List[str]:
-    """Model OpenRouter untuk narasi Raport 360 (Haiku — Sonnet tak sepadan biayanya)."""
-    primary = os.environ.get("RAPORT_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    """Model OpenRouter untuk narasi Raport 360 (flash-lite — Sonnet/Haiku tak sepadan biayanya)."""
+    primary = os.environ.get("RAPORT_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("RAPORT_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
     return [primary, fallback]
 
@@ -310,7 +316,7 @@ def kso_models() -> List[str]:
     model ekstraktor yang mengarang satu kolom merusak integritas seluruh antrean komite.
     Fallback BUKAN model penalaran (seperti deepseek-r1 yang dulu di daily_models) — token berpikirnya
     memakan max_tokens dan memotong JSON."""
-    primary = os.environ.get("KSO_MODEL_PRIMARY", "anthropic/claude-haiku-4.5")
+    primary = os.environ.get("KSO_MODEL_PRIMARY", DEFAULT_PRIMARY)
     fallback = os.environ.get("KSO_MODEL_FALLBACK", "google/gemini-3.8-flash")
     return [primary, fallback]
 
