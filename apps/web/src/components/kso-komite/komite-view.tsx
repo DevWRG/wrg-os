@@ -12,7 +12,7 @@ import { pilihTabDaftar } from "@/lib/kso-komite-daftar";
 import { BottomLinePanel } from "./bottom-line";
 import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
 import { TombolFormatKso } from "./format-kso";
-import { BadgeFaskesBaru, LabelStatus } from "./label-status";
+import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { SusunanPanel } from "./susunan-panel";
@@ -252,7 +252,7 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
                   <PolaGerbang pola={b.pola_gerbang} />
-                  <span className="text-muted-foreground">{b.alat_nama}</span>
+                  <span className="text-muted-foreground">{b.alat_nama}{b.alat_baru && <BadgeAlatBaru className="ml-1.5 align-middle" />}</span>
                   {b.capex != null && <span className="text-muted-foreground tabular-nums">{rpJt(b.capex)}</span>}
                   <LabelStatus status={b.status} />
                   {b.zona && (

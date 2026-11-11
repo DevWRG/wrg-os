@@ -17,7 +17,7 @@ export interface BarisAntrean {
   /** F170 v2 (266): zona setelah eskalasi + GPM deal; volume_terverifikasi NULL = belum diperiksa Sekretaris. */
   zona?: Zona | null; gpm_deal?: number | null; volume_terverifikasi?: boolean | null;
   /** 303: faskes baru (calon customer) + kotanya. */
-  faskes_baru?: boolean; faskes_kota?: string | null;
+  faskes_baru?: boolean; faskes_kota?: string | null; alat_baru?: boolean;
 }
 
 export type Zona = "am" | "hod" | "forum" | "direktur";
@@ -66,7 +66,7 @@ export interface Detail {
     fee_persen?: number | null; harga_bersih?: number | null; klausul_ada?: boolean | null; klausul_detail?: string | null;
     kompetitor_alat?: string | null;
     /** 303: faskes baru (calon customer, id BARU-n) + kota. */
-    faskes_baru?: boolean; faskes_kota?: string | null;
+    faskes_baru?: boolean; faskes_kota?: string | null; alat_baru?: boolean;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
@@ -123,7 +123,7 @@ export interface BarisDaftar {
   harga_per_test: number | null; fee_persen: number | null; harga_bersih?: number | null; volume_estimasi: number | null;
   tenor_bulan: number | null; dibuat_at: string | null; diajukan_at: string | null; diubah_at: string | null;
   /** 303: faskes baru (calon customer) + kotanya. */
-  faskes_baru?: boolean; faskes_kota?: string | null;
+  faskes_baru?: boolean; faskes_kota?: string | null; alat_baru?: boolean;
   lampiran: { id: number; lolos: boolean; tanggal: string | null; dibuat_at: string } | null;
   mandat: {
     harga_pembuka?: number | null; harga_target?: number | null; harga_lantai?: number | null; volume_terbukti: number | null;

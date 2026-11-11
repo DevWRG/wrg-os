@@ -233,7 +233,8 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
     const baris = await tx`
       select a.antrean, a.rencana_id::int as id, a.nomor, a.status, a.faskes_nama, a.alat_nama, a.capex::float8 as capex,
              a.sejak, a.batas, v.am_nama, v.cabang, v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
-             r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota
+             r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota,
+             (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru
         from kso.v_antrean a join kso.v_rencana v on v.id = a.rencana_id join kso.rencana_kso r on r.id = a.rencana_id
         join kso.faskes f on f.id = r.faskes_id
        where a.antrean = any(${label}) and (${pemilik}::text is null or a.pemilik_id = ${pemilik})
@@ -248,7 +249,8 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
       ? await tx`select 'Sekretariat · Verifikasi Volume' as antrean, r.id::int as id, v.nomor, v.status::text as status, v.faskes_nama,
                         v.alat_nama, v.capex::float8 as capex, r.diajukan_at as sejak, null::timestamptz as batas, v.am_nama, v.cabang,
                         v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
-                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota
+                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota,
+                        (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru
                    from kso.rencana_kso r join kso.v_rencana v on v.id = r.id join kso.faskes f on f.id = r.faskes_id
                   where r.zona in ('forum','direktur') and r.volume_terverifikasi is null and r.volume_sumber_label = 'data'
                     and r.status in ('DIAJUKAN','JALUR_FORUM','DIAGENDAKAN')
@@ -276,6 +278,9 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     // 303: faskes baru (calon customer) — penanda + kota; Sekretariat/Komite mendapat saran akun master untuk ditautkan
     const [fk] = await tx`select baru, kota, ditautkan_ke from kso.faskes where id = ${String(r.faskes_id)}`;
     Object.assign(r, { faskes_baru: Boolean(fk?.baru), faskes_kota: fk?.kota ?? null });
+    // 307: alat baru (belum ada di database) — penanda merah
+    const [al] = await tx`select a.baru from kso.alat a join kso.rencana_kso x on x.alat_kode = a.kode where x.id = ${id}`;
+    Object.assign(r, { alat_baru: Boolean(al?.baru) });
     const faskesSaranMaster = fk?.baru && !fk.ditautkan_ke && TAB_TAUTKAN.includes(tab)
       ? saranAkunMaster(String(r.faskes_nama), (await tx`select id, nama, cabang from kso.faskes where not baru`)
           .map((x) => ({ id: String(x.id), nama: String(x.nama), cabang: x.cabang ? String(x.cabang) : null })))
@@ -329,7 +334,7 @@ interface BarisKurang {
   id: number; status: string; volume_estimasi: number | null; tenor_bulan: number | null; harga_per_test: number | null;
   fee_persen: number | null; kolom_dinyatakan: string[]; klausul_ada: boolean | null; klausul_detail: string | null;
   pendukung: { nama: string; tipe: string }[]; unit_status: string | null; volume_sumber: string | null; zona_dasar: string | null;
-  alasan_strategis: string | null; hd: boolean | null;
+  alasan_strategis: string | null; alat_baru: boolean | null; hd: boolean | null;
   lampiran: { lolos: boolean; cocok: Record<string, CocokIsian> | null; galat: string | null } | null;
 }
 
@@ -339,6 +344,7 @@ async function bahanKurang(tx: Tx, ids: number[]): Promise<BarisKurang[]> {
   return (await tx`
     select r.id::int, r.status::text, r.volume_estimasi, r.tenor_bulan, r.harga_per_test::float8, r.fee_persen::float8, r.kolom_dinyatakan,
            r.klausul_ada, r.klausul_detail, r.unit_status::text, r.volume_sumber, r.zona_dasar, r.alasan_strategis,
+           (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru,
            coalesce((select json_agg(json_build_object('nama', p.nama, 'tipe', p.tipe)) from kso.rencana_pendukung p where p.rencana_id = r.id), '[]') as pendukung,
            (select g.hd from kso.app_angka_gpm(r.id) g) as hd,
            (select json_build_object('lolos', l.lolos, 'cocok', l.cocok,
@@ -379,6 +385,7 @@ export async function daftarFilter(userId: string, tab: TabKso, filter: FilterKs
              r.zona, r.zona_dasar, r.gpm_deal::float8 as gpm_deal, r.harga_per_test::float8 as harga_per_test, r.fee_persen::float8 as fee_persen,
              (r.harga_per_test * (1 - coalesce(r.fee_persen, 0) / 100))::float8 as harga_bersih, r.volume_estimasi, r.tenor_bulan,
              r.dibuat_at::text, r.diajukan_at::text, r.diubah_at::text, f.baru as faskes_baru, f.kota as faskes_kota,
+             (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru,
              (select json_build_object('id', l.id, 'lolos', l.lolos, 'tanggal', l.hasil_ocr->'isian'->>'tanggal', 'dibuat_at', l.dibuat_at)
                 from kso.rencana_lampiran l where l.rencana_id = r.id order by l.dibuat_at desc, l.id desc limit 1) as lampiran,
              (select json_build_object('harga_pembuka', m.harga_pembuka, 'harga_target', m.harga_target, 'harga_lantai', m.harga_lantai,

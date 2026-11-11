@@ -301,11 +301,13 @@ test("teks bebas → balasan format; saran alat bernomor + cara memilih", () => 
   const s = balasanSaranAlat("BUDI SANTOSO", "MEREKC BC-5150", { kind: "saran", ambigu: false, saran: [
     { kode: "Z50", nama: "Zybio Z50", kategori: "Hematologi", skor: 10 }, { kode: "Z3", nama: "Z3", kategori: "Hematologi", skor: 10 }] }, null, ["Z3", "Z50"]);
   assert.equal(s, 'Hai Budi 👋\nAlat "MEREKC BC-5150" belum ketemu pasti.\nMungkin maksudnya:\n1. *Z50* — Zybio Z50 (Hematologi)\n2. *Z3* — Z3 (Hematologi)\n' +
-    "Balas *#KSO ALAT 1* (atau 2), atau *#KSO ALAT: KODE*.");
+    "Balas *#KSO ALAT 1* (atau 2), atau *#KSO ALAT: KODE*.\n" +
+    "Alatnya tidak ada di daftar? Balas *#KSO ALAT BARU* — dicatat sebagai alat baru (ditandai merah).");
   tanpaJargon(s);
   tanpaAngkaMargin(s);
   const k = balasanSaranAlat("Budi", "X", { kind: "saran", ambigu: false, saran: [] }, "D9", ["Z3"]);
-  assert.equal(k, 'Alat "X" untuk D9 belum ketemu pasti — alat D9 belum diubah.\nBelum ada yang mirip. Kode yang tersedia: Z3.\nBalas *#KSO D9 ALAT: KODE*.');
+  assert.equal(k, 'Alat "X" untuk D9 belum ketemu pasti — alat D9 belum diubah.\nBelum ada yang mirip. Kode yang tersedia: Z3.\nBalas *#KSO D9 ALAT: KODE*.\n' +
+    "Alatnya tidak ada di daftar? Balas *#KSO D9 ALAT BARU* — dicatat sebagai alat baru (ditandai merah).");
 });
 
 test("perintah yang disalin dari balasan bertanda tebal WhatsApp tetap terbaca", () => {
