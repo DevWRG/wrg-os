@@ -306,11 +306,16 @@ class PolaProfile(BaseModel):
 class WeekendBriefingRequest(BaseModel):
     tanggal: str
     minggu_label: str
+    # "weekend" = briefing akhir pekan dari resume 7 hari (default, perilaku lama).
+    # "senin"   = F63: briefing untuk MINGGU DEPAN dari rekap + resume minggu lalu.
+    mode: str = "weekend"
     nama_direktur: str = "Pak Gilang"
     resumes: List[RekapDoc] = Field(default_factory=list)
     members: Optional[Dict[str, str]] = None
     groups: Optional[Dict[str, str]] = None
     pola: List[PolaProfile] = Field(default_factory=list)
+    # F63: angka papan WatchPoint minggu dasar (teks siap pakai dari apps/api). Kosong = tanpa angka.
+    angka: Optional[str] = None
     dry_run: bool = False
 
 

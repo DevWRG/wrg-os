@@ -300,6 +300,10 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { getBriefingMingguan, listBriefingMingguan, papanDasar, runWeeklyBriefing } from "./repo/weekly-briefing.js";
+import { briefingMingguanPdf, namaFileBriefingPdf } from "./repo/weekly-briefing-pdf.js";
+import { riwayatMetrik } from "./repo/weekly-briefing-angka.js";
+import { isoWeekOf } from "./repo/watchpoint-week.js";
 import { getSoPacing, runSoPacingAlert } from "./repo/so-pacing.js";
 import { getRevenueArea } from "./repo/revenue-area.js";
 import { biayaAreaSyncBusy, hitungUlangArea, syncBiayaArea } from "./repo/biaya-area-sync.js";
@@ -2670,6 +2674,60 @@ app.post("/senin-brief/run", async (c) => {
     isoYear: body.iso_year, isoWeek: body.iso_week,
   });
   return c.json(r);
+});
+
+// F63 Weekly Briefing Direktur — read model (tab "Briefing Mingguan" di /briefings).
+app.get("/weekly-briefing", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const briefs = await listBriefingMingguan();
+  return c.json({ count: briefs.length, briefs });
+});
+
+// F63 — PDF Briefing Mingguan: narasi tersimpan + papan WatchPoint minggu DASAR
+// (minggu yang rekapnya dibaca) + riwayat 8 minggu. Tak mengirim WA, tak memanggil AI.
+// `oleh` (nama pencetak) diisi BFF dari sesi.
+app.get("/weekly-briefing/:tahun/:minggu/pdf", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const tahun = Number(c.req.param("tahun"));
+  const minggu = Number(c.req.param("minggu"));
+  if (!Number.isInteger(tahun) || !Number.isInteger(minggu) || minggu < 1 || minggu > 53) {
+    return c.json({ error: "tahun/minggu tak valid" }, 400);
+  }
+  const b = await getBriefingMingguan(tahun, minggu);
+  if (!b) return c.json({ error: "Briefing Mingguan belum ada untuk minggu itu" }, 404);
+  const dasar = isoWeekOf(new Date(`${b.dasar_dari.slice(0, 10)}T00:00:00Z`));
+  const board = await papanDasar(dasar.isoYear, dasar.isoWeek);
+  const riwayat = await riwayatMetrik(dasar.isoYear, dasar.isoWeek, 8).catch(() => new Map<string, (number | null)[]>());
+  const pdf = await briefingMingguanPdf({
+    iso_year: b.iso_year, iso_week: b.iso_week, periode: b.periode,
+    dasar_label: board?.periode ?? `${b.dasar_dari} s/d ${b.dasar_sampai}`,
+    n_rekap: b.n_rekap, n_resume: b.n_resume, content: b.content, narasi_ok: b.narasi_ok,
+    generated_at: b.generated_at, board, riwayat,
+  }, { oleh: c.req.query("oleh") ?? null });
+  return c.body(new Uint8Array(pdf), 200, {
+    "content-type": "application/pdf",
+    "content-disposition": `attachment; filename="${namaFileBriefingPdf(b.iso_year, b.iso_week)}"`,
+  });
+});
+
+// F63 — susun briefing manual (uji / generate ulang). Sengaja TANPA route BFF: bisa
+// mengirim WA, jadi hanya dipanggil operator lewat service token. body: {dry_run?,
+// kirim_wa?, iso_year?, iso_week?}. Default dry_run=true (beda dari job Senin) dan
+// kirim_wa=false — generate ulang tak boleh menimpa data atau mengirim WA tanpa sengaja.
+app.post("/weekly-briefing/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; kirim_wa?: boolean; iso_year?: number; iso_week?: number } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(
+    await runWeeklyBriefing({
+      dryRun: body.dry_run !== false, kirimWa: body.kirim_wa === true,
+      isoYear: body.iso_year, isoWeek: body.iso_week,
+    }),
+  );
 });
 
 // A11 Coaching Outcome Synthesis — coaching per AM (D1). Body opsional: { period }.

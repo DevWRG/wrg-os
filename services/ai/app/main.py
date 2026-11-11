@@ -37,6 +37,7 @@ from .openrouter import (
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
+from .angka_berdasar import ganti_angka_tak_berdasar
 from .senin import bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system, build_senin_user, cek_pelanggaran
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
@@ -669,6 +670,7 @@ H. EXECUTIVE SUMMARY (ringkas, time-pressed)
 **Key Asks:** 1. ✅ [..] 2. ✅ [..] (3-5 item)
 **Tone:** [1-2 kalimat outlook]
 
+ATURAN ANGKA (KERAS): setiap angka — Rupiah, persen, jumlah, tenggat — WAJIB ada di data input. DILARANG membuat angka anggaran, insentif, budget, target baru, estimasi, atau proyeksi yang tidak tertulis di data. Bila rekomendasi butuh besaran, tulis "besaran diusulkan [PIC]" TANPA angka. Bila datanya tidak ada, tulis "belum ada data". Angka tanpa sumber akan diganti otomatis dengan penanda.
 ATURAN: JANGAN mengarang nama/angka yg tak ada di resume. Substitusi JID grup → nama grup & nomor → nama member bila ada di direktori. Gunakan label periode EKSAK '{minggu_label}' — JANGAN tulis 'Minggu N'. Bahasa Indonesia."""
 
 
@@ -689,20 +691,55 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
         nama_direktur=req.nama_direktur, perusahaan=NAMA_PERUSAHAAN,
         minggu_label=req.minggu_label, tanggal=req.tanggal,
     )
+    senin = req.mode == "senin"
+    if senin:
+        # F63: arah briefing = minggu yang baru mulai; dasar = rekap + resume minggu lalu.
+        system = system.replace(
+            "untuk sesi meeting " + req.nama_direktur + " di akhir pekan, dari resume harian seminggu terakhir.",
+            "untuk " + req.nama_direktur + " di awal minggu (Senin pagi), dari rekap dan resume harian MINGGU LALU, "
+            "sebagai bekal memimpin MINGGU DEPAN (minggu yang baru mulai). Soroti apa yang harus dikejar, "
+            "diputuskan, dan diantisipasi minggu ini.",
+            1,
+        )
+        # F63 dibaca sebagai PDF; dulu jawaban terpotong di batas token sebelum F–H
+        # (uji 11 Nov 2026 berhenti di tengah E). Semua bagian WAJIB ada, panjang dijaga.
+        system += (
+            "\n\nPANJANG: tulis SEMUA bagian A sampai H — bagian F, G, H tidak boleh hilang. "
+            "Total sekitar 1.800-2.200 kata. Per bagian maksimal 6 butir; satu butir maksimal 2 kalimat. "
+            "Bila bahan banyak, ringkas dan gabungkan — jangan memotong bagian akhir."
+        )
     pola_block = "\n\n".join(f"=== POLA GRUP {p.jid} ===\n{p.content}" for p in req.pola) or "(belum ada profile pola)"
     resume_block = "\n\n".join(f"====== {r.label} ======\n{r.text}" for r in req.resumes) or "(tak ada resume)"
+    if senin and req.angka:
+        # F63: angka sistem jadi bahan — dikutip apa adanya, tak dihitung ulang/ditebak.
+        system += (
+            "\n\nANGKA SISTEM: user menyertakan blok 'DATA ANGKA SISTEM' (papan WatchPoint minggu lalu). "
+            "Di bagian A, B, F, dan H rujuk angka itu bila relevan dan KUTIP APA ADANYA (nilai, target, status). "
+            "Jangan menghitung ulang, membulatkan ulang, atau menambah angka yang tak ada di data. "
+            "Bila percakapan grup bertentangan dengan angka sistem, sebutkan keduanya dan tandai perlu dicek."
+        )
+    data_label = "rekap & resume harian minggu lalu" if senin else "resume harian seminggu terakhir"
     user = (
         f"{_dir_block('DIREKTORI GRUP (substitusi JID → nama)', req.groups)}\n\n"
         f"{_dir_block('DIREKTORI MEMBER (substitusi nomor → nama; jangan tebak)', req.members)}\n\n"
         f"PROFILE POLA KOMUNIKASI per-grup:\n{pola_block}\n\n"
         "============================================\n"
-        f"DATA INPUT — resume harian seminggu terakhir ({req.minggu_label}):\n\n{resume_block}"
+        f"DATA INPUT — {data_label} ({req.minggu_label}):\n\n{resume_block}"
     )
+    if senin and req.angka:
+        user = f"DATA ANGKA SISTEM (WatchPoint, akurat — kutip apa adanya):\n{req.angka}\n\n============================================\n{user}"
     fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
-    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
-    return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")
+    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=8000 if senin else 4000, models=exec_models())
+    if model == "dry-run-fallback":
+        return WeekendBriefingResponse(briefing=text, model=model, dry_run=True)
+    # Angka tanpa sumber di data input diganti penanda (aturan user 11 Nov 2026). Tanpa
+    # percobaan ulang: satu generasi F63 ±45 dtk, mengulang bisa melewati batas apps/api.
+    text, diganti = ganti_angka_tak_berdasar(text, f"{system}\n{user}")
+    if diganti:
+        print(f"[weekend-briefing] {len(diganti)} angka tanpa sumber diganti penanda: {diganti[:12]}", flush=True)
+    return WeekendBriefingResponse(briefing=text, model=model, dry_run=False)
 
 
 @app.post("/senin-brief", response_model=SeninBriefResponse)

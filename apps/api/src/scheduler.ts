@@ -32,6 +32,7 @@ import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runSeninBrief } from "./repo/senin-brief.js";
+import { runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { runSoPacingAlert } from "./repo/so-pacing.js";
 import { runDailySummary } from "./repo/dailysummary.js";
 import { runRaportNarrative } from "./repo/raportnarrative.js";
@@ -255,6 +256,10 @@ export function startScheduler(): ScheduleStatus {
   // baru tutup → simpan → WA ke Direktur. Flag SENDIRI (default off) dan SENGAJA
   // tak ikut AGENT_SCHEDULE_ENABLED: job ini mengirim WA ke Direktur.
   const seninBriefEnabled = (process.env.SENIN_BRIEF_ENABLED ?? "false").toLowerCase() === "true";
+  // weekly-briefing (F63) — Senin 07:00: rekap+resume minggu lalu → briefing minggu depan
+  // → tab "Briefing Mingguan" + WA ringkasan + link unduh PDF ke Direktur. Flag SENDIRI (default
+  // off), tak ikut AGENT_SCHEDULE_ENABLED: mengirim WA. WAJIB terdaftar di DUA tempat (`enabled:` & gerbang `return`).
+  const weeklyBriefingEnabled = (process.env.WEEKLY_BRIEFING_ENABLED ?? "false").toLowerCase() === "true";
   // so-pacing (F21) — hari kerja 14:10, pacing sales bulan berjalan per region;
   // WA ke grup HoD HANYA kalau ada region <50% target prorata. Flag SENDIRI
   // (default off) — mengirim WA.
@@ -379,12 +384,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1264,6 +1269,31 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`senin-brief=${sbExpr}`);
+  }
+
+  // weekly-briefing (F63) — Senin 07:00, setelah resume/rekap Minggu malam tersedia.
+  // Senin libur = tak ada rapat → dilewati. Pengiriman WA patuh target WEEKLY_BRIEFING_TARGET
+  // (kosong → akun Direktur) dan WA_DRY_RUN.
+  const wbrExpr = process.env.WEEKLY_BRIEFING_CRON ?? "0 7 * * 1";
+  if (weeklyBriefingEnabled && cron.validate(wbrExpr)) {
+    cron.schedule(
+      wbrExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] weekly-briefing skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runWeeklyBriefing({ dryRun: false, kirimWa: true });
+          console.log(`[scheduler] weekly-briefing @ ${startedAt} ${JSON.stringify({ ...r, wa: r.wa && { sent: r.wa.sent, error: r.wa.error, skipped: r.wa.skipped } }).slice(0, 300)}`);
+        } catch (e) {
+          console.error(`[scheduler] weekly-briefing gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`weekly-briefing=${wbrExpr}`);
   }
 
   // PM & Kalibrasi Alat (F24, AFTERSALES) — reminder H-14 ke teknisi per alat.
