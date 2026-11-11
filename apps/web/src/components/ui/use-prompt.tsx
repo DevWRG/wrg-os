@@ -61,7 +61,7 @@ export function usePrompt() {
           )}
         </DialogBody>
         <DialogFooter>
-          <Button variant="ghost" onClick={tutup}>{state.cancelLabel ?? "Batal"}</Button>
+          <Button type="button" variant="outline" onClick={tutup}>{state.cancelLabel ?? "Batal"}</Button>
           <Button variant={state.destructive ? "destructive" : "default"} disabled={!!state.required && !nilai.trim()} onClick={kirim}>
             {state.confirmLabel ?? "Simpan"}
           </Button>
