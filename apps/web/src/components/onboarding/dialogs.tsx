@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { cn } from "@/lib/utils";
 
 import {
@@ -92,6 +93,7 @@ export function DetailDialog({ id, onClose, bolehUbah }: { id: number | null; on
   const [alasan, setAlasan] = useState<{ id: number; teks: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     if (id == null) return;
@@ -193,12 +195,14 @@ export function DetailDialog({ id, onClose, bolehUbah }: { id: number | null; on
         <DialogFooter>
           {d && <span className={cn("mr-auto rounded px-1.5 py-0.5 text-xs font-semibold", CASE_CLS[d.status as CaseStatus])}>{CASE_LABEL[d.status as CaseStatus]}</span>}
           {d && d.status === "berjalan" && bolehUbah && (
-            <Button variant="ghost" disabled={busy} onClick={() => {
-              if (window.confirm(`Batalkan onboarding ${d.nama}? Tidak bisa dibuka lagi.`)) void aksi(() => kirim(`/api/onboarding/${d.id}/cancel`, { method: "POST" }));
-            }}>Batalkan onboarding</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => confirm(
+              { title: "Batalkan onboarding?", description: `Onboarding ${d.nama} dibatalkan dan tidak bisa dibuka lagi.`, confirmLabel: "Batalkan onboarding", destructive: true },
+              () => void aksi(() => kirim(`/api/onboarding/${d.id}/cancel`, { method: "POST" })),
+            )}>Batalkan onboarding</Button>
           )}
           <Button variant="ghost" onClick={onClose}>Tutup</Button>
         </DialogFooter>
+        {dialog}
       </DialogContent>
     </Dialog>
   );
