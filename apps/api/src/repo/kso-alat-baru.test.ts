@@ -2,7 +2,7 @@
 // gerbang GPM merah beralasan tanpa angka, ALASAN strategis tidak diminta. Data fiktif.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bacaIsianFormat, daftarKurang } from "./kso-format.js";
+import { bacaIsianFormat, cariAlat, daftarKurang } from "./kso-format.js";
 import {
   balasanSaranAlat, catatanAlatBaru, formatBalasanGerbang, gerbangUntukAm, kurangDraft, parseKsoPerintah, perkiraanZona, pilihAlatBaru,
   ubahKonfirmasiFaskes, type DraftTampil,
@@ -70,4 +70,17 @@ test("alasan gerbang 1: alat belum ada di database (merah) — merah karena marg
   assert.equal(alasanGerbang(1, "merah", "Alat belum ada di database — dicatat sebagai alat baru, zona Direktur"), "alat belum ada di database");
   assert.equal(alasanGerbang(1, "merah", "GPM 20,0% → zona Direktur"), null);
   assert.equal(nilaiGerbangAman(1, "merah", "Alat belum ada di database — dicatat sebagai alat baru"), "alat belum ada di database");
+});
+
+test("katalog tanpa merek (nama = kode, seperti dev/prod): salah ketik Zybio tetap disarankan, merek lain tidak", () => {
+  // uji WA dev 11 Nov: "ZYBIO Z 5" sempat jadi alat baru karena nama katalog hanya "Z50" dan angka tunggal dibuang
+  const kat = ["Z3", "Z50", "Z52", "EXC200", "EXC400", "EXZ8000"].map((k) => ({ kode: k, nama: k, kategori: k.startsWith("EXC") ? "CC" : "HEMATO" }));
+  const kode = (t: string) => { const h = cariAlat(t, kat); return h.kind === "one" ? `=${h.kode}` : h.saran.map((x) => x.kode).sort().join(","); };
+  assert.equal(kode("ZYBIO Z 5"), "Z50,Z52");
+  assert.equal(kode("Zybio Z5"), "Z50,Z52");
+  assert.equal(kode("EXC20"), "EXC200");
+  assert.equal(kode("WIENERLAB CM250"), "");
+  assert.equal(kode("Sysmex XN450"), "");
+  assert.equal(kode("Mindray BC 5150"), "");
+  assert.equal(kode("Z 52"), "=Z52");
 });
