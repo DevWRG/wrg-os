@@ -1359,11 +1359,22 @@ async function ingestKoranDariBaris(row: WaRow, lampiran: WaRow[]): Promise<Reco
 }
 
 // ── #STOK (F2 Stock Quick-Check) ──
-// Total (accurate_item.quantity, via listStockBranch) = live, disegarkan
-// cron accurate-stock-sync tiap 5 menit (scheduler.ts). Stok per-cabang
+// Total (accurate_item.quantity, via listStockBranch) disegarkan cron
+// accurate-stock-sync tiap 5 menit (scheduler.ts) BILA saklarnya nyala —
+// jadi balasan menyebut waktu sinkron terakhir (last_synced_at) apa adanya,
+// bukan mengklaim "live". Lewat 1 jam → diberi tanda basi. Stok per-cabang
 // (item_stock_branch, F37) TIDAK ada puller otomatis — murni hasil import
 // CSV manual, jadi tanggal "data per ..." ditampilkan apa adanya (JUJUR
 // soal freshness, bukan diklaim real-time yang tak benar).
+const fmtWaktuStok = (d: Date) =>
+  d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+
+export function labelSegarStok(syncedAt: Date | null, now: Date = new Date()): string {
+  if (!syncedAt) return "waktu sinkron tidak diketahui";
+  const basi = now.getTime() - syncedAt.getTime() > 60 * 60 * 1000;
+  return `data Accurate per ${fmtWaktuStok(syncedAt)}${basi ? " ⚠️ belum tersegarkan, cek ulang di Accurate" : ""}`;
+}
+
 async function buildStokReply(amId: string, query: string): Promise<string> {
   const sql = db();
   const [am] = await sql`SELECT cabang FROM master_user WHERE am_id = ${amId}`;
@@ -1387,9 +1398,11 @@ async function buildStokReply(amId: string, query: string): Promise<string> {
 
   const r = rows[0];
   const unit = r.unit ? ` ${r.unit}` : "";
+  const [seg] = await sql`SELECT last_synced_at FROM accurate_item WHERE no = ${r.no} LIMIT 1`;
+  const syncedAt = seg?.last_synced_at ? new Date(seg.last_synced_at as string) : null;
   const lines = [
     `📦 *${r.name}* (${r.no})`,
-    r.total != null ? `Total (semua cabang): ${r.total}${unit} — live, update otomatis tiap 5 menit` : "Total: belum sinkron dari Accurate",
+    r.total != null ? `Total (semua cabang): ${r.total}${unit} — ${labelSegarStok(syncedAt)}` : "Total: belum sinkron dari Accurate",
   ];
   if (!warehouseKode) {
     lines.push("⚠️ Cabang kamu belum terpetakan ke gudang manapun.");
