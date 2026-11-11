@@ -537,6 +537,12 @@ function nilaiAlat(teks: string, a: AlatKatalog): { s: number; bukti: boolean } 
   const hurufEntri = new Set(modelEntri.filter((t) => /^[A-Z]{3,}$/.test(t) && !kodeEntri.has(t)));
   const merek = model.some((t) => /^[A-Z]{3,}$/.test(t) && hurufEntri.has(t));
   let bukti = s >= 60 || merek;
+  // kode yang ditulis AM = AWAL kode katalog ("ZYBIO Z 5" → Z50/Z52): angka tunggal ikut dihitung di sini (tokenModel
+  // membuangnya), nama katalog sering hanya kode tanpa merek. Bukti saran saja (40 < yakin), bukan tebakan.
+  const kodeAm = kandidatKode(tokens.filter((t) => !DERAU.has(t) && !KATEGORI_PETUNJUK.some(([re]) => re.test(t))))
+    .filter((c) => c.length >= 2 && /\d/.test(c) && /[A-Z]/.test(c));
+  for (const k of kodeEntri)
+    if (kodeAm.some((c) => k !== c && k.startsWith(c) && k.length - c.length <= 2)) { s = Math.max(s, 40); bukti = true; }
   if (merek) s += s > 0 ? 20 : 10;
   const p = petunjukKategori(tokens);
   if (p.size && a.kategori) {
