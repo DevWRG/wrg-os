@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { GaTicketsTable, type GaTicket } from "@/components/tables/ga-tickets-table";
 import { GaTicketCategoriesTable, type GaTicketCategory } from "@/components/tables/ga-ticket-categories-table";
-import { AddGaTicketButton, type AppUserOption } from "./add-ga-ticket-button";
+import { AddGaTicketButton, type AppUserOption, type AssetOption } from "./add-ga-ticket-button";
 import { AddGaTicketCategoryButton } from "./add-ga-ticket-category-button";
 import type { TeknisiOption } from "./ga-ticket-assign-button";
 
@@ -24,8 +24,14 @@ const STATUS_FILTERS = [
 // F139 — satu halaman, dua tab (Tiket + Kategori), pola sama F132 (2
 // sub-view domain & fitur yang SAMA, bukan pelanggaran prinsip domain-grouping).
 export function GaHelpdeskView({
-  tickets, categories, users, teknisi,
-}: { tickets: GaTicket[]; categories: GaTicketCategory[]; users: AppUserOption[]; teknisi: TeknisiOption[] }) {
+  tickets, categories, users, teknisi, assets,
+}: {
+  tickets: GaTicket[];
+  categories: GaTicketCategory[];
+  users: AppUserOption[];
+  teknisi: TeknisiOption[];
+  assets: AssetOption[];
+}) {
   const [tab, setTab] = useState<"tiket" | "kategori">("tiket");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
@@ -61,7 +67,7 @@ export function GaHelpdeskView({
             </button>
           ))}
         </div>
-        {tab === "tiket" ? <AddGaTicketButton categories={activeCategories} users={users} /> : <AddGaTicketCategoryButton />}
+        {tab === "tiket" ? <AddGaTicketButton categories={activeCategories} users={users} assets={assets} /> : <AddGaTicketCategoryButton />}
       </div>
 
       {tab === "tiket" ? (

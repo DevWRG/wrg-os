@@ -140,7 +140,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         : "-",
     },
     {
-      modul: "IT Asset & Issue Tracker (F52)",
+      modul: "Tiket Kerusakan Aset (Helpdesk GA)",
       tersedia: data.it_asset.available ? "Ya" : "Belum",
       ringkasan: data.it_asset.available
         ? `Baru: ${data.it_asset.current?.open_count ?? 0}, Dikerjakan: ${data.it_asset.current?.in_progress_count ?? 0}, Breach aktif: ${data.it_asset.current?.breach_active_count ?? 0}, Breach telat (periode): ${data.it_asset.period?.breach_resolved_late_count ?? 0}`
@@ -214,7 +214,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         <StatCard title="Nilai realisasi (periode)" value={rp(data.dana_ops.period?.realized_amount ?? 0)} icon={Wallet} />
       </ModuleSection>
 
-      <ModuleSection title="IT Asset & Issue Tracker (F52)" icon={Laptop} available={data.it_asset.available}>
+      <ModuleSection title="Tiket Kerusakan Aset (Helpdesk GA)" icon={Laptop} available={data.it_asset.available}>
         <StatCard title="Tiket baru" value={num(data.it_asset.current?.open_count ?? 0)} icon={Laptop} />
         <StatCard title="Sedang dikerjakan" value={num(data.it_asset.current?.in_progress_count ?? 0)} icon={Laptop} />
         <StatCard
