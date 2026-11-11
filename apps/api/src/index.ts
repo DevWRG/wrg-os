@@ -298,7 +298,7 @@ import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.js";
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
-import { runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
+import { infografisSalesArea, runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
 import {
   DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
@@ -4291,6 +4291,15 @@ app.get("/dashboard/overview", async (c) => {
 const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
   resolveScope(c.req.header("x-user-id"));
 
+// Infografis "Sales Area Performance" (/sales-analytics/area) — angka seluruh
+// perusahaan + per sales, jadi scope AM (amOnly) DITOLAK. ?as_of=YYYY-MM-DD.
+app.get("/sales-analytics/area", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sc = await scopeOf(c);
+  if (sc.amOnly) return c.json({ error: "khusus HoD / Direktur" }, 403);
+  const asOf = c.req.query("as_of");
+  return c.json(await infografisSalesArea(asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : undefined));
+});
 app.get("/sales-analytics/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
