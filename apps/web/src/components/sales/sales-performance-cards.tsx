@@ -14,7 +14,7 @@ interface RegionTotal {
   region: Region;
   total: number;
 }
-interface Period {
+export interface Period {
   key: "year" | "quarter" | "month" | "week" | "day";
   label: string;
   from: string;
@@ -73,7 +73,7 @@ function RegionBars({ rows }: { rows: RegionTotal[] }) {
   );
 }
 
-function PeriodCard({ p }: { p: Period }) {
+export function PeriodCard({ p }: { p: Period }) {
   const t = tone(p.pct.total);
   const barW = p.pct.total == null ? 0 : Math.min(100, Math.max(0, p.pct.total));
   const fmtPct = (v: number | null) => (v == null ? "No data" : `${v}%`);
