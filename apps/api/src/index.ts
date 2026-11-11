@@ -297,6 +297,7 @@ import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.js";
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
+import { runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
 import {
   DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
@@ -4179,6 +4180,20 @@ app.get("/reports/revenue-by-stream", async (c) => {
 app.get("/sales/performance", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await reportSalesPerformance(c.req.query("asOf")));
+});
+
+// Ringkasan WA "Sales Area Performance" — susun/kirim manual. Sengaja TANPA route BFF
+// (bisa mengirim WA ke grup): hanya operator via service token. body:
+// {dry_run?, target?, as_of?, paksa?}. DEFAULT dry_run=true.
+app.post("/sales/performance/ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string; as_of?: string; paksa?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runRingkasanSalesArea({ dryRun: body.dry_run !== false, target: body.target, asOf: body.as_of, paksa: body.paksa === true }));
 });
 
 // Sales Targets (menu Admin → Sales Targets). BFF-trusted; role-guard di web.
