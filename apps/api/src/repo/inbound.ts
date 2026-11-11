@@ -375,6 +375,11 @@ function groupAllowed(jid: string): boolean {
 function aftersalesWaAktif(): boolean {
   return (process.env.AFTERSALES_WA_ENABLED ?? "").toLowerCase() === "true";
 }
+// F155 — #BON/#OPNAME diproses hanya bila BON_SPAREPART_WA_ENABLED persis "true"
+// (rilis bertahap, pola AFTERSALES_WA_ENABLED; menu web Bon Sparepart tetap jalan).
+function bonWaAktif(): boolean {
+  return (process.env.BON_SPAREPART_WA_ENABLED ?? "").toLowerCase() === "true";
+}
 
 export interface WaRow {
   id: string;
@@ -2173,6 +2178,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // Pengirim = teknisi roster (matchTeknisi; grup uji boleh bypass), pola #install. Dicocokkan ke bon
   // gudang miliknya; tanpa bon gudang → bon bertanda 'teknisi' yang muncul di #OPNAME.
   if (kind === "bon") {
+    if (!bonWaAktif()) return finish({ skipped: "bon-wa-off" });
     const tb =
       (await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid })) ??
       (isWaTestBypassGroup(row.group_jid) && row.sender_name?.trim()
@@ -2193,6 +2199,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   // #OPNAME — F155: bon sparepart yang sudah dilaporkan vs belum + rekonsiliasi ke SJ. Read-only
   // (selain menautkan bon ke SJ yang cocok). Untuk gudang/HoD/admin; teknisi ditolak.
   if (kind === "opname") {
+    if (!bonWaAktif()) return finish({ skipped: "bon-wa-off" });
     const on = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
     if (!on) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     let text: string;
