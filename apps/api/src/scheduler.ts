@@ -260,6 +260,10 @@ export function startScheduler(): ScheduleStatus {
   // → tab "Briefing Mingguan" + WA ringkasan + link unduh PDF ke Direktur. Flag SENDIRI (default
   // off), tak ikut AGENT_SCHEDULE_ENABLED: mengirim WA. WAJIB terdaftar di DUA tempat (`enabled:` & gerbang `return`).
   const weeklyBriefingEnabled = (process.env.WEEKLY_BRIEFING_ENABLED ?? "false").toLowerCase() === "true";
+  // accurate-stock-sync (#STOK) & stok-gudang-sync (F37) — saklar sendiri, dipakai
+  // jauh di bawah; dideklarasikan di sini supaya ikut daftar `enabled` + gerbang `return`.
+  const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   // so-pacing (F21) — hari kerja 14:10, pacing sales bulan berjalan per region;
   // WA ke grup HoD HANYA kalau ada region <50% target prorata. Flag SENDIRI
   // (default off) — mengirim WA.
@@ -384,12 +388,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -757,7 +761,6 @@ export function startScheduler(): ScheduleStatus {
   // balasan menyebut waktu sinkron apa adanya. Sapuan penuh ±60 panggilan
   // list.do per run. Flag SENDIRI, sengaja TIDAK ikut AGENT_SCHEDULE_ENABLED:
   // menyalakannya keputusan sadar soal beban API Accurate.
-  const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   const stockSyncExpr = process.env.ACCURATE_STOCK_SYNC_CRON ?? "*/5 * * * *";
   if (accurateStockSyncEnabled && cron.validate(stockSyncExpr)) {
     cron.schedule(
@@ -787,7 +790,6 @@ export function startScheduler(): ScheduleStatus {
   // atas. Job ini menulis ke tabel yang punya sumber lain (CSV opname tim
   // gudang). Menyalakannya harus keputusan sadar, bukan efek samping
   // AGENT_SCHEDULE_ENABLED.
-  const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
   const stockBranchExpr = process.env.STOCK_BRANCH_SYNC_CRON ?? "0 2 * * *";
   const stockBranchLimit = Math.min(Math.max(Number(process.env.STOCK_BRANCH_SYNC_LIMIT) || 1500, 1), 6000);
   if (stockBranchEnabled && cron.validate(stockBranchExpr)) {
