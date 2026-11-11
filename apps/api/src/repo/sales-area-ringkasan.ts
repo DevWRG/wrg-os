@@ -1,6 +1,7 @@
-// Ringkasan WA "Sales Area Performance" — angka yang sama dengan kartu Sales
-// Performance (tab Executive Sales Analytics): YTD, bulan, minggu, hari ini per
-// region + % target, lalu top sales hari ini dan link ke halamannya.
+// "Sales Area Performance": infografis web /sales-analytics/area (kartu YTD /
+// bulan / minggu / hari per region + tabel per sales) dan ringkasan WA singkat
+// yang menautkan ke halaman itu — tanpa lampiran PDF/gambar (keputusan user
+// 11 Nov 2026). Angka = kartu Sales Performance (reportSalesPerformance).
 //
 // Penerima = grup (Koord HoD), bukan DM. Kirim lewat job `sales-area-ringkasan`
 // (saklar SALES_AREA_RINGKASAN_ENABLED, default mati) atau manual lewat
@@ -9,12 +10,11 @@
 
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
-import { reportSalesPerformance } from "./sales.js";
-import { analyticsPerAm } from "./sales-analytics.js";
+import { cabangRegionMap, reportSalesPerformance } from "./sales.js";
+import { amGroupKeySql, amLabelSql, joinAmFromSalesman } from "./salesman-am.js";
 
 type Performa = Awaited<ReturnType<typeof reportSalesPerformance>>;
 type Periode = Performa["periods"][number];
-export interface TopSales { nama: string; total: number }
 
 const koma = (n: number, d: number) => n.toFixed(d).replace(".", ",");
 
@@ -34,43 +34,109 @@ export function labelTanggal(iso: string): string {
   const { y, m, d } = tgl(iso);
   return `${HARI[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${d} ${BULAN[m - 1]} ${y}`;
 }
-const rentangPendek = (from: string, to: string) => {
-  const a = tgl(from), b = tgl(to);
-  if (from === to) return `${b.d} ${BULAN[b.m - 1]}`;
-  return a.m === b.m ? `${a.d}–${b.d} ${BULAN[b.m - 1]}` : `${a.d} ${BULAN[a.m - 1]} – ${b.d} ${BULAN[b.m - 1]}`;
-};
-
-const JUDUL: Partial<Record<Periode["key"], string>> = { year: "YTD", month: "Bulan ini", week: "Minggu ini", day: "Hari ini" };
-
-function blokPeriode(p: Periode): string[] {
-  const reg = Object.fromEntries(p.regions.map((r) => [r.region, r.total])) as Record<string, number>;
-  const rentang = p.key === "week" ? ` (${rentangPendek(p.from, p.to)})` : "";
-  const target = p.target.total == null ? "target belum diisi" : `${persen(p.pct.total)} dari target ${rpRingkas(p.target.total)}`;
-  const baris = [`*${JUDUL[p.key]}*${rentang}: ${rpRingkas(p.total)} · ${target}`];
-  const sub = [`East ${rpRingkas(reg.East ?? 0)} (${persen(p.pct.east)})`, `West ${rpRingkas(reg.West ?? 0)} (${persen(p.pct.west)})`];
-  if ((reg.OFFICE ?? 0) !== 0) sub.push(`OFFICE ${rpRingkas(reg.OFFICE)}`);
-  baris.push(sub.join(" · "));
-  return baris;
+/** Teks WA singkat + link infografis. Murni — angka dari reportSalesPerformance. */
+export function formatRingkasanSalesArea(perf: Performa, link: string | null): string {
+  const p = (k: Periode["key"]) => perf.periods.find((x) => x.key === k);
+  const pctTeks = (x: Periode | undefined) => (x ? persen(x.pct.total) : "-");
+  const hari = p("day");
+  const out = [
+    `*Sales Area Performance* · ${labelTanggal(perf.as_of)}`,
+    `Capaian target: YTD ${pctTeks(p("year"))} · Bulan ${pctTeks(p("month"))} · Minggu ${pctTeks(p("week"))} · Hari ini ${pctTeks(hari)}`,
+  ];
+  if (hari) {
+    const reg = Object.fromEntries(hari.regions.map((r) => [r.region, r.total])) as Record<string, number>;
+    out.push(`Hari ini ${rpRingkas(hari.total)} (East ${rpRingkas(reg.East ?? 0)} · West ${rpRingkas(reg.West ?? 0)})`);
+  }
+  if (link) out.push("", `Infografis lengkap: ${link}`);
+  return out.join("\n");
 }
 
-/** Teks WA. Murni — angka dari reportSalesPerformance + top sales hari as-of. */
-export function formatRingkasanSalesArea(perf: Performa, top: TopSales[], link: string | null): string {
-  const out = [`*Sales Area Performance* · ${labelTanggal(perf.as_of)}`, "_Omzet netto tanpa PPN, data faktur Accurate_", ""];
-  for (const key of ["year", "month", "week", "day"] as const) {
-    const p = perf.periods.find((x) => x.key === key);
-    if (p) out.push(...blokPeriode(p), "");
-  }
-  const ada = top.filter((t) => t.total !== 0);
-  if (ada.length) {
-    out.push("*Top sales hari ini*");
-    ada.forEach((t, i) => out.push(`${i + 1}. ${t.nama.replace(/[<>]/g, "")} ${rpRingkas(t.total)}`));
-    out.push("");
-  } else {
-    out.push("_Belum ada faktur hari ini._", "");
-  }
-  out.push("Target minggu = tahunan ÷ 52, hari = tahunan ÷ 260 hari kerja.");
-  if (link) out.push(`Detail: ${link}`);
-  return out.join("\n");
+// ── Tabel per sales (infografis) ─────────────────────────────────
+
+export interface BarisSales {
+  nama: string;
+  region: "East" | "West" | "OFFICE";
+  cabang: string | null;
+  hari: { kso: number; regular: number; lain: number; total: number };
+  ytd: number;
+  /** Target tahunan per AM (sales_target_am); null bila belum diisi / bukan AM. */
+  target: number | null;
+  pct_ytd: number | null;
+}
+
+/**
+ * Per pemilik faktur (AM, OFFICE, VACANT): YTD s/d as-of + hari as-of dipecah
+ * kategori pengadaan baris faktur (charField1: KSO / REGULAR / lainnya), faktur
+ * campur dialokasikan proporsional nilai baris — sama dengan tab Per-Pengadaan.
+ */
+export async function perSalesArea(asOf: string): Promise<BarisSales[]> {
+  const sql = db();
+  const awal = `${asOf.slice(0, 4)}-01-01`;
+  const regionMap = await cabangRegionMap(sql);
+  const rows = await sql`
+    WITH inv AS (
+      SELECT ai.id, ai.tanggal, ai.raw, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS netto,
+             ${amGroupKeySql(sql)} AS kunci, ${amLabelSql(sql)} AS nama, NULLIF(mu.am_id,'') AS am_id,
+             NULLIF(mu.cabang,'') AS cabang
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      ${joinAmFromSalesman(sql)}
+      WHERE ai.tanggal BETWEEN ${awal} AND ${asOf}
+    ),
+    cat AS (
+      SELECT inv.id, inv.kunci, inv.netto, COALESCE(NULLIF(d.val->>'charField1',''),'') AS kat,
+             COALESCE(sum(GREATEST((d.val->>'totalPrice')::numeric, 0)), 0)::float8 AS w
+      FROM inv
+      LEFT JOIN LATERAL jsonb_array_elements(COALESCE(inv.raw->'detailItem','[]'::jsonb)) AS d(val) ON true
+      WHERE inv.tanggal = ${asOf}
+      GROUP BY 1, 2, 3, 4
+    ),
+    sh AS (
+      SELECT kunci, kat,
+             CASE WHEN sum(w) OVER (PARTITION BY id) > 0 THEN netto * w / sum(w) OVER (PARTITION BY id)
+                  ELSE netto / count(*) OVER (PARTITION BY id) END AS porsi
+      FROM cat
+    ),
+    hari AS (
+      SELECT kunci,
+             sum(porsi) FILTER (WHERE kat ILIKE 'KSO%') AS kso,
+             sum(porsi) FILTER (WHERE kat ILIKE 'REG%') AS regular,
+             sum(porsi) FILTER (WHERE kat NOT ILIKE 'KSO%' AND kat NOT ILIKE 'REG%') AS lain,
+             sum(porsi) AS total
+      FROM sh GROUP BY kunci
+    ),
+    ytd AS (
+      SELECT kunci, max(nama) AS nama, max(am_id) AS am_id, sum(netto) AS ytd,
+             (array_agg(cabang ORDER BY tanggal DESC) FILTER (WHERE cabang IS NOT NULL))[1] AS cabang
+      FROM inv GROUP BY kunci
+    )
+    SELECT y.nama, y.cabang, y.ytd::float8 AS ytd, sta.target::float8 AS target,
+           COALESCE(h.kso,0)::float8 AS kso, COALESCE(h.regular,0)::float8 AS regular,
+           COALESCE(h.lain,0)::float8 AS lain, COALESCE(h.total,0)::float8 AS total
+    FROM ytd y
+    LEFT JOIN hari h USING (kunci)
+    LEFT JOIN sales_target_am sta ON sta.am_id = y.am_id AND sta.year = ${Number(asOf.slice(0, 4))}
+    ORDER BY COALESCE(h.total,0) DESC, y.ytd DESC`;
+  return rows.map((r) => {
+    const cabang = r.cabang ? String(r.cabang) : null;
+    const ytd = Number(r.ytd ?? 0);
+    const target = r.target != null && Number(r.target) > 0 ? Number(r.target) : null;
+    return {
+      nama: String(r.nama ?? "-"),
+      region: (cabang && regionMap[cabang]) || "OFFICE",
+      cabang,
+      hari: { kso: Number(r.kso), regular: Number(r.regular), lain: Number(r.lain), total: Number(r.total) },
+      ytd,
+      target,
+      pct_ytd: target ? Math.round((ytd / target) * 1000) / 10 : null,
+    };
+  });
+}
+
+export async function infografisSalesArea(asOf?: string) {
+  const performance = await reportSalesPerformance(asOf);
+  const per_sales = await perSalesArea(performance.as_of);
+  return { performance, per_sales, generated_at: new Date().toISOString() };
 }
 
 export interface HasilRingkasan {
@@ -85,10 +151,8 @@ export interface HasilRingkasan {
  */
 export async function runRingkasanSalesArea(opts: { dryRun?: boolean; target?: string; asOf?: string; paksa?: boolean } = {}): Promise<HasilRingkasan> {
   const perf = await reportSalesPerformance(opts.asOf);
-  const per = await analyticsPerAm(perf.as_of, perf.as_of);
-  const top = per.rows.slice(0, 5).map((r) => ({ nama: r.nama ?? "OFFICE", total: r.total }));
   const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
-  const preview = formatRingkasanSalesArea(perf, top, base ? `${base}/sales-analytics` : null);
+  const preview = formatRingkasanSalesArea(perf, base ? `${base}/sales-analytics/area?tanggal=${perf.as_of}` : null);
   const target = opts.target?.trim() || process.env.SALES_AREA_RINGKASAN_TARGET?.trim() || null;
   if (opts.dryRun) return { as_of: perf.as_of, preview, wa: { target, sent: false, skipped: "dry-run" } };
   if (!target) return { as_of: perf.as_of, preview, wa: { target: null, sent: false, error: "SALES_AREA_RINGKASAN_TARGET belum diisi" } };
