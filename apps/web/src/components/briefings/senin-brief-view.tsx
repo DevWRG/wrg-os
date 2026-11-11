@@ -1,5 +1,6 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -150,9 +151,19 @@ export function SeninBriefView({ briefs }: { briefs: SeninBrief[] }) {
               {b.wa_terkirim ? `WA Direktur terkirim ${b.wa_sent_at ? fmtWaktu(b.wa_sent_at) : ""}` : b.wa_error ? `WA gagal: ${b.wa_error}` : "WA belum dikirim"}
             </p>
           </div>
-          <span className={cn("rounded-md px-2.5 py-1 text-sm font-semibold", CHIP_HEALTH[b.health])}>
-            Overall Health: {b.health}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* F110 — PDF Pre-Meeting Briefing; gerbang izin di route BFF (menu /briefings). */}
+            <a
+              href={`/api/senin-brief/${b.iso_year}/${b.iso_week}/pdf`}
+              download
+              className="bg-card hover:bg-accent inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm"
+            >
+              <Download className="size-3.5" aria-hidden /> Unduh PDF
+            </a>
+            <span className={cn("rounded-md px-2.5 py-1 text-sm font-semibold", CHIP_HEALTH[b.health])}>
+              Overall Health: {b.health}
+            </span>
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap gap-2 text-xs">

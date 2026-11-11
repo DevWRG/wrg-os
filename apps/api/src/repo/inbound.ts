@@ -13,6 +13,7 @@ import { matchTeknisi, createTeknisiReport } from "./readinessboard.js";
 import { balasanOrder } from "./order-wa.js";
 import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { listStockBranch } from "./stock-branch.js";
+import { balasanBriefing } from "./senin-brief.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import {
@@ -115,6 +116,7 @@ export type InboundKind =
   | "servis"
   | "training"
   | "kalibrasi"
+  | "briefing"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -124,7 +126,7 @@ export type InboundKind =
 // (dev menutup kelas bug ini dengan INBOUND_HASHTAGS sebagai sumber tunggal.)
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
-  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order", "revisi",
+  "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "briefing", "kso", "jadwal", "order", "revisi",
   "install", "servis", "training", "kalibrasi", "bon", "opname", "stok",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
@@ -166,6 +168,11 @@ const STOK_LINE = /^\s*#\s*stok\b/i;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
 // F8 — laporan lapangan Teknisi (Aftersales).
 const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
+// F110 — #BRIEFING: ringkasan Senin Brief F85 untuk Direktur (baca saja). `\b`
+// membedakannya dari #BRIEF (F131): "#briefing" tak ikut terpicu #BRIEF.
+const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
+// Peran app_user yang boleh membaca Senin Brief lewat WA.
+const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
 const SHIPPING_LINE = /^\s*#\s*(kirim|terima|bast|bukti)\b\s*(.*)$/i;
 
 function extractHashtagArg(body: string | null, lineRegex: RegExp): string {
@@ -203,6 +210,7 @@ export function detectKind(body: string | null): InboundKind {
       if (OPNAME_LINE.test(line)) return "opname";
       if (STOK_LINE.test(line)) return "stok";
       if (REVISI_LINE.test(line)) return "revisi";
+      if (BRIEFING_LINE.test(line)) return "briefing";
       const rd = line.match(READINESS_LINE);
       if (rd) return rd[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
     }
@@ -1895,6 +1903,28 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     const text = await buildStokReply(st.am_id, query);
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "stok", via: st.via, reply });
+  }
+
+  // #BRIEFING — F110: ringkasan Senin Brief (kesiapan 8 HoD) untuk Direktur.
+  // ISI-nya menilai orang (TIDAK SIAP per HoD), jadi gerbangnya ketat: hanya
+  // app_user Direktur/admin dengan nomor WA terdaftar, dan HANYA lewat chat
+  // privat — resolveApprover menolak JID grup, sehingga balasan tak pernah
+  // sampai ke grup. Pengirim lain DIAM (tak mengungkap fiturnya). Di main
+  // sengaja TANPA bypass grup uji / BRIEFING_WA_OPEN (yang ada di dev).
+  if (kind === "briefing") {
+    const dir = await resolveApprover(row.sender_jid);
+    if (!dir || !BRIEFING_ROLES.has(dir.role.toLowerCase())) {
+      return finish({ skipped: "bukan-direktur", sender_name: row.sender_name });
+    }
+    let text: string;
+    try {
+      text = await balasanBriefing(extractHashtagArg(row.body, BRIEFING_LINE));
+    } catch (e) {
+      console.error("[inbound] #BRIEFING gagal diproses:", (e as Error).message);
+      text = "⚠️ #BRIEFING gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "briefing", via: dir.name, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
