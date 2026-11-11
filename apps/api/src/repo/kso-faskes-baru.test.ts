@@ -7,7 +7,7 @@ import {
   semuaKataFaskes, skorFaskes, SKOR_FASKES_MIRIP, type AlatKatalog, type FaskesKatalog, type HasilOcrCprr,
 } from "./kso-format.js";
 import {
-  alatDariPdf, balasanSaranAlat, balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, ksoBolehLampiran, parseKsoPerintah,
+  alatDariPdf, balasanSaranFaskes, catatanFaskesBaru, faskesTerbuka, formatBalasanGerbang, ksoBolehLampiran, parseKsoPerintah,
   pertanyaanTertunda, tampilCalonFaskes, teksAlatDariPdf, ubahKonfirmasiFaskes, type DraftTampil,
 } from "./kso-intake.js";
 import { saranAkunMaster } from "./kso-komite.js";
