@@ -11,6 +11,7 @@ import { resolveSender } from "./master.js";
 import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import { matchTeknisi, createTeknisiReport } from "./readinessboard.js";
 import { balasanOrder } from "./order-wa.js";
+import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import {
@@ -105,6 +106,8 @@ export type InboundKind =
   | "kso"
   | "jadwal"
   | "order"
+  | "bon"
+  | "opname"
   | "revisi"
   | "install"
   | "servis"
@@ -120,7 +123,7 @@ export type InboundKind =
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
   "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order", "revisi",
-  "install", "servis", "training", "kalibrasi",
+  "install", "servis", "training", "kalibrasi", "bon", "opname",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -151,6 +154,9 @@ const BRIEF_LINE = /^\s*#\s*brief\b/i;
 const JADWAL_LINE = /^\s*#\s*jadwal\b/i;
 // F90 — #ORDER: pesanan AM → draft → "#ORDER ya O12" → antrean Admin Sales.
 const ORDER_LINE = /^\s*#\s*order\b/i;
+// F155 — #BON: teknisi melapor sparepart bawaan; #OPNAME: rekap bon untuk gudang/HoD.
+const BON_LINE = /^\s*#\s*bon\b/i;
+const OPNAME_LINE = /^\s*#\s*opname\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -189,6 +195,8 @@ export function detectKind(body: string | null): InboundKind {
       if (BRIEF_LINE.test(line)) return "brief";
       if (JADWAL_LINE.test(line)) return "jadwal";
       if (ORDER_LINE.test(line)) return "order";
+      if (BON_LINE.test(line)) return "bon";
+      if (OPNAME_LINE.test(line)) return "opname";
       if (REVISI_LINE.test(line)) return "revisi";
       const rd = line.match(READINESS_LINE);
       if (rd) return rd[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
@@ -292,6 +300,11 @@ function groupAllowed(jid: string): boolean {
 // persis "true" (rilis bertahap; menu web Aftersales tetap jalan). Mati = diam.
 function aftersalesWaAktif(): boolean {
   return (process.env.AFTERSALES_WA_ENABLED ?? "").toLowerCase() === "true";
+}
+// F155 — #BON/#OPNAME diproses hanya bila BON_SPAREPART_WA_ENABLED persis "true"
+// (rilis bertahap, pola AFTERSALES_WA_ENABLED; menu web Bon Sparepart tetap jalan).
+function bonWaAktif(): boolean {
+  return (process.env.BON_SPAREPART_WA_ENABLED ?? "").toLowerCase() === "true";
 }
 
 export interface WaRow {
@@ -1745,6 +1758,45 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "jadwal", via: jd.via, reply });
+  }
+
+  // #BON — F155: teknisi melapor sparepart yang dibawa dari gudang (satu barang per baris, "x2").
+  // Pengirim = teknisi roster (matchTeknisi), pola #install. Dicocokkan ke bon gudang miliknya;
+  // tanpa bon gudang → bon bertanda 'teknisi' yang muncul di #OPNAME.
+  if (kind === "bon") {
+    if (!bonWaAktif()) return finish({ skipped: "bon-wa-off" });
+    const tb = await matchTeknisi({ pushname: row.sender_name, senderJid: row.sender_jid, groupJid: row.group_jid });
+    if (!tb) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    try {
+      text = await balasanBonTeknisi({ id: tb.id, nama: tb.nama }, row.body ?? "", row.message_id ?? null);
+    } catch (e) {
+      console.error("[inbound] #BON gagal diproses:", (e as Error).message);
+      text = "⚠️ #BON gagal diproses, coba lagi sebentar lagi.";
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "bon", teknisi: tb.nama, reply });
+  }
+
+  // #OPNAME — F155: bon sparepart yang sudah dilaporkan vs belum + rekonsiliasi ke SJ. Read-only
+  // (selain menautkan bon ke SJ yang cocok). Untuk gudang/HoD/admin; teknisi ditolak.
+  if (kind === "opname") {
+    if (!bonWaAktif()) return finish({ skipped: "bon-wa-off" });
+    const on = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!on) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    let text: string;
+    if (/^teknisi$/i.test(String(on.role ?? "").trim())) {
+      text = `#OPNAME untuk tim gudang/HoD, ${on.nama}. Cek bon Anda dengan #BON status.`;
+    } else {
+      try {
+        text = await balasanOpnameWa();
+      } catch (e) {
+        console.error("[inbound] #OPNAME gagal diproses:", (e as Error).message);
+        text = "⚠️ #OPNAME gagal diproses, coba lagi sebentar lagi.";
+      }
+    }
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "opname", via: on.via, reply });
   }
 
   // #ORDER — F90: pesanan AM. AM dari pengirim (ketat), tak pernah dari isi pesan; harga di
