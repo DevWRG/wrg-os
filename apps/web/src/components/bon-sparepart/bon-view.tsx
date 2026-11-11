@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { usePrompt } from "@/components/ui/use-prompt";
 import { cn } from "@/lib/utils";
 
 // F155 Bon Sparepart Teknisi (apps/api/src/repo/bon-sparepart.ts). Gudang mencatat bon di sini;
@@ -44,6 +45,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
   const [sibuk, setSibuk] = useState(false);
   const [pesan, setPesan] = useState<{ ok: boolean; teks: string } | null>(null);
   const [form, setForm] = useState(false);
+  const { prompt, dialog } = usePrompt();
   const [tautId, setTautId] = useState<number | null>(null);
   const [kandidat, setKandidat] = useState<{ sj_id: number; number: string }[]>([]);
   const [nomorSj, setNomorSj] = useState("");
@@ -113,9 +115,11 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
       return `Bon ${String(r.data.kode)} dicatat — teknisi tinggal melapor lewat #BON.`;
     });
   }
-  async function batal(b: Bon) {
-    const alasan = prompt(`Alasan membatalkan ${b.kode}?`)?.trim();
-    if (!alasan) return;
+  function batal(b: Bon) {
+    prompt({ title: `Batalkan ${b.kode}?`, placeholder: "Alasan membatalkan", required: true, multiline: true, confirmLabel: "Batalkan bon", destructive: true },
+      (alasan) => void batalJalan(b, alasan));
+  }
+  async function batalJalan(b: Bon, alasan: string) {
     await jalankan(async () => {
       const r = await api(`/api/bon-sparepart/${b.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ aksi: "batal", alasan }) });
       if (!r.ok) throw gagal(r.data);
@@ -168,7 +172,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
   const aksi = (b: Bon) => bisaUbah && (b.status === "dibuat" || b.status === "dilaporkan") && (
     <div className="flex flex-wrap gap-1">
       <button type="button" disabled={sibuk} onClick={() => void bukaTaut(b)} className="rounded border border-emerald-600 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10">Tautkan SJ</button>
-      <button type="button" disabled={sibuk} onClick={() => void batal(b)} className="rounded border px-2 py-0.5 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:text-rose-400 dark:hover:bg-rose-500/10">Batal</button>
+      <button type="button" disabled={sibuk} onClick={() => batal(b)} className="rounded border px-2 py-0.5 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:text-rose-400 dark:hover:bg-rose-500/10">Batal</button>
     </div>
   );
 
@@ -312,6 +316,7 @@ export function BonView({ awal, bisaUbah }: { awal: DataBon; bisaUbah: boolean }
           </CardContent>
         </Card>
       )}
+      {dialog}
     </div>
   );
 }
