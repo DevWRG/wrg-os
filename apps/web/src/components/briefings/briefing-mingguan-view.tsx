@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { Download } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 // F63 Weekly Briefing Direktur — briefing untuk minggu yang baru mulai, disusun Senin 07:00
 // dari rekap + resume minggu lalu (tabel briefing_mingguan). Isi = teks terformat (bagian A–H)
-// dari LLM, ditampilkan apa adanya; WA ke Direktur hanya berisi LINK ke tab ini.
+// dari LLM, ditampilkan apa adanya. WA ke Direktur = ringkasan singkat + link unduh PDF
+// (angka WatchPoint + papan skor HoD + narasi).
 
 export interface BriefingMingguan {
   id: string;
@@ -65,14 +67,23 @@ export function BriefingMingguanView({ briefs }: { briefs: BriefingMingguan[] })
 
       <Card>
         <CardHeader className="space-y-0 pb-2">
-          <CardTitle className="text-base">
-            Briefing Mingguan W{b.iso_week} — {b.periode}
-          </CardTitle>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <CardTitle className="text-base">
+              Briefing Mingguan W{b.iso_week} — {b.periode}
+            </CardTitle>
+            <a
+              href={`/api/briefing-mingguan/${b.iso_year}/${b.iso_week}/pdf`}
+              download
+              className="bg-card hover:bg-accent inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm"
+            >
+              <Download className="size-3.5" aria-hidden /> Unduh PDF
+            </a>
+          </div>
           <p className="text-muted-foreground mt-1 text-xs">
             Dasar: {b.n_rekap} rekap + {b.n_resume} resume {fmtTgl(b.dasar_dari)}–{fmtTgl(b.dasar_sampai)} · disusun{" "}
             {fmtWaktu(b.generated_at)} · {b.model_used ?? "tanpa LLM"} ·{" "}
             {b.wa_terkirim
-              ? `Link WA terkirim ${b.wa_sent_at ? fmtWaktu(b.wa_sent_at) : ""}`
+              ? `Ringkasan WA terkirim ${b.wa_sent_at ? fmtWaktu(b.wa_sent_at) : ""}`
               : b.wa_error
                 ? `WA tidak terkirim: ${b.wa_error}`
                 : "WA belum dikirim"}

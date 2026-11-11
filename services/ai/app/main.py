@@ -839,8 +839,23 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
             "diputuskan, dan diantisipasi minggu ini.",
             1,
         )
+        # F63 dibaca sebagai PDF; dulu jawaban terpotong di batas token sebelum F–H
+        # (uji 11 Nov 2026 berhenti di tengah E). Semua bagian WAJIB ada, panjang dijaga.
+        system += (
+            "\n\nPANJANG: tulis SEMUA bagian A sampai H — bagian F, G, H tidak boleh hilang. "
+            "Total sekitar 1.800-2.200 kata. Per bagian maksimal 6 butir; satu butir maksimal 2 kalimat. "
+            "Bila bahan banyak, ringkas dan gabungkan — jangan memotong bagian akhir."
+        )
     pola_block = "\n\n".join(f"=== POLA GRUP {p.jid} ===\n{p.content}" for p in req.pola) or "(belum ada profile pola)"
     resume_block = "\n\n".join(f"====== {r.label} ======\n{r.text}" for r in req.resumes) or "(tak ada resume)"
+    if senin and req.angka:
+        # F63: angka sistem jadi bahan — dikutip apa adanya, tak dihitung ulang/ditebak.
+        system += (
+            "\n\nANGKA SISTEM: user menyertakan blok 'DATA ANGKA SISTEM' (papan WatchPoint minggu lalu). "
+            "Di bagian A, B, F, dan H rujuk angka itu bila relevan dan KUTIP APA ADANYA (nilai, target, status). "
+            "Jangan menghitung ulang, membulatkan ulang, atau menambah angka yang tak ada di data. "
+            "Bila percakapan grup bertentangan dengan angka sistem, sebutkan keduanya dan tandai perlu dicek."
+        )
     data_label = "rekap & resume harian minggu lalu" if senin else "resume harian seminggu terakhir"
     user = (
         f"{_dir_block('DIREKTORI GRUP (substitusi JID → nama)', req.groups)}\n\n"
@@ -849,10 +864,12 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
         "============================================\n"
         f"DATA INPUT — {data_label} ({req.minggu_label}):\n\n{resume_block}"
     )
+    if senin and req.angka:
+        user = f"DATA ANGKA SISTEM (WatchPoint, akurat — kutip apa adanya):\n{req.angka}\n\n============================================\n{user}"
     fallback = f"[DRY RUN — tanpa LLM]\n\nSYSTEM:\n{system}\n\nUSER:\n{user[:2000]}"
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
-    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=4000, models=exec_models())
+    text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=8000 if senin else 4000, models=exec_models())
     return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")
 
 

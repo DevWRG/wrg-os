@@ -340,6 +340,8 @@ class WeekendBriefingRequest(BaseModel):
     members: Optional[Dict[str, str]] = None
     groups: Optional[Dict[str, str]] = None
     pola: List[PolaProfile] = Field(default_factory=list)
+    # F63: angka papan WatchPoint minggu dasar (teks siap pakai dari apps/api). Kosong = tanpa angka.
+    angka: Optional[str] = None
     dry_run: bool = False
 
 
