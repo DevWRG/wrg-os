@@ -1,7 +1,7 @@
 // 308 — Daily Summary ringkas + halaman /ds/<token>: pengurai ringkasan LLM, pesan WA ringkas, token. Data fiktif.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buatTokenDs, formatWaRingkas, tautanDs, TOKEN_DS, uraiRingkasan } from "./dailysummary-link.js";
+import { buatTokenDs, formatWaRingkas, MAKS_NAMA_WA, ringkasNama, tautanDs, TOKEN_DS, uraiRingkasan } from "./dailysummary-link.js";
 import { paksaDaftar, paksaOverview, type DaftarNama, type StatsDaily } from "./dailysummary.js";
 
 // Bentuk keluaran LLM persis seperti di grup (judul area miring, "• Nama — isi", Highlight), nama fiktif.
@@ -72,4 +72,14 @@ test("token: 22 huruf base64url, acak; tautan tanpa garis miring ganda", () => {
   assert.notEqual(a, b);
   assert.equal(tautanDs("https://os.contoh.id/", a), `https://os.contoh.id/ds/${a}`);
   assert.equal(TOKEN_DS.test("../../etc/passwd-xxxxx"), false);
+});
+
+test("WA: daftar nama dibatasi 15 + \"+N lainnya\" (uji dev: 51 belum plan); ≤ 15 utuh", () => {
+  const banyak = Array.from({ length: 51 }, (_, i) => `Nama${i + 1}`);
+  assert.equal(ringkasNama(banyak), `${banyak.slice(0, MAKS_NAMA_WA).join(", ")} +36 lainnya`);
+  assert.equal(ringkasNama(["A", "B"]), "A, B");
+  const t = formatWaRingkas({ hari: "Rabu", tanggal: "11 November 2026", stats: ST,
+    pendek: { non_reporters: [], no_plan: banyak, on_leave: [] }, highlight: null, link: "x" });
+  assert.match(t, /📝 \*Belum plan \(51\)\*\nNama1, .*Nama15 \+36 lainnya/);
+  assert.doesNotMatch(t, /Nama16/);
 });

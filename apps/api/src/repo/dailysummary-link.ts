@@ -79,6 +79,12 @@ export interface WaRingkasInput {
 
 const potong = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
 
+/** Maks nama per daftar di WA — daftar lengkap ada di halaman /ds/ (hari libur/gangguan bisa puluhan nama). */
+export const MAKS_NAMA_WA = 15;
+export function ringkasNama(nama: string[], maks = MAKS_NAMA_WA): string {
+  return nama.length <= maks ? nama.join(", ") : `${nama.slice(0, maks).join(", ")} +${nama.length - maks} lainnya`;
+}
+
 /** Pesan WA ringkas untuk grup HOD Squad. Tanpa kurung sudut (WhatsApp membuang "<...>"). */
 export function formatWaRingkas(x: WaRingkasInput): string {
   const s = x.stats;
@@ -87,10 +93,10 @@ export function formatWaRingkas(x: WaRingkasInput): string {
   if (s.total_report > 0) out.push(`🎯 ${matchedPct(s)}% sesuai plan · ${s.unmatched} di luar plan`);
   out.push("");
   const { non_reporters: nr, no_plan: np, on_leave: cuti } = x.pendek;
-  if (nr.length) out.push(`⚠️ *Belum report (${nr.length})*`, nr.join(", "));
-  if (np.length) out.push(`📝 *Belum plan (${np.length})*`, np.join(", "));
+  if (nr.length) out.push(`⚠️ *Belum report (${nr.length})*`, ringkasNama(nr));
+  if (np.length) out.push(`📝 *Belum plan (${np.length})*`, ringkasNama(np));
   if (!nr.length && !np.length) out.push("👍 Semua yang wajib sudah plan & report.");
-  if (cuti.length) out.push(`🌴 Ijin (${cuti.length}): ${cuti.join(", ")}`);
+  if (cuti.length) out.push(`🌴 Ijin (${cuti.length}): ${ringkasNama(cuti)}`);
   if (x.highlight) out.push("", `💡 ${potong(x.highlight, 160)}`);
   out.push("", "🔗 Detail per area & per orang:", x.link);
   return out.join("\n");
