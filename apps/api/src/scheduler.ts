@@ -32,6 +32,7 @@ import { runMaintenanceReminders } from "./repo/maintenance.js";
 import { runPlanCheck, runReportCheck } from "./repo/compliance.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runSeninBrief } from "./repo/senin-brief.js";
+import { runDirekturInbox } from "./repo/direktur-inbox.js";
 import { runWeeklyBriefing } from "./repo/weekly-briefing.js";
 import { runSoPacingAlert } from "./repo/so-pacing.js";
 import { runDailySummary } from "./repo/dailysummary.js";
@@ -260,6 +261,11 @@ export function startScheduler(): ScheduleStatus {
   // → tab "Briefing Mingguan" + WA ringkasan + link unduh PDF ke Direktur. Flag SENDIRI (default
   // off), tak ikut AGENT_SCHEDULE_ENABLED: mengirim WA. WAJIB terdaftar di DUA tempat (`enabled:` & gerbang `return`).
   const weeklyBriefingEnabled = (process.env.WEEKLY_BRIEFING_ENABLED ?? "false").toLowerCase() === "true";
+  // direktur-inbox (F59) — hari kerja pagi, digest WA antrean approval yang menunggu
+  // Direktur (kosong = tak kirim). Flag SENDIRI (default off), tak ikut
+  // AGENT_SCHEDULE_ENABLED: mengirim WA ke Direktur. WAJIB terdaftar di DUA tempat
+  // di bawah (daftar `enabled:` DAN gerbang `return`) — lupa yang kedua = job tak jalan.
+  const direkturInboxEnabled = (process.env.DIREKTUR_INBOX_ENABLED ?? "false").toLowerCase() === "true";
   // accurate-stock-sync (#STOK) & stok-gudang-sync (F37) — saklar sendiri, dipakai
   // jauh di bawah; dideklarasikan di sini supaya ikut daftar `enabled` + gerbang `return`.
   const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
@@ -388,12 +394,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || direkturInboxEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !direkturInboxEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1271,6 +1277,30 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`senin-brief=${sbExpr}`);
+  }
+
+  // direktur-inbox (F59) — 07:30 hari kerja; hari libur dilewati. Isi kosong tak dikirim,
+  // isi sama di hari yang sama tak dikirim ulang (notif_state).
+  const diExpr = process.env.DIREKTUR_INBOX_CRON ?? "30 7 * * 1-5";
+  if (direkturInboxEnabled && cron.validate(diExpr)) {
+    cron.schedule(
+      diExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          if (!(await isWorkday())) {
+            console.log(`[scheduler] direktur-inbox skip (bukan hari kerja)`);
+            return;
+          }
+          const r = await runDirekturInbox({});
+          console.log(`[scheduler] direktur-inbox @ ${startedAt} ${JSON.stringify({ total: r.total, gagal: r.gagal, wa: r.wa }).slice(0, 300)}`);
+        } catch (e) {
+          console.error(`[scheduler] direktur-inbox gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`direktur-inbox=${diExpr}`);
   }
 
   // weekly-briefing (F63) — Senin 07:00, setelah resume/rekap Minggu malam tersedia.
