@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 
 import { persenFee } from "@/lib/kso-komite-daftar";
 
-import { BadgeFaskesBaru, LabelStatus } from "./label-status";
+import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
 import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
@@ -86,7 +86,7 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
           <LabelStatus status={r.status} />
         </div>
         <h2 className="mt-1 text-lg font-bold leading-tight">{r.faskes_nama}{r.faskes_baru && <BadgeFaskesBaru kota={r.faskes_kota} className="ml-2 align-middle" />}</h2>
-        <p className="text-muted-foreground text-sm">{r.jumlah} × {r.alat_nama} · AM {r.am_nama}{r.cabang ? ` · ${r.cabang}` : ""}</p>
+        <p className="text-muted-foreground text-sm">{r.jumlah} × {r.alat_nama}{r.alat_baru && <BadgeAlatBaru className="ml-1.5 align-middle" />} · AM {r.am_nama}{r.cabang ? ` · ${r.cabang}` : ""}</p>
       </header>
       {bolehAksi && r.faskes_baru && d.faskes_saran_master && <FormTautkanFaskes d={d} jalankan={jalankan} />}
       <AngkaKunci d={d} />
