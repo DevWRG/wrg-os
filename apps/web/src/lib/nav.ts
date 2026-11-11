@@ -472,10 +472,10 @@ export const NAV: NavGroup[] = [
       // Affairs" — dua grup untuk satu domain. Digabung 30 Sep 2026; key fitur
       // tak berubah (diturunkan dari url), hanya `section` di katalog fitur.
       // F132 Aset Master — single source of truth aset kantor, fondasi F133
-      // (assignment/transfer) & F137 (maintenance). 1 menu, 3 tab
-      // (Aset/Kategori/Tiket IT) — arahan Direktur eksplisit F52 gabung ke F132
-      // juga di level MENU, bukan cuma tabel. Tab Tiket IT dilayani /ga-assets
-      // & /it-tickets sekaligus (lihat `features`).
+      // (assignment/transfer) & F137 (maintenance). 1 menu, 4 tab
+      // (Aset/Kategori/Maintenance/Vendor) — arahan Direktur eksplisit F52 gabung
+      // ke F132 juga di level MENU. Tab Tiket IT dicabut 11 Nov 2026 (diserap
+      // Helpdesk GA, migrasi 306) — fitur "it-asset" ikut dibuang dari katalog.
       {
         title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
         // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
@@ -484,7 +484,6 @@ export const NAV: NavGroup[] = [
         // lalu jatuh diam-diam ke fallback title "finance", centang di Akses
         // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
         features: [
-          { key: "it-asset", name: "Tiket IT (tab di Aset GA)" },
           { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
         ],
       },

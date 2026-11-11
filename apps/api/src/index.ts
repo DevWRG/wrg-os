@@ -537,11 +537,6 @@ import {
   setAssetFile,
 } from "./repo/ga-asset.js";
 import {
-  listTickets as itTicketListTickets,
-  createTicket as itTicketCreateTicket,
-  updateTicketStatus,
-} from "./repo/it-ticket.js";
-import {
   listVendors,
   getVendor,
   createVendor,
@@ -9202,62 +9197,8 @@ app.patch("/ga-assets/:id", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// ── F52 IT Asset & Issue Tracker (menyerap F132 — asset_id sekarang FK ga_assets) ──
-app.get("/it-tickets", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const status = c.req.query("status");
-  const rows = await itTicketListTickets(status && status !== "semua" ? status : undefined);
-  return c.json({ count: rows.length, tickets: rows });
-});
-
-app.post("/it-tickets", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: {
-    asset_id?: string;
-    masalah?: string;
-    reported_by?: string;
-    assigned_to?: string;
-    reported_by_user_id?: string;
-    assigned_to_user_id?: string;
-  };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (!body.asset_id || !body.masalah) return c.json({ error: "asset_id & masalah wajib diisi" }, 400);
-  // Pelapor/PIC tetap OPSIONAL & boleh teks (087: belum tentu karyawan
-  // terdaftar). Yang baru cuma jalur ber-akun di sampingnya (migrasi 164).
-  const r = await itTicketCreateTicket({
-    asset_id: body.asset_id,
-    masalah: body.masalah,
-    reported_by: body.reported_by,
-    assigned_to: body.assigned_to,
-    reported_by_user_id: body.reported_by_user_id,
-    assigned_to_user_id: body.assigned_to_user_id,
-  });
-  return c.json(r, "error" in r ? 400 : 201);
-});
-
-app.patch("/it-tickets/:id/status", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { status?: string; assigned_to?: string; assigned_to_user_id?: string; resolved_note?: string };
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-  if (body.status !== "open" && body.status !== "in_progress" && body.status !== "resolved") {
-    return c.json({ error: "status harus open|in_progress|resolved" }, 400);
-  }
-  const r = await updateTicketStatus(c.req.param("id"), {
-    status: body.status,
-    assigned_to: body.assigned_to,
-    assigned_to_user_id: body.assigned_to_user_id,
-    resolved_note: body.resolved_note,
-  });
-  return c.json(r, r.ok ? 200 : 400);
-});
+// ── F52 Tiket IT — DISERAP Helpdesk GA (F139) sejak migrasi 306. Route
+// /it-tickets dicabut; tiket kerusakan aset dibuat lewat /ga-tickets + asset_id.
 
 // ── F140 Vendor Management + Contract Expiry Alerts (Purchasing/GA, role min HOD) ──
 // Route "/vendor-management" (BUKAN "/vendors") sengaja dipilih beda dari
@@ -10012,7 +9953,8 @@ app.get("/ga-tickets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const status = c.req.query("status") || undefined;
   const overdue = c.req.query("overdue") === "1";
-  const tickets = await listGaTickets({ status, overdue });
+  const asset_id = c.req.query("asset_id") || undefined;
+  const tickets = await listGaTickets({ status, overdue, asset_id });
   return c.json({ count: tickets.length, tickets });
 });
 
@@ -10028,6 +9970,7 @@ app.post("/ga-tickets", async (c) => {
   let body: {
     title?: string; description?: string; category_id?: string; priority?: string;
     reporter_user_id?: string; reporter_name_override?: string; location?: string; sla_hours_override?: number;
+    asset_id?: string;
   };
   try {
     body = await c.req.json();
@@ -10044,7 +9987,7 @@ app.post("/ga-tickets", async (c) => {
     title: body.title, description: body.description ?? null, category_id: body.category_id,
     priority: body.priority ?? null, reporter_user_id: body.reporter_user_id ?? null,
     reporter_name_override: body.reporter_name_override ?? null, location: body.location ?? null,
-    sla_hours_override: body.sla_hours_override ?? null,
+    sla_hours_override: body.sla_hours_override ?? null, asset_id: body.asset_id || null,
   });
   return c.json(r, "ok" in r && r.ok === false ? 400 : 201);
 });

@@ -188,23 +188,30 @@ interface ItAssetSummary {
   period?: { resolved_count: number; breach_resolved_late_count: number };
 }
 
+// Sejak migrasi 306 tiket kerusakan aset hidup di Helpdesk GA (ga_tickets ber-
+// asset_id), bukan it_ticket lagi. Pemetaan status ke bentuk lama blok ini:
+// "baru" = open, "dikerjakan" = in_progress + waiting, "selesai" = completed/
+// closed (cancelled tak dihitung selesai maupun aktif).
 async function itAssetSummary(from: string, to: string): Promise<ItAssetSummary> {
   const sql = db();
   try {
     const [row] = await sql`
       SELECT
         count(*) FILTER (WHERE t.status = 'open')::int AS open_count,
-        count(*) FILTER (WHERE t.status = 'in_progress')::int AS in_progress_count,
-        count(*) FILTER (WHERE t.status <> 'resolved' AND t.sla_due_at < now())::int AS breach_active_count,
-        count(*) FILTER (WHERE a.is_critical AND t.status <> 'resolved' AND t.sla_due_at < now())::int AS breach_active_critical_count,
+        count(*) FILTER (WHERE t.status IN ('in_progress','waiting'))::int AS in_progress_count,
+        count(*) FILTER (WHERE t.status IN ('open','in_progress','waiting') AND t.sla_due_at < now())::int AS breach_active_count,
         count(*) FILTER (
-          WHERE t.status = 'resolved' AND t.resolved_at IS NOT NULL AND t.resolved_at::date BETWEEN ${from}::date AND ${to}::date
+          WHERE a.is_critical AND t.status IN ('open','in_progress','waiting') AND t.sla_due_at < now()
+        )::int AS breach_active_critical_count,
+        count(*) FILTER (
+          WHERE t.status IN ('completed','closed') AND t.completed_at IS NOT NULL
+            AND t.completed_at::date BETWEEN ${from}::date AND ${to}::date
         )::int AS resolved_count,
         count(*) FILTER (
-          WHERE t.status = 'resolved' AND t.resolved_at IS NOT NULL AND t.resolved_at > t.sla_due_at
-            AND t.resolved_at::date BETWEEN ${from}::date AND ${to}::date
+          WHERE t.status IN ('completed','closed') AND t.completed_at IS NOT NULL AND t.completed_at > t.sla_due_at
+            AND t.completed_at::date BETWEEN ${from}::date AND ${to}::date
         )::int AS breach_resolved_late_count
-      FROM it_ticket t JOIN ga_assets a ON a.id = t.asset_id`;
+      FROM ga_tickets t JOIN ga_assets a ON a.id = t.asset_id`;
 
     return {
       available: true,
@@ -220,7 +227,7 @@ async function itAssetSummary(from: string, to: string): Promise<ItAssetSummary>
       },
     };
   } catch {
-    // it_ticket belum ada (F52 belum merge) — fallback aman, bukan crash.
+    // ga_tickets.asset_id belum ada (migrasi 306 belum jalan) — fallback aman.
     return { available: false };
   }
 }

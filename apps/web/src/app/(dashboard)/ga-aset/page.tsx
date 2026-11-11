@@ -3,7 +3,6 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { GaAssetView } from "@/components/crm/ga-asset-view";
 import type { GaAsset } from "@/components/tables/ga-assets-table";
 import type { GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
-import type { ItTicket } from "@/components/tables/it-tickets-table";
 import { sessionUser } from "@/lib/admin-guard";
 import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
 import type { GaMaintenance } from "@/components/tables/ga-maintenance-table";
@@ -46,19 +45,6 @@ async function getAppUsers(): Promise<AppUserOption[]> {
   }
 }
 
-// Tab "Tiket IT" (F52) — diserap ke sini per arahan Direktur (1 menu, bukan
-// route sendiri), sama pola F52 sendiri sebelumnya (Aset+Tiket 1 halaman).
-async function getTickets(): Promise<ItTicket[] | null> {
-  try {
-    const res = await gatewayFetch("/it-tickets");
-    if (!res.ok) return null;
-    const data = (await res.json()) as { tickets: ItTicket[] };
-    return data.tickets ?? [];
-  } catch {
-    return null;
-  }
-}
-
 // F137 — jadwal maintenance + vendor GA, tab tambahan di halaman yang sama.
 async function getSchedules(): Promise<GaMaintenance[]> {
   try {
@@ -83,17 +69,17 @@ async function getVendors(): Promise<GaVendor[]> {
 }
 
 export default async function GaAsetPage() {
-  const [assets, categories, tickets, users, schedules, vendors, me] = await Promise.all([
-    getAssets(), getCategories(), getTickets(), getAppUsers(), getSchedules(), getVendors(), sessionUser(),
+  const [assets, categories, users, schedules, vendors, me] = await Promise.all([
+    getAssets(), getCategories(), getAppUsers(), getSchedules(), getVendors(), sessionUser(),
   ]);
   return (
     <>
       <PageHeader
         title="Aset GA"
-        description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software) + tiket masalah aset IT, jadwal maintenance & vendor GA — single source of truth aset."
+        description="Katalog inventaris kantor (laptop, HP, kendaraan, mebel, software), jadwal maintenance & vendor GA — single source of truth aset. Kerusakan aset dilaporkan lewat Helpdesk GA."
       />
       <GaAssetView
-        assets={assets} categories={categories} tickets={tickets} users={users}
+        assets={assets} categories={categories} users={users}
         schedules={schedules} vendors={vendors} canApproveFinance={canApproveGaFinance(me)}
       />
     </>
