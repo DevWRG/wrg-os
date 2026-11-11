@@ -9,7 +9,7 @@
 | Prioritas | MUST |
 | Sprint | S18-S22 |
 | Status | DRAFT-SB2 |
-| Owner | Mufid (HoD Aftersales) |
+| Owner | HoD Aftersales |
 | Branch | `feat/f8-teknisi-readiness-board` (di atas `feat/f24-pm-kalibrasi-schedule`, yang sudah include F22) |
 
 ## Ringkasan
@@ -25,14 +25,14 @@ Board ini **terhubung** ke `installation_unit` (F22, penjadwalan install tertaut
 ## Cara kerja
 
 - **Tabel** (`infra/postgres/init/136_teknisi_readiness_board.sql`):
-  - `teknisi_capacity` — roster + kapasitas kerja (`max_concurrent_jobs`). **Self-contained**, TIDAK reuse `teknisi_roster` F26 (beda lineage branch). Dev/demo tetap pakai 3 teknisi dummy dari seed (`scripts/db/seed-dev-full.sql`: Fajar/Gilang/Hesti) — tapi sekarang **ada CRUD** (`POST /teknisi-capacity`, `PATCH /teknisi-capacity/:id`, `PATCH /teknisi-capacity/:id/deactivate`, tombol "Tambah Teknisi" + edit/nonaktifkan di halaman) supaya Admin bisa isi roster asli (6 orang aftersales — galih/martin/nopa/haidar/halim/enggar, ada di tabel `employee`/BSC, TERPISAH dari tabel ini) tanpa sentuh DB manual. Deactivate bukan DELETE (jaga histori `install_schedule`/`teknisi_report` yang FK ke sini).
+  - `teknisi_capacity` — roster + kapasitas kerja (`max_concurrent_jobs`). **Self-contained**, TIDAK reuse `teknisi_roster` F26 (beda lineage branch). Dev/demo tetap pakai 3 teknisi dummy dari seed (`scripts/db/seed-dev-full.sql`: Agus/Joko/Sri) — tapi sekarang **ada CRUD** (`POST /teknisi-capacity`, `PATCH /teknisi-capacity/:id`, `PATCH /teknisi-capacity/:id/deactivate`, tombol "Tambah Teknisi" + edit/nonaktifkan di halaman) supaya Admin bisa isi roster asli (6 orang aftersales, ada di tabel `employee`/BSC, TERPISAH dari tabel ini) tanpa sentuh DB manual. Deactivate bukan DELETE (jaga histori `install_schedule`/`teknisi_report` yang FK ke sini).
   - `install_schedule` — jadwal install, **FK wajib** ke `installation_unit` (F22).
   - `teknisi_report` — laporan lapangan (4 jenis sesuai hashtag), `wa_message_id UNIQUE` (idempotensi).
 - **API**: `apps/api/src/repo/readinessboard.ts` — `getReadinessBoard()` (agregat kapasitas), `createInstallSchedule`/`updateScheduleStatus`, `createTeknisiReport`/`listTeknisiReports`.
 - **Hook WA inbound** (`apps/api/src/repo/inbound.ts`, EXTEND — bukan hook baru): `detectKind()` + SELECT filter `processUnprocessed()` di-extend dengan 4 hashtag baru. **Beda dari F26**: grup WA-nya KEMUNGKINAN SUDAH ADA (grup yang sama dipakai Teknisi utk `#plan`/`#report`), jadi **tidak ada env-gate baru** — cukup nebeng `WA_INBOUND_GROUPS`/`groupAllowed()` yang sudah ada. Identitas pengirim di-match ke `teknisi_capacity` via `matchTeknisiByName` (fuzzy `ILIKE`, bukan `resolveSender`/`master_user`).
 - **Web**: halaman `/readiness-board` — 3 section (Kapasitas, Install Schedule, Laporan Terbaru).
 
-> **Gerbang identitas teknisi (11 Okt 2026):** dulu `nama ILIKE '%pushname%'` (potongan nama) — pushname "a" / "jar" dari grup sembarang lolos sebagai "Teknisi Fajar". Sekarang `matchTeknisi`: pushname harus SAMA PERSIS dengan nama di `teknisi_capacity` (huruf kecil + spasi dirapikan; nama kembar = ambigu → ditolak), ATAU lewat chat pribadi dari nomor yang tercatat. Teknisi yang pushname-nya beda dari roster: samakan nama di roster, atau lapor lewat chat pribadi ke bot.
+> **Gerbang identitas teknisi (11 Okt 2026):** dulu `nama ILIKE '%pushname%'` (potongan nama) — pushname "a" / "jar" dari grup sembarang lolos sebagai "Teknisi Agus". Sekarang `matchTeknisi`: pushname harus SAMA PERSIS dengan nama di `teknisi_capacity` (huruf kecil + spasi dirapikan; nama kembar = ambigu → ditolak), ATAU lewat chat pribadi dari nomor yang tercatat. Teknisi yang pushname-nya beda dari roster: samakan nama di roster, atau lapor lewat chat pribadi ke bot.
 
 ## Kapasitas — cara hitung
 

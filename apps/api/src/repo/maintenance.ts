@@ -60,8 +60,8 @@ export interface MaintenanceInput {
   // Teknisi dipilih dari roster teknisi_capacity (F8) — migrasi 207, keputusan
   // user 2026-10-13. Nama & nomor WA TIDAK diterima dari klien lagi: keduanya
   // di-snapshot dari roster, supaya beban PM selalu terhitung di Readiness
-  // Board (dulu dicocokkan lewat nama ketikan bebas → "Galih" ≠ "Galih Aldy
-  // Prasetyo" → beban hilang). Kosong = belum ditugaskan.
+  // Board (dulu dicocokkan lewat nama ketikan bebas → "Budi" ≠ "Budi
+  // Santoso" → beban hilang). Kosong = belum ditugaskan.
   teknisi_id?: string | null;
   teknisi_name?: string | null; // hanya untuk menolak klien lama yang masih kirim nama
 }

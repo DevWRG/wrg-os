@@ -2,8 +2,8 @@
 --
 -- MASALAH: maintenance_schedule.teknisi_name teks bebas (133 sengaja
 -- self-contained). Readiness Board menghitung beban PM dengan mencocokkan
--- teknisi_name = teknisi_capacity.nama PERSIS — nama yang diketik "Galih"
--- sementara roster "Galih Aldy Prasetyo" tak terhitung sama sekali, jadi
+-- teknisi_name = teknisi_capacity.nama PERSIS — nama yang diketik "Budi"
+-- sementara roster "Budi Santoso" tak terhitung sama sekali, jadi
 -- kapasitas teknisi terlihat longgar padahal ia pegang PM (uji dev 12 Okt 2026,
 -- D6). Sejak #1638 kapasitas itu juga dipakai MENOLAK jadwal instalasi, jadi
 -- beban yang hilang = teknisi bisa kelebihan kerja tanpa ada yang tahu.

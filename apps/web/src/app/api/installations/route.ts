@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     const res = await gatewayFetch("/installations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      // Pembuat = akun login, bukan isian body (dulu bisa "Direktur Gilang").
+      // Pembuat = akun login, bukan isian body (dulu bisa "Direktur Joko").
       body: JSON.stringify({ ...(body as Record<string, unknown>), created_by: actorName(guard.me) }),
     });
     const data = await res.json();
