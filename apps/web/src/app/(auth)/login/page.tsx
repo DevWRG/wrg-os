@@ -29,7 +29,9 @@ function LoginForm() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "login gagal");
       // "/" → root mengalihkan ke menu pertama yang boleh dilihat user (homePath).
-      router.push(params.get("next") || "/");
+      // Hanya path internal — `next` dari URL bisa diisi siapa pun (cegah open redirect).
+      const next = params.get("next") ?? "";
+      router.push(next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/");
       router.refresh();
     } catch (err) {
       setError(String(err instanceof Error ? err.message : err));
