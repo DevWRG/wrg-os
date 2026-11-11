@@ -2,6 +2,7 @@ import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { upsertDigests } from "./monitor.js";
+import { formatWaRingkas, simpanTautan, tautanDs, uraiRingkasan } from "./dailysummary-link.js";
 
 // Daily Summary — port wrg-crm/scripts/wrg-daily.sh JOB daily_summary.
 // Kumpulkan aktivitas hari ini (activity_log AM-mode + sales_todo.report_data
@@ -118,6 +119,8 @@ export interface DailySummaryResult {
   model?: string;
   rows?: number;
   payload?: string;
+  /** 308: tautan halaman detail /ds/<token> (versi ringkas). */
+  link?: string;
 }
 
 export async function runDailySummary(
@@ -173,8 +176,10 @@ export async function runDailySummary(
       AND NOT EXISTS (SELECT 1 FROM user_leave ul WHERE ul.am_id = mu.am_id AND CURRENT_DATE BETWEEN ul.start_date AND ul.end_date)
   `;
 
+  // 308: `pendek` = panggilan untuk pesan WA ringkas; nama lengkap tetap untuk halaman detail & versi lengkap.
   const noPlan = await sql`
-    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) AS nm FROM master_user mu
+    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) AS nm,
+           COALESCE(NULLIF(btrim(mu.panggilan), ''), mu.nama, mu.wa_number) AS pendek FROM master_user mu
     WHERE mu.aktif AND COALESCE(mu.wajib_plan_report, true)
       AND NOT EXISTS (SELECT 1 FROM user_leave ul WHERE ul.am_id = mu.am_id AND CURRENT_DATE BETWEEN ul.start_date AND ul.end_date)
       AND NOT EXISTS (SELECT 1 FROM sales_plan WHERE am_id = mu.am_id AND tanggal = CURRENT_DATE)
@@ -182,7 +187,8 @@ export async function runDailySummary(
     ORDER BY mu.nama
   `;
   const nonReporters = await sql`
-    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) AS nm FROM master_user mu
+    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) AS nm,
+           COALESCE(NULLIF(btrim(mu.panggilan), ''), mu.nama, mu.wa_number) AS pendek FROM master_user mu
     WHERE mu.aktif AND COALESCE(mu.wajib_plan_report, true)
       AND NOT EXISTS (SELECT 1 FROM user_leave ul WHERE ul.am_id = mu.am_id AND CURRENT_DATE BETWEEN ul.start_date AND ul.end_date)
       AND (EXISTS (SELECT 1 FROM sales_plan WHERE am_id = mu.am_id AND tanggal = CURRENT_DATE)
@@ -192,7 +198,8 @@ export async function runDailySummary(
     ORDER BY mu.nama
   `;
   const onLeave = await sql`
-    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) || ' (' || COALESCE(ul.jenis, 'ijin') || ')' AS nm
+    SELECT COALESCE(mu.nama, mu.panggilan, mu.wa_number) || ' (' || COALESCE(ul.jenis, 'ijin') || ')' AS nm,
+           COALESCE(NULLIF(btrim(mu.panggilan), ''), mu.nama, mu.wa_number) || ' (' || COALESCE(ul.jenis, 'ijin') || ')' AS pendek
     FROM user_leave ul JOIN master_user mu ON mu.am_id = ul.am_id
     WHERE mu.aktif AND COALESCE(mu.wajib_plan_report, true) AND CURRENT_DATE BETWEEN ul.start_date AND ul.end_date
     ORDER BY mu.nama
@@ -202,6 +209,11 @@ export async function runDailySummary(
     no_plan: noPlan.map((r) => String(r.nm)).filter(Boolean),
     non_reporters: nonReporters.map((r) => String(r.nm)).filter(Boolean),
     on_leave: onLeave.map((r) => String(r.nm)).filter(Boolean),
+  };
+  const pendek: DaftarNama = {
+    no_plan: noPlan.map((r) => String(r.pendek ?? r.nm)).filter(Boolean),
+    non_reporters: nonReporters.map((r) => String(r.pendek ?? r.nm)).filter(Boolean),
+    on_leave: onLeave.map((r) => String(r.pendek ?? r.nm)).filter(Boolean),
   };
 
   const { hari, tanggal } = hariTanggal();
@@ -258,9 +270,25 @@ export async function runDailySummary(
   const jam = wibNow().toISOString().slice(11, 16);
   await upsertDigests([{ kind: "daily", tanggal: dateStr, waktu: jam, content: summary, source_file: "generated" }]);
 
-  if (opts.dryRun) {
-    return { sent: false, dryRun: true, to: target, model: String(data.model ?? ""), rows: rows.length, payload: summary };
+  // 308 (keputusan product owner 11 Nov 2026): grup menerima versi RINGKAS + tautan halaman detail publik
+  // /ds/<token>. DAILY_SUMMARY_FORMAT=lengkap = kembali ke pesan panjang. Tanpa WEB_PUBLIC_URL, atau simpan tautan
+  // gagal, otomatis versi lengkap (lebih baik panjang daripada tautan mati).
+  let pesan = summary;
+  let link: string | null = null;
+  const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/+$/, "");
+  if ((process.env.DAILY_SUMMARY_FORMAT ?? "ringkas").toLowerCase() !== "lengkap" && base) {
+    try {
+      const token = opts.dryRun ? "PRATINJAU-TOKEN-0000000" : await simpanTautan({ tanggal: dateStr, hari, label: tanggal, stats: st, daftar, content: summary });
+      link = tautanDs(base, token);
+      pesan = formatWaRingkas({ hari, tanggal, stats: st, pendek, highlight: uraiRingkasan(summary).highlight[0] ?? null, link });
+    } catch (e) {
+      console.error("[daily-summary] simpan tautan gagal — kirim versi lengkap:", (e as Error).message);
+    }
   }
-  const g = await sendViaWaGateway(target, summary);
-  return { sent: g.sent, to: target, model: String(data.model ?? ""), dryRun: Boolean(data.dry_run), rows: rows.length };
+
+  if (opts.dryRun) {
+    return { sent: false, dryRun: true, to: target, model: String(data.model ?? ""), rows: rows.length, payload: pesan, ...(link ? { link } : {}) };
+  }
+  const g = await sendViaWaGateway(target, pesan);
+  return { sent: g.sent, to: target, model: String(data.model ?? ""), dryRun: Boolean(data.dry_run), rows: rows.length, ...(link ? { link } : {}) };
 }
