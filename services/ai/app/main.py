@@ -25,6 +25,7 @@ from .openrouter import (
 from .raport import build_raport_system, build_raport_user, parse_raport, template_raport
 from .rekap import build_messages_block, build_rekap_system
 from .resume import build_gabungan, build_resume_system
+from .angka_berdasar import ganti_angka_tak_berdasar
 from .senin import bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system, build_senin_user, cek_pelanggaran
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
@@ -809,6 +810,7 @@ H. EXECUTIVE SUMMARY (ringkas, time-pressed)
 **Key Asks:** 1. ✅ [..] 2. ✅ [..] (3-5 item)
 **Tone:** [1-2 kalimat outlook]
 
+ATURAN ANGKA (KERAS): setiap angka — Rupiah, persen, jumlah, tenggat — WAJIB ada di data input. DILARANG membuat angka anggaran, insentif, budget, target baru, estimasi, atau proyeksi yang tidak tertulis di data. Bila rekomendasi butuh besaran, tulis "besaran diusulkan [PIC]" TANPA angka. Bila datanya tidak ada, tulis "belum ada data". Angka tanpa sumber akan diganti otomatis dengan penanda.
 ATURAN: JANGAN mengarang nama/angka yg tak ada di resume. Substitusi JID grup → nama grup & nomor → nama member bila ada di direktori. Gunakan label periode EKSAK '{minggu_label}' — JANGAN tulis 'Minggu N'. Bahasa Indonesia."""
 
 
@@ -870,7 +872,14 @@ def weekend_briefing(req: WeekendBriefingRequest) -> WeekendBriefingResponse:
     if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
         return WeekendBriefingResponse(briefing=fallback, model="dry-run", dry_run=True)
     text, model, _, _ = chat_or_fallback(system, user, fallback, max_tokens=8000 if senin else 4000, models=exec_models())
-    return WeekendBriefingResponse(briefing=text, model=model, dry_run=model == "dry-run-fallback")
+    if model == "dry-run-fallback":
+        return WeekendBriefingResponse(briefing=text, model=model, dry_run=True)
+    # Angka tanpa sumber di data input diganti penanda (aturan user 11 Nov 2026). Tanpa
+    # percobaan ulang: satu generasi F63 ±45 dtk, mengulang bisa melewati batas apps/api.
+    text, diganti = ganti_angka_tak_berdasar(text, f"{system}\n{user}")
+    if diganti:
+        print(f"[weekend-briefing] {len(diganti)} angka tanpa sumber diganti penanda: {diganti[:12]}", flush=True)
+    return WeekendBriefingResponse(briefing=text, model=model, dry_run=False)
 
 
 @app.post("/senin-brief", response_model=SeninBriefResponse)
