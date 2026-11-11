@@ -3,7 +3,9 @@
 // Tiap Senin 07:00: baca rekap + resume (monitor_digest) minggu ISO yang BARU TUTUP
 // → services/ai /weekend-briefing (mode "senin") menyusun briefing untuk minggu yang
 // baru mulai → simpan di briefing_mingguan (UPSERT per minggu, migrasi 245) → WA ke
-// Direktur berupa LINK ke tab "Briefing Mingguan" di /briefings (isi tidak ikut di WA).
+// Direktur berupa RINGKASAN singkat + LINK unduh PDF (isi lengkap ada di PDF; keputusan
+// user 11 Nov 2026: isi di pesan WA terlalu panjang). Angka nyata dari papan WatchPoint
+// minggu dasar ikut dikirim ke AI sebagai bahan, dan dicetak sendiri di PDF.
 //
 // Beda dari weekendbriefing.ts (Sabtu/Minggu, kind='briefing', generate-only): job itu
 // tetap jalan; ini punya tabel, jendela minggu ISO, rekap sebagai input, dan WA link.
@@ -16,6 +18,8 @@ import { sendViaWaGateway } from "../wasend.js";
 import { memberGroupMaps } from "./monitor.js";
 import { direkturTarget } from "./senin-brief.js";
 import { currentWeek, periodeLabel, previousWeek, weekRange, wibToday } from "./watchpoint-week.js";
+import { getWeeklyBoard, type WeeklyBoard } from "./watchpoint-weekly.js";
+import { formatWaRingkas, metrikMerah, ringkasHod, teksAngka } from "./weekly-briefing-angka.js";
 
 // Satu dokumen digest dipotong supaya prompt tak meledak (rekap bisa banyak per hari).
 export const MAKS_DOK = 6000;
@@ -45,16 +49,20 @@ export function potongDok(teks: string, maks = MAKS_DOK): string {
   return teks.length <= maks ? teks : `${teks.slice(0, maks)}\n[…dipotong, ${teks.length - maks} karakter lagi]`;
 }
 
-/** Pesan WA = pengantar + LINK saja. Tanpa link (WEB_PUBLIC_URL kosong) → null: tak ada yang bisa dikirim. */
-export function formatWaLink(j: Jendela, link: string | null): string | null {
-  if (!link) return null;
-  return [
-    `📋 *Briefing Mingguan siap*`,
-    `Minggu ${j.target.isoWeek} · ${periodeLabel(j.target.from, j.target.to)}`,
-    `Disusun dari rekap & resume ${periodeLabel(j.dasar.from, j.dasar.to)}.`,
-    ``,
-    `🔗 ${link}`,
-  ].join("\n");
+/** Link ke halaman unduh PDF (halaman, bukan file: yang belum login diarahkan ke /login lalu kembali). */
+export function linkPdf(base: string, isoYear: number, isoWeek: number): string | null {
+  const b = base.replace(/\/$/, "");
+  return b ? `${b}/briefings/unduh/${isoYear}/${isoWeek}` : null;
+}
+
+/** Papan WatchPoint minggu dasar; null bila gagal (briefing tetap jalan tanpa angka). */
+export async function papanDasar(isoYear: number, isoWeek: number): Promise<WeeklyBoard | null> {
+  try {
+    return await getWeeklyBoard(isoYear, isoWeek);
+  } catch (e) {
+    console.error("[weekly-briefing] papan WatchPoint gagal dibaca:", (e as Error).message);
+    return null;
+  }
 }
 
 export interface WeeklyBriefingResult {
@@ -106,6 +114,7 @@ export async function runWeeklyBriefing(opts: {
   }
 
   const label = labelBriefing(j);
+  const board = await papanDasar(j.dasar.isoYear, j.dasar.isoWeek);
   const { members, groups } = await memberGroupMaps();
   const pola = await sql`SELECT group_jid, content FROM monitor_pola WHERE content IS NOT NULL AND content <> ''`;
   const { status, data } = await callAi("/weekend-briefing", {
@@ -119,6 +128,7 @@ export async function runWeeklyBriefing(opts: {
     members,
     groups,
     pola: pola.map((p) => ({ jid: String(p.group_jid), content: String(p.content) })),
+    angka: board ? teksAngka(board) : null,
     dry_run: aiDryRun(),
   }).catch((e) => ({
     status: 503,
@@ -139,7 +149,14 @@ export async function runWeeklyBriefing(opts: {
   hasil.model = data.model ? String(data.model) : null;
 
   const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
-  const waText = formatWaLink(j, base ? `${base}/briefings?tab=mingguan` : null);
+  const waText = formatWaRingkas({
+    isoWeek: j.target.isoWeek,
+    periode: periodeLabel(j.target.from, j.target.to),
+    dasar: periodeLabel(j.dasar.from, j.dasar.to),
+    hod: board ? ringkasHod(board) : null,
+    merah: board ? metrikMerah(board, 3) : [],
+    link: linkPdf(base, j.target.isoYear, j.target.isoWeek),
+  });
   if (opts.dryRun) return { ...hasil, wa_preview: waText };
 
   const [row] = await sql`
@@ -162,8 +179,8 @@ export async function runWeeklyBriefing(opts: {
   const catat = (target: string | null, sent: boolean, error: string | null) =>
     sql`UPDATE briefing_mingguan SET wa_target = ${target}, wa_sent_at = ${sent ? sql`now()` : null}, wa_error = ${error} WHERE id = ${row.id}`;
   if (!narasiOk) {
-    hasil.wa = { target: null, sent: false, skipped: "narasi gagal — link tidak dikirim" };
-    await catat(null, false, "narasi gagal — link tidak dikirim");
+    hasil.wa = { target: null, sent: false, skipped: "narasi gagal — ringkasan tidak dikirim" };
+    await catat(null, false, "narasi gagal — ringkasan tidak dikirim");
     return hasil;
   }
   if (!waText) {
@@ -214,6 +231,15 @@ function mapRow(r: Record<string, unknown>): BriefingMingguanRow {
     wa_error: r.wa_error ? String(r.wa_error) : null,
     generated_at: String(r.generated_at),
   };
+}
+
+export async function getBriefingMingguan(isoYear: number, isoWeek: number): Promise<BriefingMingguanRow | null> {
+  const [r] = await db()`
+    SELECT id::text, iso_year, iso_week, periode, dasar_dari::text, dasar_sampai::text, n_rekap, n_resume,
+           content, narasi_ok, model_used, wa_sent_at::text, wa_error, generated_at::text
+    FROM briefing_mingguan WHERE iso_year = ${isoYear} AND iso_week = ${isoWeek}
+  `;
+  return r ? mapRow(r) : null;
 }
 
 export async function listBriefingMingguan(limit = 12): Promise<BriefingMingguanRow[]> {

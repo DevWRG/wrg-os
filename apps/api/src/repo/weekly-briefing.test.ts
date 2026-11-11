@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { MAKS_DOK, formatWaLink, jendelaBriefing, labelBriefing, potongDok } from "./weekly-briefing.js";
+import { MAKS_DOK, jendelaBriefing, labelBriefing, linkPdf, potongDok } from "./weekly-briefing.js";
 
 // Senin 26 Okt 2026 07:00 WIB = Minggu ISO 44; dasar = minggu 43 (19–25 Okt).
 const SENIN = new Date("2026-10-26T00:00:00Z"); // 07:00 WIB
@@ -34,13 +34,9 @@ test("labelBriefing menyebut minggu target dan dasar", () => {
   assert.match(l, /dasar: rekap & resume 19–25 Oktober 2026/);
 });
 
-test("formatWaLink: hanya pengantar + link; tanpa link → null", () => {
-  const j = jendelaBriefing(SENIN);
-  const t = formatWaLink(j, "https://os.example/briefings?tab=mingguan");
-  assert.ok(t);
-  assert.match(t!, /Minggu 44/);
-  assert.match(t!, /https:\/\/os\.example\/briefings\?tab=mingguan$/);
-  assert.equal(formatWaLink(j, null), null);
+test("linkPdf: di luar /api, tanpa base → null", () => {
+  assert.equal(linkPdf("https://os.example/", 2026, 35), "https://os.example/briefings/unduh/2026/35");
+  assert.equal(linkPdf("", 2026, 35), null);
 });
 
 test("potongDok: pendek utuh, panjang dipotong dengan penanda", () => {
