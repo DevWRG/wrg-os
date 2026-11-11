@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { MAKS_DOK, jendelaBriefing, labelBriefing, linkPdf, potongDok } from "./weekly-briefing.js";
+import { MAKS_DOK, bahanNyata, jendelaBriefing, labelBriefing, linkPdf, potongDok } from "./weekly-briefing.js";
 
 // Senin 26 Okt 2026 07:00 WIB = Minggu ISO 44; dasar = minggu 43 (19–25 Okt).
 const SENIN = new Date("2026-10-26T00:00:00Z"); // 07:00 WIB
@@ -45,4 +45,10 @@ test("potongDok: pendek utuh, panjang dipotong dengan penanda", () => {
   const p = potongDok(panjang);
   assert.ok(p.startsWith("x".repeat(MAKS_DOK)));
   assert.match(p, /dipotong, 50 karakter lagi/);
+});
+
+test("bahanNyata: digest samaran / kosong bukan bahan", () => {
+  assert.equal(bahanNyata("[digest disamarkan]"), false);
+  assert.equal(bahanNyata("  "), false);
+  assert.equal(bahanNyata("REKAP 17 Agu: pengiriman ke cabang berjalan"), true);
 });

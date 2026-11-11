@@ -24,6 +24,18 @@ import { formatWaRingkas, metrikMerah, ringkasHod, teksAngka } from "./weekly-br
 // Satu dokumen digest dipotong supaya prompt tak meledak (rekap bisa banyak per hari).
 export const MAKS_DOK = 6000;
 
+// Bahan minimum. DB dev menyimpan digest yang DISAMARKAN ("[digest disamarkan]");
+// uji 11 Nov 2026 memberi LLM 41 dokumen begitu dan ia mengarang seluruh narasi
+// (prospek, customer, isu). Dokumen samaran/kosong tak dihitung bahan, dan tanpa
+// bahan cukup briefing TIDAK disusun — lebih baik tak ada daripada cerita karangan.
+export const MIN_BAHAN = 1500;
+
+/** Murni (diuji): isi digest yang benar-benar bahan — bukan samaran/placeholder. */
+export function bahanNyata(content: string): boolean {
+  const t = content.trim();
+  return t.length > 0 && !/^\[[^\]]*disamarkan[^\]]*\]$/i.test(t);
+}
+
 export interface Jendela {
   /** Minggu yang briefing-nya dibuat (minggu berjalan pada `now`, kecuali dioverride). */
   target: { isoYear: number; isoWeek: number; from: string; to: string };
@@ -107,10 +119,19 @@ export async function runWeeklyBriefing(opts: {
       AND content IS NOT NULL AND content <> ''
     ORDER BY tanggal, waktu, kind
   `;
-  hasil.n_rekap = docs.filter((d) => d.kind === "rekap").length;
-  hasil.n_resume = docs.filter((d) => d.kind === "resume").length;
+  const nyata = docs.filter((d) => bahanNyata(String(d.content)));
+  hasil.n_rekap = nyata.filter((d) => d.kind === "rekap").length;
+  hasil.n_resume = nyata.filter((d) => d.kind === "resume").length;
   if (docs.length === 0) {
     return { ...hasil, error: `tak ada rekap/resume ${j.dasar.from} s/d ${j.dasar.to}` };
+  }
+  const panjangBahan = nyata.reduce((a, d) => a + String(d.content).length, 0);
+  if (panjangBahan < MIN_BAHAN) {
+    return {
+      ...hasil,
+      error: `bahan rekap/resume ${j.dasar.from} s/d ${j.dasar.to} terlalu sedikit (${panjangBahan} karakter dari ${docs.length} dokumen; ` +
+        `${docs.length - nyata.length} disamarkan/kosong) — briefing tidak disusun supaya narasi tak dikarang`,
+    };
   }
 
   const label = labelBriefing(j);
@@ -121,7 +142,7 @@ export async function runWeeklyBriefing(opts: {
     mode: "senin",
     tanggal: wibToday(now).toISOString().slice(0, 10),
     minggu_label: label,
-    resumes: docs.map((d) => ({
+    resumes: nyata.map((d) => ({
       label: `${String(d.kind).toUpperCase()} ${d.tanggal} ${d.waktu ?? ""}`.trim(),
       text: potongDok(String(d.content)),
     })),
