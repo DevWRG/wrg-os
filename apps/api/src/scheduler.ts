@@ -24,7 +24,7 @@ import { generateRekap, generateResume } from "./repo/monitor.js";
 import {
   syncAccurateInvoices, syncSalesOrders, syncDeliveryOrders, syncCustomers,
   syncSalesOrderItems, syncDeliveryOrderItems, syncFixedAssets, refreshOpenInvoices, syncPurchaseOrders, syncReceiveItems, syncItemStockBranch,
-  syncPurchaseInvoices,
+  syncPurchaseInvoices, syncItems,
 } from "./repo/accurateSync.js";
 import { syncBiayaArea } from "./repo/biaya-area-sync.js";
 import { runEdWatch } from "./repo/stock-batch.js";
@@ -746,6 +746,31 @@ export function startScheduler(): ScheduleStatus {
     live.push(`mirror-freshness=${freshExpr}`);
   }
 
+  // accurate-stock-sync (F2) — refresh accurate_item.quantity (total stok)
+  // untuk #STOK. Di main TIDAK ada job lain yang menyegarkan kolom ini (cuma
+  // tombol sinkron manual), jadi tanpa job ini balasan #STOK makin basi —
+  // balasan menyebut waktu sinkron apa adanya. Sapuan penuh ±60 panggilan
+  // list.do per run. Flag SENDIRI, sengaja TIDAK ikut AGENT_SCHEDULE_ENABLED:
+  // menyalakannya keputusan sadar soal beban API Accurate.
+  const accurateStockSyncEnabled = (process.env.ACCURATE_STOCK_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+  const stockSyncExpr = process.env.ACCURATE_STOCK_SYNC_CRON ?? "*/5 * * * *";
+  if (accurateStockSyncEnabled && cron.validate(stockSyncExpr)) {
+    cron.schedule(
+      stockSyncExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await syncItems();
+          console.log(`[scheduler] accurate-stock-sync @ ${startedAt} ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error(`[scheduler] accurate-stock-sync gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`accurate-stock-sync=${stockSyncExpr}`);
+  }
+
   // stok-gudang-sync (F37/#836) — stok PER GUDANG ke item_stock_branch.
   // HARIAN 02:00, dan itu batasnya bukan pilihan gaya: saldo per gudang cuma
   // ada di item/detail.do per SKU, jadi sapuan penuh ±5.900 panggilan. Memasang
@@ -753,8 +778,8 @@ export function startScheduler(): ScheduleStatus {
   // memakai kredensial sama. Tiap run berbatas + melanjutkan dari yang paling
   // lama tak tersegarkan, jadi backlog habis bertahap lintas hari.
   //
-  // Flag SENDIRI dan TIDAK ikut `enabled`: berbeda dari accurate-stock-sync di
-  // atas, job ini menulis ke tabel yang punya sumber lain (CSV opname tim
+  // Flag SENDIRI dan TIDAK ikut `enabled`: sama seperti accurate-stock-sync di
+  // atas. Job ini menulis ke tabel yang punya sumber lain (CSV opname tim
   // gudang). Menyalakannya harus keputusan sadar, bukan efek samping
   // AGENT_SCHEDULE_ENABLED.
   const stockBranchEnabled = (process.env.STOCK_BRANCH_SYNC_ENABLED ?? "false").toLowerCase() === "true";
