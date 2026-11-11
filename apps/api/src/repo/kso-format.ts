@@ -501,6 +501,16 @@ export const SKOR_YAKIN = 70;
 
 /** Skor satu entri katalog terhadap teks alat. Deterministik. */
 export function skorAlat(teks: string, a: AlatKatalog): number {
+  return nilaiAlat(teks, a).s;
+}
+
+/**
+ * Skor + bukti. bukti = ada dasar nyata untuk MENAWARKAN entri ini sebagai saran: kode model mirip (salah baca OCR /
+ * terkandung / selisih satu huruf, skor kode ≥ 60) atau merek yang sama. Kemiripan huruf lemah, angka model yang
+ * kebetulan sama ("CM 250" ↔ Z50) atau kategori saja BUKAN bukti — alat merek lain jangan disarankan (307: dicatat
+ * sebagai alat baru).
+ */
+function nilaiAlat(teks: string, a: AlatKatalog): { s: number; bukti: boolean } {
   const tokens = tokenAlat(teks);
   const model = tokenModel(tokens);
   const cand = kandidatKode(model);
@@ -526,15 +536,17 @@ export function skorAlat(teks: string, a: AlatKatalog): number {
   // merek/nama: token huruf ≥ 3 dari nama entri yang juga ditulis AM ("ZYBIO")
   const hurufEntri = new Set(modelEntri.filter((t) => /^[A-Z]{3,}$/.test(t) && !kodeEntri.has(t)));
   const merek = model.some((t) => /^[A-Z]{3,}$/.test(t) && hurufEntri.has(t));
+  let bukti = s >= 60 || merek;
   if (merek) s += s > 0 ? 20 : 10;
   const p = petunjukKategori(tokens);
   if (p.size && a.kategori) {
-    if (kategoriSepadan(p, a.kategori)) s += 10;
+    // kategori saja jadi bukti hanya bila AM tak menulis merek/model apa pun ("hematologi 5 diff")
+    if (kategoriSepadan(p, a.kategori)) { s += 10; if (!model.length) bukti = true; }
     // kategori yang ditulis AM bertentangan dengan kategori entri: kecocokan tak utuh (OCR/selisih huruf/angka model)
     // tidak boleh "yakin" — "KIMIA … 250" bukan Z50 hematologi. Kode utuh (100) tetap menang.
-    else if (s < 100) s = Math.min(s, 5);
+    else if (s < 100) { s = Math.min(s, 5); bukti = false; }
   }
-  return s;
+  return { s, bukti };
 }
 
 /**
@@ -544,11 +556,11 @@ export function skorAlat(teks: string, a: AlatKatalog): number {
 export function cariAlat(teks: string, katalog: AlatKatalog[]): HasilAlat {
   const model = tokenModel(tokenAlat(teks)).join("");
   const skor = katalog.map((a) => {
-    const s = skorAlat(teks, a);
+    const { s, bukti } = nilaiAlat(teks, a);
     // pemeringkat lemah (tak pernah mencapai yakin): kemiripan huruf dengan kode & nama
     const lemah = Math.round(15 * Math.max(dice(model, a.kode.toUpperCase().replace(/[^A-Z0-9]/g, "")),
                                            dice(model, tokenModel(tokenAlat(a.nama)).join(""))));
-    return { a, s, urut: s + lemah };
+    return { a, s, bukti, urut: s + lemah };
   }).sort((x, y) => y.urut - x.urut || x.a.kode.localeCompare(y.a.kode));
   const yakin = skor.filter((x) => x.s >= SKOR_YAKIN);
   if (yakin.length === 1 || (yakin.length > 1 && yakin[0].s - yakin[1].s >= 30)) {
@@ -558,7 +570,8 @@ export function cariAlat(teks: string, katalog: AlatKatalog[]): HasilAlat {
   return {
     kind: "saran",
     ambigu: yakin.length > 1,
-    saran: skor.filter((x) => x.urut > 0).slice(0, 3)
+    // 307: hanya yang punya bukti (kode mirip / merek sama); tanpa bukti → saran kosong → dicatat alat baru
+    saran: skor.filter((x) => x.bukti && x.urut > 0).slice(0, 3)
       .map((x) => ({ kode: x.a.kode, nama: x.a.nama, kategori: x.a.kategori ?? null, skor: x.s })),
   };
 }
@@ -775,6 +788,8 @@ export interface DataKurang {
   volume_sumber: string | null;
   zona_dasar: string | null;
   alasan_strategis?: string | null;
+  /** 307: alat baru → zona Direktur karena data alat, bukan margin — ALASAN strategis tidak diminta. */
+  alat_baru?: boolean | null;
   angka?: { hd: boolean } | null;
   lampiran?: { lolos: boolean; cocok?: Record<string, CocokIsian> | null; galat?: string | null } | null;
 }
@@ -816,7 +831,7 @@ export function daftarKurang(d: DataKurang, ref: string): ItemKurang[] {
   if (!d.unit_status) t("status_unit", "STATUS UNIT — baru / relokasi idle / eks kso / eks demo / refurbish / pinjaman principal", "STATUS UNIT: baru");
   if (!d.volume_sumber?.trim() && d.lampiran?.lolos)
     t("sumber", "BUKTI VOLUME — rekap LIS 6 bulan / pembelian reagen / surat RS", "BUKTI VOLUME: rekap LIS 6 bulan");
-  if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alasan_strategis?.trim())
+  if (d.zona_dasar === "direktur" && !d.angka?.hd && !d.alat_baru && !d.alasan_strategis?.trim())
     // teks tanpa margin: daftar ini juga dikirim ke AM (keputusan 10 Nov)
     t("alasan", "ALASAN strategis — diperlukan untuk usulan ini", "ALASAN: referensi wilayah");
   return q;

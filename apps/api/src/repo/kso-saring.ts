@@ -27,6 +27,7 @@ export function alasanGerbang(no: number, status: string, nilai: string | null |
     return "belum ada data";
   }
   switch (no) {
+    case 1: return /belum ada di database/.test(t) ? "alat belum ada di database" : null; // 307: alat baru
     case 2: return /ditolak/.test(t) ? "bukti ditolak Sekretaris" : /lisan/.test(t) ? "perkiraan lisan tidak diterima" : "belum ada bukti";
     case 3: return "ada unit idle sejenis — relokasi dulu";
     case 4: return /luar coverage/.test(t) ? "di luar coverage cabang" : "belum ada teknisi di cabang";

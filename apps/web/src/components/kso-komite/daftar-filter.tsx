@@ -16,7 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { BarLengkap, ChipLampiran } from "./lampiran-kurang";
-import { BadgeFaskesBaru, LabelStatus } from "./label-status";
+import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { LABEL_ZONA, ZONA_CLS, kirim, persen, rp, type BarisDaftar, type DataDaftar } from "./types";
 
 // 302 — dua daftar lintas status: "Belum lengkap" (DRAFT/DITAHAN yang isian #KSO-nya kurang) dan
@@ -93,7 +93,7 @@ function SelRencana({ b, children }: { b: BarisDaftar; children?: React.ReactNod
     <div className="min-w-[10rem] space-y-0.5">
       <div className="font-semibold whitespace-normal">{b.faskes_nama}{b.faskes_baru && <BadgeFaskesBaru kota={b.faskes_kota} className="ml-1.5 align-middle" />}</div>
       <div className="text-muted-foreground text-xs whitespace-normal">
-        <span className="font-mono text-[11px]">{b.nomor ?? `D${b.id}`}</span> · {b.alat_nama} · {b.am_nama}{b.cabang ? ` — ${b.cabang}` : ""}
+        <span className="font-mono text-[11px]">{b.nomor ?? `D${b.id}`}</span> · {b.alat_nama}{b.alat_baru && <BadgeAlatBaru className="ml-1 align-middle" />} · {b.am_nama}{b.cabang ? ` — ${b.cabang}` : ""}
       </div>
       {children}
     </div>

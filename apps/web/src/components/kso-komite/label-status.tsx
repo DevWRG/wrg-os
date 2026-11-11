@@ -20,3 +20,13 @@ export function BadgeFaskesBaru({ kota, className }: { kota?: string | null; cla
     </span>
   );
 }
+
+/** 307: alat SEMENTARA dari #KSO — belum ada di database; gerbang GPM merah, zona Direktur. */
+export function BadgeAlatBaru({ className }: { className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap text-red-700 dark:text-red-300", className)}
+      title="Alat belum ada di database — dicatat sebagai alat baru; gerbang GPM merah dan usulan langsung ke Zona Direktur">
+      Alat baru
+    </span>
+  );
+}
