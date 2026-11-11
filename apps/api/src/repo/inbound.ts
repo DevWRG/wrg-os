@@ -12,6 +12,7 @@ import { createTicket, isKnownTeknisiSender } from "./serviceticket.js";
 import { matchTeknisi, createTeknisiReport } from "./readinessboard.js";
 import { balasanOrder } from "./order-wa.js";
 import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
+import { listStockBranch } from "./stock-branch.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
 import {
@@ -83,6 +84,7 @@ const isAmRole = (role?: string | null) => AM_ROLES.has((role ?? "").trim());
 // SILENT (tak balas) supaya tak spam non-AM/pesan bot di grup campuran.
 
 export type InboundKind =
+  | "stok"
   | "plan"
   | "report"
   | "leads"
@@ -123,7 +125,7 @@ export type InboundKind =
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
   "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "kso", "jadwal", "order", "revisi",
-  "install", "servis", "training", "kalibrasi", "bon", "opname",
+  "install", "servis", "training", "kalibrasi", "bon", "opname", "stok",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -157,6 +159,8 @@ const ORDER_LINE = /^\s*#\s*order\b/i;
 // F155 — #BON: teknisi melapor sparepart bawaan; #OPNAME: rekap bon untuk gudang/HoD.
 const BON_LINE = /^\s*#\s*bon\b/i;
 const OPNAME_LINE = /^\s*#\s*opname\b/i;
+// F2 SQC — #STOK <nama/kode barang>: cek stok cepat (total + cabang pengirim).
+const STOK_LINE = /^\s*#\s*stok\b/i;
 // F12/F42/F93 — hashtag SHIPPING dari kurir: "#KIRIM SJK 6142" / "#TERIMA SJK
 // 6142" / "#BAST SJK 6142" / "#BUKTI SJK 6142" (caption foto atau teks biasa;
 // rujukan SJ = jenis + angka urut DO Accurate, lihat parseSjRef).
@@ -197,6 +201,7 @@ export function detectKind(body: string | null): InboundKind {
       if (ORDER_LINE.test(line)) return "order";
       if (BON_LINE.test(line)) return "bon";
       if (OPNAME_LINE.test(line)) return "opname";
+      if (STOK_LINE.test(line)) return "stok";
       if (REVISI_LINE.test(line)) return "revisi";
       const rd = line.match(READINESS_LINE);
       if (rd) return rd[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
@@ -993,6 +998,68 @@ async function photoFollowup(row: WaRow, am: { am_id: string; nama: string }): P
   lastPhotoReplyAt.set(cdKey, nowMs);
   const reply = await sendViaWaGateway(row.group_jid, msg);
   return { matched: top.customer_name, score, geo: hasGeo, remaining: remain.length, no_geo: Number(no_geo), reply };
+}
+
+// ── #STOK (F2 Stock Quick-Check) ──
+// Total (accurate_item.quantity, via listStockBranch) disegarkan cron
+// accurate-stock-sync tiap 5 menit (scheduler.ts) BILA saklarnya nyala —
+// jadi balasan menyebut waktu sinkron terakhir (last_synced_at) apa adanya,
+// bukan mengklaim "live". Lewat 1 jam → diberi tanda basi. Stok per-cabang
+// (item_stock_branch, F37) TIDAK ada puller otomatis — murni hasil import
+// CSV manual, jadi tanggal "data per ..." ditampilkan apa adanya (JUJUR
+// soal freshness, bukan diklaim real-time yang tak benar).
+const fmtWaktuStok = (d: Date) =>
+  d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" });
+
+export function labelSegarStok(syncedAt: Date | null, now: Date = new Date()): string {
+  if (!syncedAt) return "waktu sinkron tidak diketahui";
+  const basi = now.getTime() - syncedAt.getTime() > 60 * 60 * 1000;
+  return `data Accurate per ${fmtWaktuStok(syncedAt)}${basi ? " ⚠️ belum tersegarkan, cek ulang di Accurate" : ""}`;
+}
+
+async function buildStokReply(amId: string, query: string): Promise<string> {
+  const sql = db();
+  const [am] = await sql`SELECT cabang FROM master_user WHERE am_id = ${amId}`;
+  const cabang = am?.cabang ? String(am.cabang) : null;
+
+  let warehouseKode: string | null = null;
+  let warehouseLabel: string | null = null;
+  if (cabang) {
+    const [wh] = await sql`SELECT kode, cabang FROM warehouse WHERE jenis = 'cabang' AND cabang ILIKE ${cabang} LIMIT 1`;
+    if (wh) {
+      warehouseKode = String(wh.kode);
+      warehouseLabel = String(wh.cabang);
+    }
+  }
+
+  const { rows } = await listStockBranch({ q: query, limit: 5 });
+  if (rows.length === 0) return `📦 Barang "${query}" tidak ditemukan.`;
+  if (rows.length > 1) {
+    return `🔍 Ada ${rows.length} barang cocok "${query}", sebutkan lebih spesifik:\n${rows.map((r) => `• ${r.name} (${r.no})`).join("\n")}`;
+  }
+
+  const r = rows[0];
+  const unit = r.unit ? ` ${r.unit}` : "";
+  const [seg] = await sql`SELECT last_synced_at FROM accurate_item WHERE no = ${r.no} LIMIT 1`;
+  const syncedAt = seg?.last_synced_at ? new Date(seg.last_synced_at as string) : null;
+  const lines = [
+    `📦 *${r.name}* (${r.no})`,
+    r.total != null ? `Total (semua cabang): ${r.total}${unit} — ${labelSegarStok(syncedAt)}` : "Total: belum sinkron dari Accurate",
+  ];
+  if (!warehouseKode) {
+    lines.push("⚠️ Cabang kamu belum terpetakan ke gudang manapun.");
+  } else {
+    const qty = r.per_gudang[warehouseKode];
+    if (qty == null) {
+      lines.push(`Cabang ${warehouseLabel}: belum ada data stok cabang ini.`);
+    } else {
+      const tgl = r.terakhir_update
+        ? new Date(r.terakhir_update).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })
+        : null;
+      lines.push(`Cabang ${warehouseLabel}: ${qty}${unit}${tgl ? ` (data per ${tgl})` : ""}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 // Proses SATU pesan; selalu tandai processed_at (idempoten). Pengirim tak dikenal
@@ -1813,6 +1880,21 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     }
     const reply = await sendViaWaGateway(target, text);
     return finish({ kind: "order", via: od.via, reply });
+  }
+
+  // #STOK — cek stok cepat (F2 SQC). Sender WAJIB dikenal (perlu cabang AM
+  // buat cari gudang-nya) — beda dari #KLAIM yang sengaja terbuka.
+  if (kind === "stok") {
+    const st = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
+    if (!st) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    const query = extractHashtagArg(row.body, STOK_LINE);
+    if (!query) {
+      const reply = await sendViaWaGateway(target, `⚠️ Isi nama/kode barang setelah #STOK, ${st.nama}. Contoh: #STOK Rapid Test Antigen`);
+      return finish({ error: "empty-query", via: st.via, reply });
+    }
+    const text = await buildStokReply(st.am_id, query);
+    const reply = await sendViaWaGateway(target, text);
+    return finish({ kind: "stok", via: st.via, reply });
   }
 
   // #FAKTUR <no_invoice> — F91: status Open/Paid/Overdue + jatuh tempo +
