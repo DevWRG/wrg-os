@@ -301,6 +301,7 @@ import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { getSeninBrief, listSeninBriefs, runSeninBrief } from "./repo/senin-brief.js";
+import { infografisSalesArea, runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
 import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { getBriefingMingguan, listBriefingMingguan, papanDasar, runWeeklyBriefing } from "./repo/weekly-briefing.js";
@@ -3480,6 +3481,20 @@ app.get("/sales/performance", async (c) => {
   return c.json(await reportSalesPerformance(c.req.query("asOf")));
 });
 
+// Ringkasan WA "Sales Area Performance" — susun/kirim manual. Sengaja TANPA route BFF
+// (bisa mengirim WA ke grup): hanya operator via service token. body:
+// {dry_run?, target?, as_of?, paksa?}. DEFAULT dry_run=true.
+app.post("/sales/performance/ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dry_run?: boolean; target?: string; as_of?: string; paksa?: boolean } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* body opsional */
+  }
+  return c.json(await runRingkasanSalesArea({ dryRun: body.dry_run !== false, target: body.target, asOf: body.as_of, paksa: body.paksa === true }));
+});
+
 // Sales Targets (menu Admin → Sales Targets). BFF-trusted; role-guard di web.
 app.get("/sales/targets", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -3562,6 +3577,15 @@ app.get("/dashboard/overview", async (c) => {
 const scopeOf = (c: { req: { header: (k: string) => string | undefined } }) =>
   resolveScope(c.req.header("x-user-id"));
 
+// Infografis "Sales Area Performance" (/sales-analytics/area) — angka seluruh
+// perusahaan + per sales, jadi scope AM (amOnly) DITOLAK. ?as_of=YYYY-MM-DD.
+app.get("/sales-analytics/area", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const sc = await scopeOf(c);
+  if (sc.amOnly) return c.json({ error: "khusus HoD / Direktur" }, 403);
+  const asOf = c.req.query("as_of");
+  return c.json(await infografisSalesArea(asOf && /^\d{4}-\d{2}-\d{2}$/.test(asOf) ? asOf : undefined));
+});
 app.get("/sales-analytics/overview", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsOverview(c.req.query("from"), c.req.query("to"), await scopeOf(c)));

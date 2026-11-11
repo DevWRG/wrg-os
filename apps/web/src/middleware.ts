@@ -66,9 +66,12 @@ function tolak(req: NextRequest, pathname: string): NextResponse {
       NextResponse.json({ error: "unauthenticated" }, { status: 401 }),
     );
   }
+  // `next` membawa query asli (mis. link WA /sales-analytics/area?tanggal=…) —
+  // dulu hanya pathname, query-nya tertinggal di URL login lalu hilang.
   const url = req.nextUrl.clone();
   url.pathname = "/login";
-  url.searchParams.set("next", pathname);
+  url.search = "";
+  url.searchParams.set("next", pathname + req.nextUrl.search);
   return noindexed(NextResponse.redirect(url));
 }
 
