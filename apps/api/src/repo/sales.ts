@@ -824,7 +824,7 @@ export async function customerMonthly(id: string, months = 12, scope: DataScope 
 }
 
 // ── Sales Performance (kartu target vs realisasi per periode + region) ──
-// Kartu bersifat periodik (YTD / kuartal / bulan berjalan) relatif "hari ini",
+// Kartu bersifat periodik (YTD / kuartal / bulan / minggu / hari berjalan) relatif "hari ini",
 // independen dari filter Dari/Sampai (yg menggerakkan tabel breakdown).
 //   - Target  : tabel sales_target per tahun (menu Admin → Sales Targets).
 //   - Region  : cabang → HoD (tabel hod_territory / menu WatchPoint Territory) →
@@ -841,20 +841,34 @@ interface Range {
   to: string;
 }
 // Boundary periode dari as-of (YYYY-MM-DD): YTD, kuartal-to-date, month-to-date,
-// dan periode setara bulan lalu (tgl 1 → hari yg sama, di-clamp ke akhir bulan).
-export function periodRanges(asOf: string): { year: Range; quarter: Range; month: Range; monthPrev: Range } {
+// minggu berjalan (Senin → as-of), hari as-of, dan periode setara bulan lalu
+// (tgl 1 → hari yg sama, di-clamp ke akhir bulan).
+export function periodRanges(asOf: string): {
+  year: Range; quarter: Range; month: Range; week: Range; day: Range; monthPrev: Range;
+} {
   const [Y, M, D] = asOf.split("-").map(Number);
   const qStartMonth = Math.floor((M - 1) / 3) * 3 + 1;
   const pmY = M === 1 ? Y - 1 : Y;
   const pmM = M === 1 ? 12 : M - 1;
   const daysInPrevMonth = new Date(Date.UTC(pmY, pmM, 0)).getUTCDate(); // hari terakhir bulan lalu
   const pmD = Math.min(D, daysInPrevMonth);
+  const senin = new Date(Date.UTC(Y, M - 1, D));
+  senin.setUTCDate(senin.getUTCDate() - ((senin.getUTCDay() + 6) % 7)); // 0 = Senin
   return {
     year: { from: isoDate(Y, 1, 1), to: asOf },
     quarter: { from: isoDate(Y, qStartMonth, 1), to: asOf },
     month: { from: isoDate(Y, M, 1), to: asOf },
+    week: { from: senin.toISOString().slice(0, 10), to: asOf },
+    day: { from: asOf, to: asOf },
     monthPrev: { from: isoDate(pmY, pmM, 1), to: isoDate(pmY, pmM, pmD) },
   };
+}
+
+// Target minggu & hari = breakdown target TAHUNAN per region (rumus Sheet2 target
+// sales: ÷ 52 minggu, ÷ 260 hari kerja) — tak disimpan, selalu ikut target tahunan.
+export const PEMBAGI_TARGET = { week: 52, day: 260 } as const;
+export function targetTurunan(tahunan: number | null, period: keyof typeof PEMBAGI_TARGET): number | null {
+  return tahunan == null ? null : Math.round(tahunan / PEMBAGI_TARGET[period]);
 }
 
 // Peta cabang → region dari hod_territory (WatchPoint). Hanya HoD Sales yg jadi
@@ -905,26 +919,33 @@ export async function periodAgg(
 const pctOr = (num: number, den: number | null): number | null =>
   den == null || den <= 0 ? null : Math.round((num / den) * 1000) / 10;
 
+export type PeriodKey = TargetPeriod | "week" | "day";
+
 export async function reportSalesPerformance(asOf?: string) {
   const sql = db();
   const today = asOf && ISO.test(asOf) ? asOf : salesDefaultRange().to;
   const R = periodRanges(today);
   const yr = Number(today.slice(0, 4));
   const regionMap = await cabangRegionMap(sql);
-  const [targets, year, quarter, month, monthPrev] = await Promise.all([
+  const [targets, year, quarter, month, week, day, monthPrev] = await Promise.all([
     listTargets(yr),
     periodAgg(sql, R.year.from, R.year.to, regionMap),
     periodAgg(sql, R.quarter.from, R.quarter.to, regionMap),
     periodAgg(sql, R.month.from, R.month.to, regionMap),
+    periodAgg(sql, R.week.from, R.week.to, regionMap),
+    periodAgg(sql, R.day.from, R.day.to, regionMap),
     periodAgg(sql, R.monthPrev.from, R.monthPrev.to, regionMap),
   ]);
 
   // Lookup target[period][region] (null bila belum diisi utk tahun ini).
-  const tgt = (period: TargetPeriod, region: "East" | "West"): number | null =>
+  // Minggu & hari diturunkan dari target tahunan (targetTurunan).
+  const tgtSimpan = (period: TargetPeriod, region: "East" | "West"): number | null =>
     targets.find((t) => t.period === period && t.region === region)?.target ?? null;
+  const tgt = (period: PeriodKey, region: "East" | "West"): number | null =>
+    period === "week" || period === "day" ? targetTurunan(tgtSimpan("year", region), period) : tgtSimpan(period, region);
 
   const mk = (
-    key: TargetPeriod,
+    key: PeriodKey,
     label: string,
     range: Range,
     agg: { total: number; regions: RegionTotals },
@@ -952,6 +973,8 @@ export async function reportSalesPerformance(asOf?: string) {
       mk("year", "Sales YTD", R.year, year),
       mk("quarter", "Sales This Quarter", R.quarter, quarter),
       mk("month", "Sales This Month", R.month, month),
+      mk("week", "Sales This Week", R.week, week),
+      mk("day", "Sales Today", R.day, day),
     ],
     mtd_vs_last: {
       current: { from: R.month.from, to: R.month.to, total: month.total },
