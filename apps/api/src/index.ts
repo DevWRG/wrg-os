@@ -295,6 +295,7 @@ import { listDepartments, listEmployees, getEmployee, getRaciMatrix, getMeasurem
 import { upsertMembers, listMembers, upsertDigests, listDigest, digestStats, upsertPola, listPola, generateRekap, generateResume, type MonitorMemberInput, type DigestInput, type PolaInput } from "./repo/monitor.js";
 import { runNotifTua } from "./repo/notiftua.js";
 import { runDailySummary } from "./repo/dailysummary.js";
+import { bacaTautan as bacaDailySummaryPublik } from "./repo/dailysummary-link.js";
 import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
@@ -1083,6 +1084,18 @@ function deriveWindow(
 }
 
 app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
+// 308: halaman detail Daily Summary /ds/<token> — PUBLIK (tanpa login, keputusan product owner 11 Nov 2026). Hanya
+// dipanggil server Next (gatewayFetch + x-service-token); token acak 128-bit, berlaku 30 hari.
+app.get("/daily-summary-publik/:token", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await bacaDailySummaryPublik(c.req.param("token") ?? "");
+    return d ? c.json(d) : c.json({ error: "Tautan tidak berlaku." }, 404);
+  } catch (e) {
+    console.error("[daily-summary-publik]", e);
+    return c.json({ error: "Gagal memuat Daily Summary." }, 500);
+  }
+});
 
 app.post("/rekap", async (c) => {
   let body: Record<string, unknown>;
