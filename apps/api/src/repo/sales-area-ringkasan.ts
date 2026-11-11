@@ -11,7 +11,7 @@
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { cabangRegionMap, reportSalesPerformance } from "./sales.js";
-import { amGroupKeySql, amLabelSql, joinAmFromSalesman } from "./salesman-am.js";
+import { cabangEffSql, isOfficeSql, joinAmFromSalesman } from "./salesman-am.js";
 
 type Performa = Awaited<ReturnType<typeof reportSalesPerformance>>;
 type Periode = Performa["periods"][number];
@@ -65,7 +65,10 @@ export interface BarisSales {
 }
 
 /**
- * Per pemilik faktur (AM, OFFICE, VACANT): YTD s/d as-of + hari as-of dipecah
+ * Per pemilik faktur: AM AKTIF per orang; OFFICE satu baris; faktur yang tak
+ * punya AM aktif (AM kosong ATAU sudah nonaktif/resign) dikumpulkan per AREA
+ * jadi "VACANT · <cabang>" dengan target cabang (sales_target_cabang) —
+ * keputusan user 11 Nov 2026. YTD s/d as-of + hari as-of dipecah
  * kategori pengadaan baris faktur (charField1: KSO / REGULAR / lainnya), faktur
  * campur dialokasikan proporsional nilai baris — sama dengan tab Per-Pengadaan.
  */
@@ -74,14 +77,26 @@ export async function perSalesArea(asOf: string): Promise<BarisSales[]> {
   const awal = `${asOf.slice(0, 4)}-01-01`;
   const regionMap = await cabangRegionMap(sql);
   const rows = await sql`
-    WITH inv AS (
+    WITH inv0 AS MATERIALIZED (
       SELECT ai.id, ai.tanggal, ai.raw, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS netto,
-             ${amGroupKeySql(sql)} AS kunci, ${amLabelSql(sql)} AS nama, NULLIF(mu.am_id,'') AS am_id,
-             NULLIF(mu.cabang,'') AS cabang
+             ${isOfficeSql(sql)} AS kantor,
+             CASE WHEN NULLIF(mu.am_id,'') IS NOT NULL AND mu.aktif THEN mu.am_id END AS am_aktif,
+             COALESCE(NULLIF(mu.nama,''), mu.am_id) AS nama_am, NULLIF(mu.cabang,'') AS cabang_am,
+             ${cabangEffSql(sql)} AS cabang_eff
       FROM accurate_invoice ai
       LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
       ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${awal} AND ${asOf}
+    ),
+    inv AS (
+      SELECT id, tanggal, raw, netto,
+             CASE WHEN kantor THEN 'office' WHEN am_aktif IS NOT NULL THEN am_aktif
+                  ELSE 'vacant:' || COALESCE(cabang_eff, '-') END AS kunci,
+             CASE WHEN kantor THEN 'OFFICE' WHEN am_aktif IS NOT NULL THEN nama_am
+                  ELSE 'VACANT · ' || COALESCE(cabang_eff, 'tanpa area') END AS nama,
+             CASE WHEN NOT kantor THEN am_aktif END AS am_id,
+             CASE WHEN kantor THEN NULL WHEN am_aktif IS NOT NULL THEN cabang_am ELSE cabang_eff END AS cabang
+      FROM inv0
     ),
     cat AS (
       SELECT inv.id, inv.kunci, inv.netto, COALESCE(NULLIF(d.val->>'charField1',''),'') AS kat,
@@ -110,12 +125,14 @@ export async function perSalesArea(asOf: string): Promise<BarisSales[]> {
              (array_agg(cabang ORDER BY tanggal DESC) FILTER (WHERE cabang IS NOT NULL))[1] AS cabang
       FROM inv GROUP BY kunci
     )
-    SELECT y.nama, y.cabang, y.ytd::float8 AS ytd, sta.target::float8 AS target,
+    SELECT y.nama, y.cabang, y.ytd::float8 AS ytd,
+           (CASE WHEN y.kunci LIKE 'vacant:%' THEN stc.target ELSE sta.target END)::float8 AS target,
            COALESCE(h.kso,0)::float8 AS kso, COALESCE(h.regular,0)::float8 AS regular,
            COALESCE(h.lain,0)::float8 AS lain, COALESCE(h.total,0)::float8 AS total
     FROM ytd y
     LEFT JOIN hari h USING (kunci)
     LEFT JOIN sales_target_am sta ON sta.am_id = y.am_id AND sta.year = ${Number(asOf.slice(0, 4))}
+    LEFT JOIN sales_target_cabang stc ON stc.cabang = y.cabang AND stc.year = ${Number(asOf.slice(0, 4))}
     ORDER BY COALESCE(h.total,0) DESC, y.ytd DESC`;
   return rows.map((r) => {
     const cabang = r.cabang ? String(r.cabang) : null;

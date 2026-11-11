@@ -100,7 +100,8 @@ export function AreaInfografis({ data }: { data: InfografisData }) {
           <CardTitle className="text-primary text-base font-semibold">Pencapaian per Sales</CardTitle>
           <p className="text-muted-foreground text-xs">
             KSO / REGULAR = penjualan hari {data.performance.as_of} menurut kategori pengadaan baris faktur. YTD dibandingkan target tahunan per AM
-            (menu Sales Targets); OFFICE dan VACANT tanpa target.
+            (menu Sales Targets). VACANT · area = faktur area tanpa AM aktif (termasuk AM yang sudah resign), dibandingkan target cabang;
+            OFFICE tanpa target.
           </p>
         </CardHeader>
         <CardContent>
