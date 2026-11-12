@@ -551,11 +551,13 @@ const labelKlausul = (t: string) => t.replace(/[a-z]+(?:_[a-z]+)+|eksklusivitas/
 /** Galat database → kalimat untuk layar. Kode galat tak pernah sampai ke pengguna. */
 export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
   // rincian ketidakcocokan PKS ikut tampil (tanpa kode): Sekretaris perlu tahu bagian mana yang salah
+  // 312: alasan penanda tangan SPH sudah berupa kalimat layar (lihat pilihTtdKso)
+  const ttd = /PENANDA_TANGAN_SPH: (.+)$/.exec(m.split("\n")[0]);
+  if (ttd) return { status: 409, pesan: ttd[1] };
   const pks = /PKS_TIDAK_COCOK: (.+)$/.exec(m.split("\n")[0]);
   if (pks) return { status: 409, pesan: `PKS tidak cocok dengan putusan — ${labelKlausul(pks[1])}. Tidak boleh ditandatangani.` };
   const peta: [RegExp, number, string][] = [
     [/PERAN_TIDAK_BERWENANG/, 403, "Tidak berwenang untuk aksi ini."],
-    [/PENANDA_TANGAN_SPH: (?:.*)$/, 409, "Penanda tangan SPH belum tersedia — pastikan ada akun di grup Direktur."],
     [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
