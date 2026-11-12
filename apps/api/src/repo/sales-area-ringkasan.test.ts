@@ -24,12 +24,16 @@ test("rpRingkas & labelTanggal", () => {
   assert.equal(labelTanggal("2026-11-11"), "Rab, 11 Nov 2026");
 });
 
-test("format WA singkat: % capaian 4 periode, hari ini per region, link infografis", () => {
+test("format WA per poin: nilai (% target) tiap periode, hari ini dirinci East/West, link", () => {
   const t = formatRingkasanSalesArea(perf, "https://x.test/sales-analytics/area?tanggal=2026-11-11");
-  assert.match(t, /\*Sales Area Performance\* · Rab, 11 Nov 2026/);
-  assert.match(t, /Capaian target: YTD 20,0% · Bulan 40,0% · Minggu 15,0% · Hari ini target belum diisi/);
-  assert.match(t, /Hari ini Rp 80,0 jt \(East Rp 50,0 jt · West Rp 30,0 jt\)/);
-  assert.match(t, /Infografis lengkap: https:\/\/x\.test\/sales-analytics\/area\?tanggal=2026-11-11/);
+  assert.match(t, /^\*Sales Area Performance\*\n_Rab, 11 Nov 2026_\n/);
+  assert.match(t, /• \*YTD\*: Rp 20,00 M \(20,0%\)/);
+  assert.match(t, /• \*Bulan ini\*: Rp 2,00 M \(40,0%\)/);
+  assert.match(t, /• \*Minggu ini\*: Rp 300,0 jt \(15,0%\)/);
+  assert.match(t, /• \*Hari ini\*: Rp 80,0 jt \(target belum diisi\)/);
+  assert.ok(t.includes("   – East: Rp 50,0 jt (target belum diisi)\n   – West: Rp 30,0 jt (target belum diisi)"));
+  assert.match(t, /Infografis lengkap:\nhttps:\/\/x\.test\/sales-analytics\/area\?tanggal=2026-11-11$/);
+  assert.doesNotMatch(t, /Kuartal|quarter/i);
   assert.doesNotMatch(t, /[<>]/);
 });
 
