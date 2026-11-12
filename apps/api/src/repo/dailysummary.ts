@@ -2,7 +2,8 @@ import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { upsertDigests } from "./monitor.js";
-import { formatWaRingkas, simpanTautan, tautanDs, uraiRingkasan } from "./dailysummary-link.js";
+import { formatWaRingkas, muatOrangPeta, muatPetaHod, muatTuaHariIni, simpanTautan, tautanDs, uraiRingkasan } from "./dailysummary-link.js";
+import { barisTuaWa, petakanTua, type HodPeta, type ItemTua } from "./dailysummary-hod.js";
 
 // Daily Summary — port wrg-crm/scripts/wrg-daily.sh JOB daily_summary.
 // Kumpulkan aktivitas hari ini (activity_log AM-mode + sales_todo.report_data
@@ -278,9 +279,24 @@ export async function runDailySummary(
   const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/+$/, "");
   if ((process.env.DAILY_SUMMARY_FORMAT ?? "ringkas").toLowerCase() !== "lengkap" && base) {
     try {
-      const token = opts.dryRun ? "PRATINJAU-TOKEN-0000000" : await simpanTautan({ tanggal: dateStr, hari, label: tanggal, stats: st, daftar, content: summary });
+      // 311: TUA per HOD — gagal di sini tak boleh menghentikan ringkasan (tanpa baris TUA saja)
+      let hod: HodPeta[] = [];
+      let tua: ItemTua[] = [];
+      let tuaSumber: string | null = null;
+      try {
+        hod = await muatPetaHod();
+        const t = await muatTuaHariIni(dateStr);
+        tuaSumber = t.sumber;
+        tua = petakanTua(t.baris, await muatOrangPeta(), hod);
+      } catch (e) {
+        console.error("[daily-summary] TUA/HOD gagal dimuat — tanpa TUA:", (e as Error).message);
+        tuaSumber = null;
+      }
+      const token = opts.dryRun ? "PRATINJAU-TOKEN-0000000"
+        : await simpanTautan({ tanggal: dateStr, hari, label: tanggal, stats: st, daftar, content: summary, hod, tua, tua_sumber: tuaSumber });
       link = tautanDs(base, token);
-      pesan = formatWaRingkas({ hari, tanggal, stats: st, pendek, highlight: uraiRingkasan(summary).highlight[0] ?? null, link });
+      pesan = formatWaRingkas({ hari, tanggal, stats: st, pendek, highlight: uraiRingkasan(summary).highlight[0] ?? null, link,
+                                tua: barisTuaWa(tuaSumber, tua, hod) });
     } catch (e) {
       console.error("[daily-summary] simpan tautan gagal — kirim versi lengkap:", (e as Error).message);
     }
