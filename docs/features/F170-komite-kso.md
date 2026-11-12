@@ -289,3 +289,26 @@ Keputusan faskes untuk usulan baru (`putuskanFaskes`, `kso-format.ts`; dipanggil
   = true`. Kota dari PDF Simulator atau label `KOTA:` (masih diterima diam-diam) mengganti default itu; kota tertulis tak pernah
   ditimpa. Baris balasan "Kota faskes belum ada — tulis #KSO Dxx KOTA" dihapus; KOTA untuk faskes master diabaikan tanpa balasan.
   Uji: `scripts/qa/kso-komite/920_uji_kota_area_am.sql`.
+
+## SPH KSO dari "Terbitkan penawaran" (migrasi 312, issue #2297, 12 Nov 2026)
+
+Keputusan product owner: setiap penawaran yang terbit — mandat Direksi, zona AM, zona HOD — langsung menghasilkan **Surat
+Penawaran Harga KSO** bernomor, **ditandatangani Direktur**, **berlaku 30 hari**, harga per test **belum termasuk PPN 11%**.
+
+- Aksi `penawaran` (Sekretariat / Admin Sales cadangan): `POST /kso-komite/rencana/:id/penawaran {harga, ttd_user_id?}` →
+  `kso.app_terbitkan_penawaran` lalu, di transaksi yang sama, nomor diambil dari penghitung SPH bersama
+  (`public.sph_pengaturan`, `lib/sph-cetak.ts ambilNomor` — satu urutan surat penawaran perusahaan) dan dicatat lewat
+  `kso.app_catat_sph`. Gagal mencatat SPH = penawaran ikut batal.
+- Penanda tangan: akun aktif grup `direktur` (atau role `direktur`); default = Direktur yang memutus rencana
+  (`kso.putusan_direksi_catatan.oleh_user`), selain itu yang pertama. Nama dari `app_user` (tak bisa diketik bebas); jabatan
+  kosong → "Direktur". Tanpa akun Direktur → penawaran ditolak dengan pesan jelas.
+- `kso.sph` = **snapshot** isi surat: harga/test, jumlah unit, masa KSO (tenor usulan, dibatasi tenor maks mandat), volume
+  minimum & klausul wajib dari mandat, nama faskes/kota/alat, berlaku_sampai = hari ini + 30, penanda tangan. Nomor unik.
+  RLS baca = `kso.boleh_lihat(rencana_id)`; tulis hanya lewat fungsi (pola 227/302).
+- PDF dibuat server (pdfkit, `repo/kso-sph-pdf.ts`, kop & gaya sama dengan SPH penjualan): perihal Penawaran KSO, tabel alat ·
+  jumlah · masa KSO · harga per test + terbilang, ketentuan (PPN, masa KSO sejak serah terima, volume minimum, kalimat untuk
+  `eskalasi_tahunan`/`lapor_test`/`denda_telat`, PKS, masa berlaku), tanda tangan Direktur. Tak ada angka internal (HPP,
+  margin, batas bawah). `GET /kso-komite/:tab/rencana/:id/sph/:sid` (BFF meneruskan biner, pola lampiran 302).
+- Layar: form "Terbitkan penawaran + SPH KSO" (harga + pilihan Direktur), bagian "SPH KSO" di detail (nomor, harga, masa,
+  penanda tangan, berlaku/kedaluwarsa, tombol Unduh SPH) untuk semua tab yang boleh melihat rencananya.
+- Uji: `scripts/qa/kso-komite/923_uji_sph.sql`, `apps/api/src/repo/kso-sph.test.ts`.
