@@ -65,10 +65,12 @@ export interface BarisSales {
 }
 
 /**
- * Per pemilik faktur: AM AKTIF per orang; OFFICE satu baris; faktur yang tak
- * punya AM aktif (AM kosong ATAU sudah nonaktif/resign) dikumpulkan per AREA
- * jadi "VACANT · <cabang>" dengan target cabang (sales_target_cabang) —
- * keputusan user 11 Nov 2026. YTD s/d as-of + hari as-of dipecah
+ * Per pemilik faktur: AM AKTIF per orang; OFFICE satu baris. Faktur tanpa AM
+ * aktif (AM kosong ATAU sudah nonaktif/resign): bila AREA-nya tak punya AM aktif
+ * (cabang SEKARANG AM aktif) → "VACANT · <cabang>" dengan target cabang
+ * (sales_target_cabang) — keputusan user 11 Nov 2026; bila areanya ada AM aktif
+ * atau area tak diketahui → satu baris "VACANT · lainnya" tanpa target (target
+ * cabang itu sudah milik AM-nya, jangan dihitung dua kali). YTD s/d as-of + hari as-of dipecah
  * kategori pengadaan baris faktur (charField1: KSO / REGULAR / lainnya), faktur
  * campur dialokasikan proporsional nilai baris — sama dengan tab Per-Pengadaan.
  */
@@ -88,15 +90,24 @@ export async function perSalesArea(asOf: string): Promise<BarisSales[]> {
       ${joinAmFromSalesman(sql)}
       WHERE ai.tanggal BETWEEN ${awal} AND ${asOf}
     ),
+    area_aktif AS (  -- cabang SEKARANG tiap AM aktif yang punya faktur tahun ini
+      SELECT DISTINCT NULLIF(m.cabang,'') AS cabang FROM master_user m
+      WHERE m.am_id IN (SELECT am_aktif FROM inv0 WHERE am_aktif IS NOT NULL) AND NULLIF(m.cabang,'') IS NOT NULL
+    ),
+    inv1 AS (
+      SELECT inv0.*, (cabang_eff IS NOT NULL AND cabang_eff NOT IN (SELECT cabang FROM area_aktif)) AS area_kosong
+      FROM inv0
+    ),
     inv AS (
       SELECT id, tanggal, raw, netto,
              CASE WHEN kantor THEN 'office' WHEN am_aktif IS NOT NULL THEN am_aktif
-                  ELSE 'vacant:' || COALESCE(cabang_eff, '-') END AS kunci,
+                  WHEN area_kosong THEN 'vacant:' || cabang_eff ELSE 'vacant-lain' END AS kunci,
              CASE WHEN kantor THEN 'OFFICE' WHEN am_aktif IS NOT NULL THEN nama_am
-                  ELSE 'VACANT · ' || COALESCE(cabang_eff, 'tanpa area') END AS nama,
+                  WHEN area_kosong THEN 'VACANT · ' || cabang_eff ELSE 'VACANT · lainnya' END AS nama,
              CASE WHEN NOT kantor THEN am_aktif END AS am_id,
-             CASE WHEN kantor THEN NULL WHEN am_aktif IS NOT NULL THEN cabang_am ELSE cabang_eff END AS cabang
-      FROM inv0
+             CASE WHEN kantor THEN NULL WHEN am_aktif IS NOT NULL THEN cabang_am
+                  WHEN area_kosong THEN cabang_eff END AS cabang
+      FROM inv1
     ),
     cat AS (
       SELECT inv.id, inv.kunci, inv.netto, COALESCE(NULLIF(d.val->>'charField1',''),'') AS kat,
