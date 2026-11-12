@@ -70,3 +70,7 @@ updates:
       # Hanya 2.14+ yang diabaikan — patch 2.13.x tetap datang.
       - dependency-name: "pydantic"
         versions: [">=2.14"]
+      # pypdf 7.0 juga menuntut Python >=3.10 (#2279 gagal pip install di CI 3.9).
+      # Hanya 7.x+ yang diabaikan — rilis 6.x tetap datang.
+      - dependency-name: "pypdf"
+        versions: [">=7"]
