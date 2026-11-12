@@ -48,7 +48,7 @@ select uji.cek('SPH tercatat: nomor & penanda tangan dirapikan, berlaku 30 hari 
 select uji.cek('Snapshot isi surat: harga, masa KSO ≤ tenor mandat, volume minimum & klausul wajib dari mandat, faskes & alat',
    (select s.harga_per_test = (select v::numeric + 500 from uji.d923 where k = 'lantai')
            and s.tenor_bulan = least(r.tenor_bulan, m.tenor_maks_bulan) and s.volume_minimum is not distinct from m.volume_minimum
-           and s.klausul_wajib = m.klausul_wajib and s.faskes_nama = f.nama and s.alat_nama = coalesce(a.nama, a.kode) and s.jumlah >= 1
+           and s.klausul_wajib = m.klausul_wajib and s.faskes_nama = f.nama and s.alat_nama = kso.nama_alat_surat(a.kode) and s.jumlah >= 1
       from kso.sph s join kso.rencana_kso r on r.id = s.rencana_id join kso.mandat m on m.rencana_id = r.id
       join kso.faskes f on f.id = r.faskes_id join kso.alat a on a.kode = r.alat_kode
      where s.id = (select v::bigint from uji.d923 where k = 's')));
@@ -65,3 +65,11 @@ select set_config('wrg.kso_peran', 'am', false), set_config('wrg.kso_ref', 'AM-T
 select uji.cek('AM bukan pemilik tidak melihat SPH (RLS boleh_lihat)', not exists (select 1 from kso.sph where id = (select v::bigint from uji.d923 where k = 's')));
 reset role;
 select set_config('wrg.kso_user', '', false), set_config('wrg.kso_peran', '', false), set_config('wrg.kso_ref', '', false);
+
+-- 4. 313: nama alat di surat dari katalog analyzer ("<jenis>|<merek model>"), cadangan nama alat, lalu kode
+update public.kso_analyzer set model_key = 'Hematology 3Diff|Merek Fiktif Z3' where kode = 'Z3';
+select uji.cek('Nama alat surat dari model_key katalog: "Merek Fiktif Z3 (Hematology 3Diff)"',
+   kso.nama_alat_surat('Z3') = 'Merek Fiktif Z3 (Hematology 3Diff)');
+select uji.cek('model_key tanpa pemisah → nama alat KSO', kso.nama_alat_surat('Z52') = (select nama from kso.alat where kode = 'Z52'));
+select uji.cek('Kode tak dikenal → kode apa adanya', kso.nama_alat_surat('TIDAK-ADA') = 'TIDAK-ADA');
+update public.kso_analyzer set model_key = 'M-Z3' where kode = 'Z3';
