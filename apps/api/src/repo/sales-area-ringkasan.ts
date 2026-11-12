@@ -25,7 +25,6 @@ export function rpRingkas(n: number): string {
   return `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 }
 
-const persen = (v: number | null) => (v == null ? "target belum diisi" : `${koma(v, 1)}%`);
 
 const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 const HARI = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -34,20 +33,25 @@ export function labelTanggal(iso: string): string {
   const { y, m, d } = tgl(iso);
   return `${HARI[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${d} ${BULAN[m - 1]} ${y}`;
 }
-/** Teks WA singkat + link infografis. Murni — angka dari reportSalesPerformance. */
+const nilaiPersen = (nilai: number, pct: number | null) => `${rpRingkas(nilai)} (${pct == null ? "target belum diisi" : `${koma(pct, 1)}%`})`;
+const JUDUL_WA: Partial<Record<Periode["key"], string>> = { year: "YTD", month: "Bulan ini", week: "Minggu ini", day: "Hari ini" };
+
+/**
+ * Teks WA per poin: tiap periode "nilai (% target)", hari ini dirinci East/West,
+ * lalu link infografis. Murni — angka dari reportSalesPerformance.
+ */
 export function formatRingkasanSalesArea(perf: Performa, link: string | null): string {
-  const p = (k: Periode["key"]) => perf.periods.find((x) => x.key === k);
-  const pctTeks = (x: Periode | undefined) => (x ? persen(x.pct.total) : "-");
-  const hari = p("day");
-  const out = [
-    `*Sales Area Performance* · ${labelTanggal(perf.as_of)}`,
-    `Capaian target: YTD ${pctTeks(p("year"))} · Bulan ${pctTeks(p("month"))} · Minggu ${pctTeks(p("week"))} · Hari ini ${pctTeks(hari)}`,
-  ];
-  if (hari) {
-    const reg = Object.fromEntries(hari.regions.map((r) => [r.region, r.total])) as Record<string, number>;
-    out.push(`Hari ini ${rpRingkas(hari.total)} (East ${rpRingkas(reg.East ?? 0)} · West ${rpRingkas(reg.West ?? 0)})`);
+  const out = ["*Sales Area Performance*", `_${labelTanggal(perf.as_of)}_`, ""];
+  for (const key of ["year", "month", "week", "day"] as const) {
+    const p = perf.periods.find((x) => x.key === key);
+    if (!p) continue;
+    out.push(`• *${JUDUL_WA[key]}*: ${nilaiPersen(p.total, p.pct.total)}`);
+    if (key === "day") {
+      const reg = Object.fromEntries(p.regions.map((r) => [r.region, r.total])) as Record<string, number>;
+      out.push(`   – East: ${nilaiPersen(reg.East ?? 0, p.pct.east)}`, `   – West: ${nilaiPersen(reg.West ?? 0, p.pct.west)}`);
+    }
   }
-  if (link) out.push("", `Infografis lengkap: ${link}`);
+  if (link) out.push("", "Infografis lengkap:", link);
   return out.join("\n");
 }
 

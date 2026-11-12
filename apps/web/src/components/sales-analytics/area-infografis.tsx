@@ -43,7 +43,7 @@ function TabelSales({ rows }: { rows: BarisSales[] }) {
             <th className={th}>REGULAR</th>
             {adaLain && <th className={th}>Lainnya</th>}
             <th className={th}>Total hari ini</th>
-            <th className={th}>YTD</th>
+            <th className={th}>Revenue YTD</th>
             <th className={th}>Target tahunan</th>
             <th className={th}>% YTD</th>
           </tr>
@@ -100,7 +100,7 @@ export function AreaInfografis({ data }: { data: InfografisData }) {
           <CardTitle className="text-primary text-base font-semibold">Pencapaian per Sales</CardTitle>
           <p className="text-muted-foreground text-xs">
             KSO / REGULAR = penjualan hari {data.performance.as_of} menurut kategori pengadaan baris faktur. YTD dibandingkan target tahunan per AM
-            (menu Sales Targets). VACANT · area = faktur di area yang tak punya AM aktif (termasuk faktur AM yang sudah resign),
+            (menu Sales Targets). Revenue YTD = omzet netto 1 Jan s/d tanggal ini. VACANT · area = faktur di area yang tak punya AM aktif (termasuk faktur AM yang sudah resign),
             dibandingkan target cabang; VACANT · lainnya = faktur tanpa AM di area yang ada AM-nya / tanpa area, tanpa target. OFFICE tanpa target.
           </p>
         </CardHeader>
