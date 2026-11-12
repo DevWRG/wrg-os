@@ -165,10 +165,85 @@ export async function perSalesArea(asOf: string): Promise<BarisSales[]> {
   });
 }
 
+// ── Tabel per cabang (infografis) ────────────────────────────────
+
+export interface BarisCabang {
+  cabang: string;
+  region: "East" | "West" | "OFFICE";
+  hari: { kso: number; regular: number; lain: number; total: number };
+  ytd: number;
+  /** Target tahunan cabang (sales_target_cabang); null bila belum diisi. */
+  target: number | null;
+  pct_ytd: number | null;
+}
+
+/**
+ * Per AREA (sudut pandang cabang, sama dengan tab Per-Cabang): cabang AM pada
+ * tanggal faktur; faktur tanpa AM → lokasi customer (cabangEffSql). Tak ada
+ * baris Office — faktur tanpa area apa pun jadi "Tanpa area".
+ */
+export async function perCabangArea(asOf: string): Promise<BarisCabang[]> {
+  const sql = db();
+  const awal = `${asOf.slice(0, 4)}-01-01`;
+  const regionMap = await cabangRegionMap(sql);
+  const rows = await sql`
+    WITH inv AS MATERIALIZED (
+      SELECT ai.id, ai.tanggal, ai.raw, (ai.total - COALESCE(ai.tax_amount,0))::float8 AS netto,
+             COALESCE(${cabangEffSql(sql)}, 'Tanpa area') AS cabang
+      FROM accurate_invoice ai
+      LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+      ${joinAmFromSalesman(sql)}
+      WHERE ai.tanggal BETWEEN ${awal} AND ${asOf}
+    ),
+    cat AS (
+      SELECT inv.id, inv.cabang, inv.netto, COALESCE(NULLIF(d.val->>'charField1',''),'') AS kat,
+             COALESCE(sum(GREATEST((d.val->>'totalPrice')::numeric, 0)), 0)::float8 AS w
+      FROM inv
+      LEFT JOIN LATERAL jsonb_array_elements(COALESCE(inv.raw->'detailItem','[]'::jsonb)) AS d(val) ON true
+      WHERE inv.tanggal = ${asOf}
+      GROUP BY 1, 2, 3, 4
+    ),
+    sh AS (
+      SELECT cabang, kat,
+             CASE WHEN sum(w) OVER (PARTITION BY id) > 0 THEN netto * w / sum(w) OVER (PARTITION BY id)
+                  ELSE netto / count(*) OVER (PARTITION BY id) END AS porsi
+      FROM cat
+    ),
+    hari AS (
+      SELECT cabang,
+             sum(porsi) FILTER (WHERE kat ILIKE 'KSO%') AS kso,
+             sum(porsi) FILTER (WHERE kat ILIKE 'REG%') AS regular,
+             sum(porsi) FILTER (WHERE kat NOT ILIKE 'KSO%' AND kat NOT ILIKE 'REG%') AS lain,
+             sum(porsi) AS total
+      FROM sh GROUP BY cabang
+    ),
+    ytd AS (SELECT cabang, sum(netto) AS ytd FROM inv GROUP BY cabang)
+    SELECT y.cabang, y.ytd::float8 AS ytd, stc.target::float8 AS target,
+           COALESCE(h.kso,0)::float8 AS kso, COALESCE(h.regular,0)::float8 AS regular,
+           COALESCE(h.lain,0)::float8 AS lain, COALESCE(h.total,0)::float8 AS total
+    FROM ytd y
+    LEFT JOIN hari h USING (cabang)
+    LEFT JOIN sales_target_cabang stc ON stc.cabang = y.cabang AND stc.year = ${Number(asOf.slice(0, 4))}
+    ORDER BY y.ytd DESC`;
+  return rows.map((r) => {
+    const cabang = String(r.cabang);
+    const ytd = Number(r.ytd ?? 0);
+    const target = r.target != null && Number(r.target) > 0 ? Number(r.target) : null;
+    return {
+      cabang,
+      region: regionMap[cabang] || "OFFICE",
+      hari: { kso: Number(r.kso), regular: Number(r.regular), lain: Number(r.lain), total: Number(r.total) },
+      ytd,
+      target,
+      pct_ytd: target ? Math.round((ytd / target) * 1000) / 10 : null,
+    };
+  });
+}
+
 export async function infografisSalesArea(asOf?: string) {
   const performance = await reportSalesPerformance(asOf);
-  const per_sales = await perSalesArea(performance.as_of);
-  return { performance, per_sales, generated_at: new Date().toISOString() };
+  const [per_sales, per_cabang] = await Promise.all([perSalesArea(performance.as_of), perCabangArea(performance.as_of)]);
+  return { performance, per_sales, per_cabang, generated_at: new Date().toISOString() };
 }
 
 export interface HasilRingkasan {
