@@ -165,6 +165,10 @@ interface RawTrx {
  * menjumlahkan HPP berkali-kali, DAN menggandakan item_count dengan faktor yang sama —
  * sehingga pemeriksaan "HPP lengkap" tetap lolos dan GP yang salah ikut tersimpan.
  *
+ * Satuan: HPP price book per KEMASAN, qty faktur per satuan item Accurate. Konversinya diisi
+ * manual (tabel hpp_konversi_satuan, migrasi 309) dan sudah diterapkan di hpp_item_satuan —
+ * item yang belum dikonversi tetap memakai HPP kemasan apa adanya.
+ *
  * Karena itu HPP diringkas dulu per item di CTE `hpp_item`, dan hanya dipakai kalau
  * pemetaannya TIDAK AMBIGU (tepat satu nilai HPP berbeda). Kode yang ambigu
  * diperlakukan seperti tak punya HPP → GP null → MR 0, dan dihitung terpisah di
@@ -184,17 +188,12 @@ async function ambilTransaksi(amIds: string[], periode: string, periodeHpp: stri
   const sql = db();
   return sql<RawTrx[]>`
     WITH hpp_item AS (
-      -- Satu baris per item Accurate. n_hpp > 1 = kode dipakai beberapa varian dengan
-      -- HPP berbeda → ambigu, jangan dipakai. Sekaligus meruntuhkan kemungkinan satu
-      -- accurate_item_id dipetakan beberapa product_code.
-      SELECT pc.accurate_item_id AS item_id,
-             min(pps.hpp) AS hpp,
-             count(DISTINCT pps.hpp) AS n_hpp
-      FROM product_code pc
-      JOIN product_pricelist_setup pps
-        ON pps.product_kode = pc.kode AND pps.periode = ${periodeHpp}
-      WHERE pc.accurate_item_id IS NOT NULL AND pps.hpp IS NOT NULL
-      GROUP BY pc.accurate_item_id
+      -- Satu baris per item Accurate, HPP per SATUAN Accurate (sumber tunggal
+      -- hpp_item_satuan, migrasi 309: HPP kemasan Setup Harga ÷ isi_per_kemasan, atau
+      -- override hpp_per_satuan). n_hpp > 1 = kode dipakai beberapa varian dengan HPP
+      -- berbeda → ambigu, jangan dipakai (override menuntaskannya). Fungsi itu juga
+      -- meruntuhkan kemungkinan satu accurate_item_id dipetakan beberapa product_code.
+      SELECT item_id, hpp, n_hpp FROM hpp_item_satuan(${periodeHpp})
     ),
     inv AS (
       SELECT ai.id, ai.number AS invoice_no, ai.customer_id::text AS customer_id,
