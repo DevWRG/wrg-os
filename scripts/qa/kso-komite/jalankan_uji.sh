@@ -41,7 +41,7 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/288_kso_biaya_elektrolit.sql \
          "$INIT"/302_kso_format_wa_lampiran.sql "$INIT"/303_kso_faskes_baru.sql \
          "$INIT"/304_kso_faskes_baru_kota_area.sql "$INIT"/305_kso_lampiran_tanpa_simpan.sql \
-         "$INIT"/307_kso_alat_baru.sql; do
+         "$INIT"/307_kso_alat_baru.sql "$INIT"/312_kso_sph.sql "$INIT"/313_kso_sph_nama_alat.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -99,4 +99,6 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_bot_catat_lampiran) *$|^ *[a-z0-9-]{3,40} *$|^ *[0-9]+ *$|^INSERT [0-9 ]+$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 922_uji_alat_baru.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_bot_lengkapi_draft|app_bot_ajukan) *$|^ *[A-Za-z0-9-]{3,40} *$|^INSERT [0-9 ]+$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 923_uji_sph.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_terbitkan_penawaran) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'

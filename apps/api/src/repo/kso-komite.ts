@@ -14,6 +14,7 @@ import { db } from "../db.js";
 import { effectivePermissions, type Action, type Effective } from "./rbac.js";
 import { daftarKurang, skorFaskes, type CocokIsian, type ItemKurang } from "./kso-format.js";
 import { saringDaftarFilter, saringDaftarTab, saringDetail, type ModeSaring } from "./kso-saring.js";
+import { daftarSphKso, kandidatTtdKso, KOLOM_SPH_KSO, pemutusDireksi, terbitkanSphKso, ttdDefaultKso, type KandidatTtdKso, type SphKso } from "./kso-sph.js";
 
 export type TabKso = "saya" | "hod" | "agenda" | "direksi" | "sekretariat" | "penawaran" | "teknik" | "kpi";
 type PeranKso = "am" | "hod" | "komite" | "direksi" | "sekretaris" | "admin_sales" | "teknik";
@@ -313,7 +314,10 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
                                      berkas_dihapus_at is not null as berkas_dihapus, dibuat_at::text as diunggah_at, dibaca_at::text
                                 from kso.rencana_lampiran where rencana_id = ${id} order by dibuat_at desc, id desc`;
     const [kd] = await bahanKurang(tx, [id]);
-    return { rencana: r, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
+    // 312: SPH KSO yang sudah terbit (snapshot) + Direktur pemutus (default penanda tangan di form penawaran)
+    const sph = await daftarSphKso(tx, id);
+    const pemutus = TAB_SPH_TTD.includes(tab) ? await pemutusDireksi(tx, id) : null;
+    return { rencana: r, sph, pemutus_direksi: pemutus, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
              forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null,
              lampiran_terakhir: lampiran[0] ?? null, lampiran, kurang: kd ? kurangDari(kd) : [],
              ...(faskesSaranMaster ? { faskes_saran_master: faskesSaranMaster } : {}) };
@@ -325,6 +329,12 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
   const nama = new Map<string, string>();
   if (ids.length) for (const u of await db()`SELECT id::text, name FROM app_user WHERE id::text = ANY(${ids})`) nama.set(String(u.id), String(u.name));
   d.riwayat = riwayat.map(({ oleh_user, ...h }) => ({ ...h, oleh_nama: oleh_user ? nama.get(oleh_user) ?? null : null })) as never;
+  // 312: pilihan penanda tangan SPH KSO (akun Direktur) — hanya untuk tab yang menerbitkan penawaran
+  if (TAB_SPH_TTD.includes(tab)) {
+    const kandidat = await kandidatTtdKso();
+    Object.assign(d, { ttd_kandidat: kandidat, ttd_default: ttdDefaultKso(kandidat, d.pemutus_direksi as string | null) });
+  }
+  delete (d as Record<string, unknown>).pemutus_direksi;
   return mode ? saringDetail(d, mode) : d;
 }
 
@@ -425,6 +435,18 @@ export async function berkasLampiran(userId: string, tab: TabKso, id: number, la
   });
 }
 
+/** Tab yang menerbitkan penawaran → butuh daftar penanda tangan SPH KSO. */
+const TAB_SPH_TTD: TabKso[] = ["sekretariat", "penawaran"];
+
+/** 312: satu SPH KSO untuk dicetak — tab mana pun yang boleh melihat rencananya (RLS boleh_lihat). */
+export async function berkasSph(userId: string, tab: TabKso, id: number, sphId: number): Promise<SphKso> {
+  return sebagaiPengguna(userId, tab, "view", async (tx) => {
+    const [s] = await tx.unsafe(`select ${KOLOM_SPH_KSO} from kso.sph where id = $1 and rencana_id = $2`, [sphId, id]);
+    if (!s) throw new GalatKso(404, "SPH tidak ada, atau di luar akses tab ini.");
+    return s as unknown as SphKso;
+  });
+}
+
 // ---------------------------------------------------------------- aksi
 
 export type AksiKso =
@@ -498,7 +520,9 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
       if (!Array.isArray(b.klausul)) return "Centang klausul yang ada di naskah PKS.";
       return null;
     case "penawaran":
-      return angka(b.harga) ? null : "Harga penawaran wajib diisi.";
+      if (!angka(b.harga)) return "Harga penawaran wajib diisi.";
+      return b.ttd_user_id == null || b.ttd_user_id === "" || (typeof b.ttd_user_id === "string" && /^[0-9a-f-]{36}$/i.test(b.ttd_user_id))
+        ? null : "Penanda tangan SPH tidak sah.";
     case "kalah":
       return teks(b.alasan) ? null : "Alasan kalah wajib diisi.";
     case "serah-terima":
@@ -527,10 +551,16 @@ const labelKlausul = (t: string) => t.replace(/[a-z]+(?:_[a-z]+)+|eksklusivitas/
 /** Galat database → kalimat untuk layar. Kode galat tak pernah sampai ke pengguna. */
 export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
   // rincian ketidakcocokan PKS ikut tampil (tanpa kode): Sekretaris perlu tahu bagian mana yang salah
+  // 312: alasan penanda tangan SPH sudah berupa kalimat layar (lihat pilihTtdKso)
+  const ttd = /PENANDA_TANGAN_SPH: (.+)$/.exec(m.split("\n")[0]);
+  if (ttd) return { status: 409, pesan: ttd[1] };
   const pks = /PKS_TIDAK_COCOK: (.+)$/.exec(m.split("\n")[0]);
   if (pks) return { status: 409, pesan: `PKS tidak cocok dengan putusan — ${labelKlausul(pks[1])}. Tidak boleh ditandatangani.` };
   const peta: [RegExp, number, string][] = [
     [/PERAN_TIDAK_BERWENANG/, 403, "Tidak berwenang untuk aksi ini."],
+    [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
+    [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
+    [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
     [/HOD_TIDAK_BERWENANG/, 403, "Rencana ini bukan wewenang kursi HOD Anda."],
     [/BUKAN_JALUR_CEPAT/, 409, "Rencana sudah tidak di jalur cepat — putusan HOD tidak berlaku lagi."],
     [/BUKAN_JALUR_FORUM/, 409, "Rencana tidak sedang menunggu forum."],
@@ -568,6 +598,8 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
   const salah = validasiAksi(aksi, b);
   if (salah) throw new GalatKso(400, salah);
   const tab = await tabUntukAksi(userId, aksi);
+  // 312: daftar Direktur dibaca di luar transaksi peran (wrg_app tak dijamin boleh membaca app_user)
+  const kandidatTtd: KandidatTtdKso[] = aksi === "penawaran" ? await kandidatTtdKso() : [];
   try {
     return await sebagaiPengguna(userId, tab, "edit", async (tx) => {
       switch (aksi) {
@@ -602,9 +634,13 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
           await tx`select kso.app_cocokkan_pks(${id}, ${angka(b.harga_deal)}, ${angka(b.tenor_bulan)}, ${angka(b.volume_minimum)}, ${klausul})`;
           return { ok: true };
         }
-        case "penawaran":
+        case "penawaran": {
           await tx`select kso.app_terbitkan_penawaran(${id}, ${angka(b.harga)})`;
-          return { ok: true };
+          // 312: SPH KSO bernomor terbit di transaksi yang sama — gagal terbit SPH = penawaran ikut batal
+          const sph = await terbitkanSphKso(tx, id, angka(b.harga) as number, kandidatTtd,
+                                            typeof b.ttd_user_id === "string" ? b.ttd_user_id : null);
+          return { ok: true, sph };
+        }
         case "kalah":
           await tx`select kso.app_catat_kalah(${id}, ${teks(b.alasan)})`;
           return { ok: true };

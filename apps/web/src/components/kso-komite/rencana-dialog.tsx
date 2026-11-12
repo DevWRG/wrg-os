@@ -15,6 +15,7 @@ import { persenFee } from "@/lib/kso-komite-daftar";
 
 import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
+import { BagianSph, FormPenawaranSph } from "./sph-kso";
 import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
@@ -119,6 +120,7 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       )}
       {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b>{d.putusan.catatan && ` — ${d.putusan.catatan}`} <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span></li></Blok>}
       {d.mandat && <Mandat d={d} />}
+      <BagianSph tab={tab} d={d} />
       {r.harga_deal != null && (
         <Blok judul="PKS (dicocokkan Sekretariat)">
           <li>Harga {rp(Number(r.harga_deal))}/test · tenor {String(r.pks_tenor_bulan ?? "—")} bln · volume min {String(r.pks_volume_minimum ?? "—")} test/bln</li>
@@ -316,11 +318,11 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   if ((tab === "sekretariat" || tab === "penawaran") && (s === "DIPUTUS_AM" || s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
     return (
       <div className="space-y-3">
-        <FormAngka judul="Terbitkan penawaran"
+        <FormPenawaranSph d={d}
           label={`Harga per test (Rp) — ${[d.mandat?.harga_pembuka != null && `pembuka ${rp(d.mandat.harga_pembuka)}`,
             d.mandat?.harga_target !== undefined && `target ${rp(d.mandat.harga_target)}`,
             d.mandat?.harga_lantai !== undefined && `batas bawah ${rp(d.mandat.harga_lantai)}`].filter(Boolean).join(", ") || "sesuai mandat"}`}
-          awal={d.mandat?.harga_pembuka ?? d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} aksi="penawaran" kunci="harga" jalankan={jalankan} />
+          awal={d.mandat?.harga_pembuka ?? d.mandat?.harga_target ?? d.mandat?.harga_lantai ?? null} jalankan={jalankan} />
         <FormTeks judul="Catat kalah" nada="amber" label="Alasan kalah" aksi="kalah" kunci="alasan" jalankan={jalankan} />
       </div>
     );
@@ -426,21 +428,6 @@ function FormTeks({ judul, nada, label, aksi, kunci, jalankan }: { judul: string
 }
 
 const angka = (s: string) => (s.trim() === "" ? null : Number(s.replace(/\./g, "").replace(",", ".")));
-
-function FormAngka({ judul, label, aksi, kunci, awal = null, jalankan }: {
-  judul: string; label: string; aksi: string; kunci: string; awal?: number | null; jalankan: Jalankan;
-}) {
-  const { sibuk, err, go } = useKirim(jalankan);
-  const [v, setV] = useState(awal == null ? "" : String(awal));
-  return (
-    <Kotak judul={judul}>
-      <Label>{label}</Label>
-      <Input inputMode="numeric" value={v} onChange={(e) => setV(e.target.value)} />
-      {err && <p className="text-destructive text-sm">{err}</p>}
-      <Button disabled={!v.trim() || sibuk} onClick={() => go(aksi, { [kunci]: angka(v) })}>Simpan</Button>
-    </Kotak>
-  );
-}
 
 function FormUsulan({ jalankan }: { jalankan: Jalankan }) {
   const { sibuk, err, go } = useKirim(jalankan);

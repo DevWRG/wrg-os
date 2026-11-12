@@ -90,8 +90,20 @@ export interface Detail {
   kurang?: ItemKurang[];
   /** 303: akun master paling mirip untuk faskes baru — hanya tab Sekretariat / Agenda (yang boleh menautkan). */
   faskes_saran_master?: { id: string; nama: string; cabang: string | null; skor: number }[];
+  /** 312: SPH KSO yang sudah terbit (terbaru dulu). */
+  sph?: SphKso[];
+  /** 312: pilihan penanda tangan SPH (akun Direktur) + default — hanya tab Sekretariat / Terbitkan Penawaran. */
+  ttd_kandidat?: { userId: string; nama: string; jabatan: string | null }[];
+  ttd_default?: string | null;
   /** Respons disaring (lihat DataTab.tanpa_angka). */
   tanpa_angka?: boolean;
+}
+
+/** 312: snapshot SPH KSO (kso.sph). */
+export interface SphKso {
+  id: number; nomor: string; harga_per_test: number; jumlah: number; tenor_bulan: number; volume_minimum: number | null;
+  klausul_wajib: string[]; faskes_nama: string; faskes_kota: string | null; alat_nama: string; berlaku_hari: number;
+  terbit_at: string; berlaku_sampai: string; ttd_nama: string; ttd_jabatan: string | null;
 }
 
 // ---------------------------------------------------------------- 302: format #KSO + lampiran
