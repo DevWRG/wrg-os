@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 
 import { ketentuanSphKso, namaFileSphKso, sphKsoPdf, type SphKsoCetak } from "./kso-sph-pdf.js";
 import { pilihTtdKso, ttdDefaultKso, type KandidatTtdKso } from "./kso-sph.js";
+import { terjemahGalatWeb } from "./kso-komite.js";
 import { polaTerlarang } from "./kso-saring.js";
 
 const DIR: KandidatTtdKso[] = [
@@ -72,4 +73,10 @@ test("sphKsoPdf: menghasilkan PDF; nama berkas aman", async () => {
   assert.equal(buf.subarray(0, 5).toString(), "%PDF-");
   assert.ok(buf.length > 2000);
   assert.equal(namaFileSphKso(SPH), "SPH_KSO_01234_WRG.PN-PNA_XI_2026.pdf");
+});
+
+test("terjemahGalatWeb: alasan penanda tangan SPH tampil apa adanya (bukan pesan generik)", () => {
+  const t = terjemahGalatWeb("PENANDA_TANGAN_SPH: Penanda tangan SPH harus dipilih dari daftar akun Direktur.");
+  assert.deepEqual(t, { status: 409, pesan: "Penanda tangan SPH harus dipilih dari daftar akun Direktur." });
+  assert.equal(terjemahGalatWeb("NOMOR_SPH_BELUM_DIATUR").status, 409);
 });
