@@ -23,7 +23,8 @@ const SESSION_COOKIE = "wrg_session";
 // pengunjung lewat QR. Route di bawah /api/publik/ WAJIB hanya meneruskan endpoint
 // publik yang sempit (lihat app/api/publik/pameran) — jangan taruh BFF biasa di sana.
 // /ds/ = halaman detail Daily Summary bertoken (308), dibuka HOD dari tautan WA tanpa login.
-const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/api/auth/", "/_next/", "/daftar/", "/api/publik/", "/ds/"];
+// /sa/ = infografis Sales Area bertoken (310), dibuka grup Koord HoD dari tautan WA tanpa login (2 hari).
+const PUBLIC_PREFIXES = ["/login", "/signup", "/forgot-password", "/api/auth/", "/_next/", "/daftar/", "/api/publik/", "/ds/", "/sa/"];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return true;
