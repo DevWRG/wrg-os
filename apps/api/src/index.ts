@@ -369,6 +369,7 @@ import { aiBaseUrl, callAi, statistikDegradasiAi } from "./ai.js";
 import { startScheduler, getScheduleStatus, jadwalTerdaftar } from "./scheduler.js";
 import { statusJob } from "./repo/job-run.js";
 import { signJwt, verifyJwt } from "./auth.js";
+import { gerbangAuth } from "./auth-gate.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
 import { getKurirPerformaSummary } from "./repo/courier-performance.js";
 import {
@@ -782,20 +783,10 @@ app.notFound((c) => c.json({ error: `route tak ada: ${c.req.method} ${c.req.path
 
 // Auth enforcement (opsional, default MATI). Saat AUTH_ENABLED=true, semua
 // endpoint butuh otorisasi KECUALI: /health, /auth/*, /webhooks/* (punya
-// secret sendiri). Diterima: x-service-token (BFF tepercaya) ATAU Bearer JWT.
+// secret sendiri). Diterima: x-service-token (BFF tepercaya) ATAU Bearer JWT
+// role admin — identitas JWT dipaksa dari token (lihat auth-gate.ts).
 const authEnabled = (): boolean => (process.env.AUTH_ENABLED ?? "").toLowerCase() === "true";
-function authExempt(path: string): boolean {
-  return path === "/health" || path.startsWith("/auth/") || path.startsWith("/webhooks/");
-}
-app.use("*", async (c, next) => {
-  if (!authEnabled() || authExempt(c.req.path)) return next();
-  const svc = process.env.API_SERVICE_TOKEN;
-  if (svc && c.req.header("x-service-token") === svc) return next();
-  const authz = c.req.header("authorization") ?? "";
-  const token = authz.startsWith("Bearer ") ? authz.slice(7) : "";
-  if (token && verifyJwt(token)) return next();
-  return c.json({ error: "unauthorized" }, 401);
-});
+app.use("*", gerbangAuth({ enabled: authEnabled, serviceToken: () => process.env.API_SERVICE_TOKEN }));
 
 app.get("/health", async (c) => {
   const db = isDbEnabled() ? (await pingDb()) ? "ok" : "down" : "disabled";
