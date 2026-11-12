@@ -1,8 +1,12 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { gatewayFetch } from "@/lib/gateway";
 import { sessionUser } from "@/lib/admin-guard";
 import { canEditPricelistSetup, canPublishPricelist } from "@/lib/pricelist-access";
+import { canEditHppKonversi, canViewHppKonversi } from "@/lib/hpp-konversi-access";
+import { cn } from "@/lib/utils";
+import { HppKonversiPanel } from "@/components/pricelist/hpp-konversi-panel";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -31,11 +35,19 @@ export const dynamic = "force-dynamic";
 //
 // redirect() dipakai, bukan render pesan "akses ditolak": halaman yang tetap
 // dirender ikut mengirim payload RSC-nya.
-export default async function PricebookSetupPage() {
+//
+// Tab "Konversi satuan HPP" (?tab=konversi, migrasi 309): HPP di sini per KEMASAN, qty faktur
+// Accurate per satuan item — konversinya diisi di tab itu. Gate-nya sendiri
+// (lib/hpp-konversi-access: Setup Harga + Finance), jadi Finance yang tak boleh mengedit
+// harga hanya melihat tab konversi.
+export default async function PricebookSetupPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const me = await sessionUser();
-  if (!canEditPricelistSetup(me)) {
+  const bolehHarga = canEditPricelistSetup(me);
+  const bolehKonversi = canViewHppKonversi(me);
+  if (!bolehHarga && !bolehKonversi) {
     redirect("/akses-ditolak?menu=Setup%20Harga");
   }
+  const tab = !bolehHarga || (bolehKonversi && (await searchParams).tab === "konversi") ? "konversi" : "harga";
 
   async function getJson<T>(path: string): Promise<T | null> {
     try {
@@ -46,9 +58,14 @@ export default async function PricebookSetupPage() {
     }
   }
 
-  const pb = await getJson<{ rows: PricebookSetupRow[]; ringkas: PricebookSetupSummary }>(
-    "/pricebook/setup?limit=20000",
-  );
+  const pb = tab === "harga"
+    ? await getJson<{ rows: PricebookSetupRow[]; ringkas: PricebookSetupSummary }>("/pricebook/setup?limit=20000")
+    : null;
+
+  const tabs = [
+    ...(bolehHarga ? [{ key: "harga", label: "Harga keagenan", href: "/pricebook/setup" }] : []),
+    ...(bolehKonversi ? [{ key: "konversi", label: "Konversi satuan HPP", href: "/pricebook/setup?tab=konversi" }] : []),
+  ];
 
   return (
     <>
@@ -56,7 +73,26 @@ export default async function PricebookSetupPage() {
         title="Setup Harga"
         description="Setel Harga Principal (HPP), Price List & Diskon Maks per SKU keagenan, lalu publikasikan agar tampil ke AM. Angka di halaman ini internal: jangan dibagikan ke sales."
       />
-      {!pb ? (
+      {tabs.length > 1 && (
+        <nav className="mb-4 flex flex-wrap gap-2" aria-label="Tab Setup Harga">
+          {tabs.map((t) => (
+            <Link
+              key={t.key}
+              href={t.href}
+              aria-current={tab === t.key ? "page" : undefined}
+              className={cn(
+                "rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors",
+                tab === t.key ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent",
+              )}
+            >
+              {t.label}
+            </Link>
+          ))}
+        </nav>
+      )}
+      {tab === "konversi" ? (
+        <HppKonversiPanel canEdit={canEditHppKonversi(me)} />
+      ) : !pb ? (
         <p className="text-muted-foreground">
           Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code> dan migrasi{" "}
           <code>073_pricebook_setup.sql</code> + <code>077_pricebook_setup_publish.sql</code> sudah diterapkan.
