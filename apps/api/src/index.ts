@@ -299,7 +299,7 @@ import { namaFilePdf, seninBriefPdf } from "./repo/senin-brief-pdf.js";
 import { namaFileTabelPdf, tabelPdf, tabelPdfGabungan } from "./repo/tabel-pdf.js";
 import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from "./repo/report-library.js";
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
-import { infografisSalesArea, runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
+import { bacaSalesAreaPublik, infografisSalesArea, runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
 import {
   DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
@@ -1251,6 +1251,18 @@ function deriveWindow(
 app.post("/daily-summary", (c) => forwardToAi(c, "/daily-summary"));
 // 308: halaman detail Daily Summary /ds/<token> — PUBLIK (tanpa login, keputusan product owner 11 Nov 2026). Hanya
 // dipanggil server Next (gatewayFetch + x-service-token); token acak 128-bit, berlaku 30 hari.
+// 310: infografis Sales Area /sa/<token> — PUBLIK (tanpa login, keputusan user 12 Nov 2026, berlaku 2 hari).
+// Hanya dipanggil server Next (gatewayFetch + x-service-token); token acak 128-bit per tanggal.
+app.get("/sales-area-publik/:token", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await bacaSalesAreaPublik(c.req.param("token") ?? "");
+    return d ? c.json(d) : c.json({ error: "Tautan tidak berlaku." }, 404);
+  } catch (e) {
+    console.error("[sales-area-publik]", e);
+    return c.json({ error: "Gagal memuat Sales Area." }, 500);
+  }
+});
 app.get("/daily-summary-publik/:token", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try {

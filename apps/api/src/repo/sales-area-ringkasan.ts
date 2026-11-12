@@ -8,6 +8,8 @@
 // POST /sales/performance/ringkasan (service token, default pratinjau).
 // Hanya omzet (netto tanpa PPN) — tak ada margin/HPP di pesan ini.
 
+import { randomBytes } from "node:crypto";
+
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
 import { cabangRegionMap, reportSalesPerformance } from "./sales.js";
@@ -246,6 +248,31 @@ export async function infografisSalesArea(asOf?: string) {
   return { performance, per_sales, per_cabang, generated_at: new Date().toISOString() };
 }
 
+// ── Tautan publik /sa/<token> (migrasi 310) ───────────────────────
+
+/** Keputusan user 12 Nov 2026: link WA bisa dibuka tanpa login, berlaku 2 hari. */
+export const SA_BERLAKU_HARI = 2;
+const TOKEN_SA = /^[A-Za-z0-9_-]{22}$/;
+
+/** Token per tanggal; dibuat sekali, dipakai ulang untuk kiriman tanggal yang sama. */
+export async function tokenSalesArea(tanggal: string): Promise<string> {
+  const sql = db();
+  const [r] = await sql`
+    INSERT INTO sales_area_link (tanggal, token) VALUES (${tanggal}, ${randomBytes(16).toString("base64url")})
+    ON CONFLICT (tanggal) DO UPDATE SET tanggal = EXCLUDED.tanggal
+    RETURNING token`;
+  return String(r.token);
+}
+
+/** Data infografis untuk token yang masih berlaku; null bila token salah / kedaluwarsa. */
+export async function bacaSalesAreaPublik(token: string) {
+  if (!TOKEN_SA.test(token)) return null;
+  const [r] = await db()`
+    SELECT tanggal::text AS tanggal FROM sales_area_link
+     WHERE token = ${token} AND dibuat_at > now() - make_interval(days => ${SA_BERLAKU_HARI})`;
+  return r ? infografisSalesArea(String(r.tanggal)) : null;
+}
+
 export interface HasilRingkasan {
   as_of: string;
   preview: string;
@@ -259,7 +286,8 @@ export interface HasilRingkasan {
 export async function runRingkasanSalesArea(opts: { dryRun?: boolean; target?: string; asOf?: string; paksa?: boolean } = {}): Promise<HasilRingkasan> {
   const perf = await reportSalesPerformance(opts.asOf);
   const base = (process.env.WEB_PUBLIC_URL || "").replace(/\/$/, "");
-  const preview = formatRingkasanSalesArea(perf, base ? `${base}/sales-analytics/area?tanggal=${perf.as_of}` : null);
+  // Link publik bertoken (tanpa login, 2 hari) — dibuat juga saat pratinjau supaya teksnya sama persis.
+  const preview = formatRingkasanSalesArea(perf, base ? `${base}/sa/${await tokenSalesArea(perf.as_of)}` : null);
   const target = opts.target?.trim() || process.env.SALES_AREA_RINGKASAN_TARGET?.trim() || null;
   if (opts.dryRun) return { as_of: perf.as_of, preview, wa: { target, sent: false, skipped: "dry-run" } };
   if (!target) return { as_of: perf.as_of, preview, wa: { target: null, sent: false, error: "SALES_AREA_RINGKASAN_TARGET belum diisi" } };
