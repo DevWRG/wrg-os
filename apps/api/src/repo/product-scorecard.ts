@@ -340,13 +340,8 @@ async function kompetitorPerKunci(sql: Sql, level: Level, keys: string[]) {
 async function marginPerKunci(sql: Sql, level: Level, kat: string | null, lineF: string | null, brand: string | null,
   from: string, to: string, sc: DataScope, periodeHpp: string) {
   const rows = await sql`
-    WITH hpp_item AS (
-      SELECT pc.accurate_item_id AS item_id, min(pps.hpp) AS hpp, count(DISTINCT pps.hpp) AS n_hpp
-      FROM product_code pc
-      JOIN product_pricelist_setup pps ON pps.product_kode = pc.kode AND pps.periode = ${periodeHpp}
-      WHERE pc.accurate_item_id IS NOT NULL AND pps.hpp IS NOT NULL
-      GROUP BY pc.accurate_item_id
-    ),
+    -- HPP per satuan Accurate (konversi kemasan → satuan faktur, migrasi 309).
+    WITH hpp_item AS (SELECT item_id, hpp, n_hpp FROM hpp_item_satuan(${periodeHpp})),
     inv AS (
       SELECT ai.id, (ai.total - COALESCE(ai.tax_amount, 0))::float8 AS inv_net
       FROM accurate_invoice ai

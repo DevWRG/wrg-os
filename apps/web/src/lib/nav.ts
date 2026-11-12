@@ -54,6 +54,7 @@ import { canViewDanaOps } from "@/lib/dana-ops-access";
 import { canViewVendorManagement } from "@/lib/vendor-management-access";
 import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
+import { canViewHppKonversi, FITUR_HPP_KONVERSI } from "@/lib/hpp-konversi-access";
 
 // exact: sorot aktif hanya saat path persis (untuk route induk yg punya child,
 // mis. /pricelist vs /pricelist/setup).
@@ -255,8 +256,11 @@ export const NAV: NavGroup[] = [
       {
         // feature override: pertahankan key lama 'pricelist-setup' walau route-nya
         // pindah, supaya izin grup yang sudah dicentang tidak perlu di-grant ulang.
+        // Tab "Konversi satuan HPP" (migrasi 309) ikut di sini dengan kunci sendiri supaya
+        // Finance bisa masuk tanpa ikut mendapat hak edit harga/publish.
         title: "Setup Harga", url: "/pricebook/setup", icon: SlidersHorizontal,
-        feature: "pricelist-setup", show: canEditPricelistSetup,
+        feature: "pricelist-setup", show: (me) => canEditPricelistSetup(me) || canViewHppKonversi(me),
+        features: [FITUR_HPP_KONVERSI],
       },
     ],
   },

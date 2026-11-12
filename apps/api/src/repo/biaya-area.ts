@@ -79,7 +79,9 @@ export async function muatBiayaInput(cur: { from: string; to: string }): Promise
 /**
  * Pagar kewajaran HPP. HPP di product_pricelist_setup per KEMASAN (mis. per box), sedangkan
  * qty faktur sering satuan kecil (PCS) → HPP × qty bisa ribuan kali nilai jual dan satu item
- * membuat laba kotor seluruh area minus. Sampai konversi satuan ada, baris yang
+ * membuat laba kotor seluruh area minus. Konversi satuan kini diisi manual (migrasi 309,
+ * Setup Harga › Konversi satuan HPP) dan sudah terpakai lewat hpp_item_satuan; pagar ini tetap
+ * jaring pengaman untuk item yang BELUM dikonversi: baris yang
  * HPP × qty-nya > RASIO_HPP_MAKS × net (atau net ≤ 0) diperlakukan seperti "tanpa HPP":
  * revenue-nya tetap dihitung, tapi keluar dari rev_hpp/laba kotor (hppCakupanPct ikut turun).
  * Daftarnya: hppMencurigakan().
@@ -91,23 +93,19 @@ export const hppWajar = (hpp: number, qty: number, net: number): boolean => net 
 
 type Sql = ReturnType<typeof db>;
 
-const wajarSql = (sql: Sql) => sql`(b.net > 0 AND h.hpp * b.qty <= ${RASIO_HPP_MAKS}::numeric * b.net)`;
+export const wajarSql = (sql: Sql) => sql`(b.net > 0 AND h.hpp * b.qty <= ${RASIO_HPP_MAKS}::numeric * b.net)`;
 
 /**
- * CTE bersama hppPerArea & hppMencurigakan: hpp_item (HPP per item Accurate, n_hpp = jumlah
- * HPP berbeda — hanya n_hpp = 1 yang dipakai) + baris (baris faktur periode berjalan, net =
- * netto faktur dialokasikan proporsional ke baris). Dipakai sesudah `WITH`.
+ * CTE bersama hppPerArea, hppMencurigakan & daftar Konversi satuan HPP: hpp_item (HPP per
+ * SATUAN Accurate per item dari fungsi hpp_item_satuan, migrasi 309 — sudah memakai konversi
+ * isi/override bila diisi; n_hpp = jumlah HPP berbeda, hanya n_hpp = 1 yang dipakai) + baris
+ * (baris faktur periode berjalan, net = netto faktur dialokasikan proporsional ke baris).
+ * Dipakai sesudah `WITH`.
  */
-function barisHppCte(sql: Sql, cur: { from: string; to: string }) {
+export function barisHppCte(sql: Sql, cur: { from: string; to: string }) {
   const periodeHpp = periodeHppDefault();
   return sql`
-    hpp_item AS (
-      SELECT pc.accurate_item_id AS item_id, min(pps.hpp) AS hpp, count(DISTINCT pps.hpp) AS n_hpp, min(pc.kode) AS kode
-      FROM product_code pc
-      JOIN product_pricelist_setup pps ON pps.product_kode = pc.kode AND pps.periode = ${periodeHpp}
-      WHERE pc.accurate_item_id IS NOT NULL AND pps.hpp IS NOT NULL
-      GROUP BY pc.accurate_item_id
-    ),
+    hpp_item AS (SELECT * FROM hpp_item_satuan(${periodeHpp})),
     inv AS (
       SELECT ai.id, COALESCE(${cabangEffSql(sql)}, 'Tanpa cabang') AS cabang, (ai.total - COALESCE(ai.tax_amount, 0))::float8 AS inv_net
       FROM accurate_invoice ai

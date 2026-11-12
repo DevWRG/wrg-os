@@ -178,6 +178,7 @@ import {
   type SetupPatch as PricebookSetupPatch,
 } from "./repo/pricebook.js";
 import { pricelistPdf } from "./repo/pricelist-pdf.js";
+import { daftarKonversi as daftarHppKonversi, simpanKonversi as simpanHppKonversi, hapusKonversi as hapusHppKonversi, validasiKonversi as validasiHppKonversi } from "./repo/hpp-konversi.js";
 import {
   taxonomy as klasifikasiTaxonomy, summary as klasifikasiSummary,
   listCodes as listKlasifikasiCodes, nextKode as nextKlasifikasiKode,
@@ -5250,6 +5251,40 @@ app.get("/pricebook/setup", async (c) => {
     pricebookSetupSummary(periode),
   ]);
   return c.json({ count: rows.length, rows, ringkas });
+});
+
+// Konversi satuan HPP (migrasi 309) — Setup Harga › "Konversi satuan HPP". HPP kemasan
+// price book → HPP per satuan faktur Accurate, dipakai F150/F67/F6 lewat hpp_item_satuan.
+// Gate di BFF (apps/web /api/hpp-konversi: Finance + HoD Business/Purchasing + admin);
+// `oleh` diisi BFF dari sesi. Memuat HPP — jangan dipanggil halaman AM.
+app.get("/hpp-konversi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  return c.json(await daftarHppKonversi({
+    hari: q.hari ? Number(q.hari) || undefined : undefined,
+    limit: q.limit ? Number(q.limit) || undefined : undefined,
+  }));
+});
+
+app.put("/hpp-konversi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await c.req.json().catch(() => null);
+  if (!b || typeof b !== "object") return c.json({ error: "invalid JSON body" }, 400);
+  const v = validasiHppKonversi(b as Record<string, unknown>);
+  if (!v.ok) return c.json({ error: v.error }, 400);
+  const oleh = typeof (b as Record<string, unknown>).oleh === "string" ? String((b as Record<string, unknown>).oleh) : null;
+  const r = await simpanHppKonversi(v.v, oleh);
+  return r.ok ? c.json({ ok: true }) : c.json({ error: r.error }, 400);
+});
+
+app.delete("/hpp-konversi/:itemId", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const itemId = Number(c.req.param("itemId"));
+  if (!Number.isSafeInteger(itemId) || itemId <= 0) return c.json({ error: "item_id tidak valid" }, 400);
+  const ok = await hapusHppKonversi(itemId);
+  // Baris hilang bersama jejaknya → catat siapa yang menghapus di log.
+  console.log(`[hpp-konversi] hapus item ${itemId} oleh ${c.req.query("oleh") ?? "?"}: ${ok ? "ok" : "tak ada"}`);
+  return ok ? c.json({ ok: true }) : c.json({ error: "konversi tidak ditemukan" }, 404);
 });
 
 // ── Simulator KSO (migrasi 074) — master alat, reagen & parameter ───────────
