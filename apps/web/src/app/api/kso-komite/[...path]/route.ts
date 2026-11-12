@@ -20,6 +20,8 @@ async function gerbang() {
 // id angka, dan tab itu sendiri wajib boleh dilihat sesi ini (bukan cukup "salah satu tab"); API
 // memeriksa ulang izin tab + RLS boleh_lihat + path di dalam MEDIA_ROOT.
 const POLA_LAMPIRAN = /^([a-z]+)\/rencana\/(\d+)\/lampiran\/(\d+)$/;
+// 312: PDF SPH KSO (dibuat server dari snapshot kso.sph) — gerbang & penerusan biner sama dengan lampiran.
+const POLA_SPH = /^([a-z]+)\/rencana\/(\d+)\/sph\/(\d+)$/;
 
 export async function GET(_req: Request, ctx: Ctx) {
   const g = await gerbang();
@@ -27,11 +29,13 @@ export async function GET(_req: Request, ctx: Ctx) {
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const lampiran = sub.match(POLA_LAMPIRAN);
-  if (lampiran) return berkasLampiran(g.me, lampiran[1], sub);
+  if (lampiran) return berkasPdf(g.me, lampiran[1], sub);
+  const sph = sub.match(POLA_SPH);
+  if (sph) return berkasPdf(g.me, sph[1], sub);
   return relay(await gatewayFetch(`/kso-komite/${sub}`, { headers: { "x-user-id": g.me.id } }));
 }
 
-async function berkasLampiran(me: NonNullable<Awaited<ReturnType<typeof sessionUser>>>, tab: string, sub: string) {
+async function berkasPdf(me: NonNullable<Awaited<ReturnType<typeof sessionUser>>>, tab: string, sub: string) {
   if (!TAB_KSO.some((t) => t.tab === tab)) return badSubpath();
   if (!canTabKso(me, tab as TabKso)) return Response.json({ error: "forbidden" }, { status: 403 });
   let res: Response;
