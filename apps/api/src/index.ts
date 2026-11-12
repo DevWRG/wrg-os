@@ -356,8 +356,9 @@ import {
   listTeknisiReports,
 } from "./repo/readinessboard.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
-import { GalatKso, berkasLampiran, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
+import { GalatKso, berkasLampiran, berkasSph, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
+import { namaFileSphKso, sphKsoPdf } from "./repo/kso-sph-pdf.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
@@ -2417,6 +2418,22 @@ app.get("/kso-komite/:tab/rencana/:id/lampiran/:lid", async (c) => {
   } catch {
     return c.json({ error: "berkas tak ditemukan" }, 404);
   }
+});
+// 312: PDF SPH KSO (snapshot kso.sph) — izin tab Komite KSO + RLS boleh_lihat. Dibuat di server (pdfkit).
+app.get("/kso-komite/:tab/rencana/:id/sph/:sid", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  const id = Number(c.req.param("id"));
+  const sid = Number(c.req.param("sid"));
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0 || !Number.isInteger(sid) || sid <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
+  try {
+    const s = await berkasSph(u, tab, id, sid);
+    const buf = await sphKsoPdf(s);
+    return c.body(new Uint8Array(buf), 200, { "content-type": "application/pdf", "cache-control": "private, no-store",
+                                              "content-disposition": `inline; filename="${namaFileSphKso(s)}"` });
+  } catch (e) { return ksoKomiteErr(c, e); }
 });
 app.post("/kso-komite/rencana/:id/:aksi", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
