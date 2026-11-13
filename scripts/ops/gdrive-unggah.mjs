@@ -7,6 +7,7 @@
 //   node scripts/ops/gdrive-unggah.mjs unggah <berkas> [--folder <id>] [--nama-folder "<nama>"]
 //   node scripts/ops/gdrive-unggah.mjs retensi --awalan <prefix> --hari <n> [--folder <id>] [--nama-folder "<nama>"]
 //   node scripts/ops/gdrive-unggah.mjs folder [--nama-folder "<nama>"]   → cetak id folder (buat bila belum ada)
+//   node scripts/ops/gdrive-unggah.mjs kuota   → {limit, usage} byte akun OAuth (limit null = tak terbatas)
 //
 // Env: GDRIVE_OAUTH_FILE (wajib), GDRIVE_BACKUP_FOLDER_ID (opsional; kalau kosong folder
 // dicari/dibuat menurut nama di root My Drive akun OAuth). Keluaran: satu baris JSON di stdout.
@@ -115,6 +116,13 @@ async function retensi(tok, folder, awalan, hari) {
 }
 
 const tok = await token();
+if (perintah === "kuota") {
+  // Dipakai backup-media.sh untuk menolak unggah yang pasti melebihi sisa ruang Drive.
+  const d = await api(tok, "/about?fields=storageQuota");
+  const q = d.storageQuota ?? {};
+  console.log(JSON.stringify({ ok: true, limit: q.limit ? Number(q.limit) : null, usage: Number(q.usage ?? 0) }));
+  process.exit(0);
+}
 const folder = await folderId(tok);
 if (perintah === "folder") {
   console.log(JSON.stringify({ ok: true, folder }));
@@ -127,5 +135,5 @@ if (perintah === "folder") {
   const dibuang = await retensi(tok, folder, opsi("--awalan"), Number(opsi("--hari")));
   console.log(JSON.stringify({ ok: true, folder, dibuang }));
 } else {
-  gagal("perintah: unggah | retensi | folder");
+  gagal("perintah: unggah | retensi | folder | kuota");
 }
