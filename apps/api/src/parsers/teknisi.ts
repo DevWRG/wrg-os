@@ -4,9 +4,9 @@
 // #PLAN   : `N. faskes | SN atau nama alat | jenis [T-nomor tiket]`
 // #REPORT : satu pesan per kunjungan (per faskes). Identitas alat lewat nomor
 //           plan (`#REPORT 1`, judul blok `#2`) ATAU `RS:` + `SN:`/`Alat:`.
-//           Banyak alat = blok bernomor `1) SN … | alat | jenis`; baris kosong
-//           menutup blok, jadi `RS:`/`Catatan:` sesudahnya berlaku ke seluruh
-//           kunjungan.
+//           Banyak alat = blok bernomor `1) SN … | alat | jenis`; `RS:` dan
+//           `Catatan:` sesudah baris kosong berlaku ke seluruh kunjungan.
+//           Tanda format WA (`*tebal*`) dibuang sebelum label dibaca.
 //
 // Parser ini SENGAJA tidak menebak. Yang tak terbaca dikembalikan sebagai
 // `errors` supaya bot membalas dengan contoh format — diam = teknisi mengira
@@ -102,8 +102,19 @@ export interface TeknisiPlanParse {
 const HASH_LINE = /^\s*#\s*(plan|report)\b/i;
 const ITEM = /^\s*(\d{1,2})\s*[.):]\s*(.*)$/;
 
+/**
+ * Buang tanda format WhatsApp (`*tebal*`, `_miring_`, `~coret~`). Teknisi sering
+ * menyalin contoh yang labelnya ditebalkan ("*Status:* Selesai") — tanpa ini
+ * labelnya tak terbaca. `_` hanya dibuang di tepi kata supaya "SN_123" utuh.
+ */
+export function bersihFormatWa(s: string): string {
+  return s.replace(/[*~]/g, "").replace(/(^|[\s:])_+|_+(?=[\s:]|$)/g, "$1");
+}
+
+const barisPesan = (body: string) => stripInvisible(body ?? "").split(/\r?\n/).map(bersihFormatWa);
+
 export function parseTeknisiPlan(body: string, nowMs?: number): TeknisiPlanParse {
-  const lines = stripInvisible(body ?? "").split(/\r?\n/);
+  const lines = barisPesan(body);
   const h = lines.findIndex((l) => HASH_LINE.test(l));
   const out: TeknisiPlanParse = { tanggal: null, items: [], errors: [] };
   if (h < 0) return out;
@@ -181,6 +192,9 @@ const LABEL: Record<string, Field> = {
 // supaya "Jam 10:30 selesai" tak terbaca sebagai label "Jam 10".
 const LABEL_LINE = /^\s*([A-Za-z][A-Za-z./ ]{0,24}?)\s*:\s*(.*)$/;
 const BLOK_LINE = /^\s*(\d{1,2})\s*[.)]\s*(.*)$/;
+// Judul blok alat yang jelas: kosong, memuat `|`, `#nomor-plan`, atau awalan SN.
+const judulBlokJelas = (t: string) =>
+  !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t);
 const TANPA = /^(-+|—|tidak ada|tdk ada|ga ada|gak ada|nihil|none|no|0|kosong|tidak)$/i;
 
 /** Teks status → status kanonik + alasan. */
@@ -229,8 +243,8 @@ export function parseTeknisiReport(
   // Shortcut #install/#servis/#training/#kalibrasi: jenis dari hashtag bila blok tak menulisnya.
   opts: { jenisDefault?: JenisTeknisi } = {},
 ): TeknisiReportParse {
-  const lines = stripInvisible(body ?? "").split(/\r?\n/);
-  const out: TeknisiReportParse = { tanggal: null, faskes: null, catatan: null, blok: [], errors: [] };
+  const lines = barisPesan(body);
+  const out: TeknisiReportParse ={ tanggal: null, faskes: null, catatan: null, blok: [], errors: [] };
   const h = lines.findIndex((l) => HASH_LINE.test(l));
   if (h < 0) return out;
 
@@ -286,28 +300,40 @@ export function parseTeknisiReport(
     }
   };
 
+  // Baris kosong TIDAK menutup blok — teknisi sering memberi jarak antara judul
+  // blok dan isinya, atau di tengah Kegiatan. Yang berubah sesudah baris kosong
+  // hanya `Catatan:` (pindah ke tingkat kunjungan, bentuk "…\n\nCatatan: …" di
+  // spesifikasi) dan baris bernomor (selalu blok alat baru).
+  let jeda = false;
   for (const raw of lines.slice(h + 1)) {
-    if (!raw.trim()) { cur = null; last = null; continue; }
+    if (!raw.trim()) { jeda = true; continue; }
+    const lanjutan = !!last && (last.f === "kegiatan" || last.f === "catatan" || last.f === "sparepart");
     const bm = raw.match(BLOK_LINE);
-    if (bm) {
+    // "1. bersihkan probe" tepat di bawah Kegiatan = daftar isi kegiatan, bukan
+    // alat baru — kecuali judulnya jelas judul alat (`|`, `#2`, `SN …`).
+    if (bm && !(lanjutan && !jeda && !judulBlokJelas(bm[2]))) {
       cur = blokKosong(out.blok.length + 1);
       out.blok.push(cur);
       last = null;
+      jeda = false;
       const e = bm[2].trim() ? bacaJudul(cur, bm[2].trim()) : null;
       if (e) out.errors.push(e);
       continue;
     }
-    const lm = raw.match(LABEL_LINE);
+    const lm = bm ? null : raw.match(LABEL_LINE);
     const f = lm ? LABEL[norm(lm[1])] : undefined;
     if (lm && f) {
       const v = lm[2].trim();
-      // RS selalu tingkat kunjungan; Catatan di luar blok juga.
-      const visit = !cur;
-      isi(cur ?? top, f, v, visit && f === "catatan" && out.blok.length > 0);
-      last = { b: cur ?? top, f };
+      // RS selalu tingkat kunjungan; Catatan sebelum blok pertama atau sesudah
+      // baris kosong juga. Isian lain masuk blok terakhir.
+      const keKunjungan = !cur || (jeda && f === "catatan");
+      const b = keKunjungan || !cur ? top : cur;
+      isi(b, f, v, keKunjungan && f === "catatan" && out.blok.length > 0);
+      last = { b, f };
+      jeda = false;
       continue;
     }
-    const lanjutan = !!last && (last.f === "kegiatan" || last.f === "catatan" || last.f === "sparepart");
+    jeda = false;
     // Label asing ditolak, KECUALI di dalam teks bebas Kegiatan/Catatan
     // ("Kegiatan: cek tray\nhasil akhir: normal") — di sana ia isi kalimat.
     if (lm && !f && !lanjutan) {
@@ -360,7 +386,7 @@ export function parseTeknisiReport(
 export const CONTOH_PLAN_TEKNISI = [
   "#PLAN 7 Nov",
   "1. RSUD Trenggalek | 0832 | PM",
-  "2. RS PTP Jember | CM250 | Service T-123",
+  "2. RS PTP Jember | CM250 | Service",
   `Jenis: ${JENIS_TEKNISI.join(" · ")}`,
 ].join("\n");
 
@@ -379,6 +405,14 @@ export const CONTOH_REPORT_TEKNISI = [
   "Jenis: Service",
   "Status: Selesai",
   "Kegiatan: reset sensor",
+  "",
+  "beberapa alat di satu RS:",
+  "#REPORT",
+  "RS: RSUD Trenggalek",
+  "1) SN 0832 | EXC200 | PM",
+  "Status: Selesai",
+  "2) #2",
+  "Status: Pending sparepart",
 ].join("\n");
 
 // ---------------------------------------------------------------------------

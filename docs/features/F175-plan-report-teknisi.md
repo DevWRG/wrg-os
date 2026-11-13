@@ -23,7 +23,7 @@ Google Form "Kegiatan Teknisi". Status: **Fase 1 dibangun** (8 Nov 2026, lihat "
 ```
 #PLAN 7 Nov
 1. RSUD Trenggalek | 0832 | PM
-2. RS PTP Jember | CM250 | Service T-123
+2. RS PTP Jember | CM250 | Service
 3. PKM Bakunase | Z360 | Install
 4. RS Al Irsyad | DxH 560 | Call
 ```
@@ -80,6 +80,11 @@ Catatan: analis Bu Rina
   Pending/Batal tanpa alasan (di baris status atau `Catatan`) → ditolak dengan contoh.
 - Blok alat dimulai baris bernomor `1)` / `2.`; isi judul = `#<no plan>` ATAU `SN | alat | jenis`.
   `RS:` dan `Catatan:` di luar blok berlaku untuk seluruh kunjungan.
+- Baris kosong tidak menutup blok: `Status:`/`Kegiatan:` sesudah baris kosong tetap milik blok terakhir. Yang pindah
+  ke tingkat kunjungan hanya `Catatan:` yang didahului baris kosong (Catatan tepat di bawah isian blok = milik alat itu).
+- Baris bernomor tepat di bawah `Kegiatan:`/`Catatan:`/`Sparepart:` (tanpa baris kosong) = daftar isi kegiatan, bukan
+  alat baru — kecuali judulnya jelas judul alat (memuat `|`, `#2`, atau awalan `SN`).
+- Tanda format WA (`*Status:*`, `_…_`, `~…~`) dibuang sebelum label dibaca.
 - `Jumlah Tes` harus angka (titik/koma ribuan dibuang). `Pergantian Sparepart: -`/`Tidak ada` = tanpa penggantian.
 - SN cukup 4–6 digit terakhir; dicari di antara alat milik faskes itu. Nomor plan + RS/SN sekaligus → dicek silang,
   tak cocok → bot bertanya, tidak menebak.
@@ -185,3 +190,7 @@ tetap lewat format sales seperti sebelumnya):
 
 **Belum:** pencocokan tiket per nomor (tabel tiket tak punya nomor `T-`; `tiket_teks` hanya disimpan), Fase 2 (draf plan
 otomatis), Fase 3 (tab Plan & Report di Readiness Board).
+
+**Perbaikan parser (13 Nov 2026):** label bertanda tebal WA, baris kosong di dalam blok, Kegiatan berupa daftar
+bernomor, dan contoh balasan bot kini memuat bentuk banyak alat. Nomor tiket `T-` dihapus dari contoh (sistem belum
+punya nomor itu); parser tetap menerimanya.

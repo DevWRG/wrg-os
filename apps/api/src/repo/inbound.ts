@@ -1547,7 +1547,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!aftersalesWaAktif()) return finish({ skipped: "aftersales-wa-off" });
     // F175: shortcut berformat #REPORT (ada baris `Status:`) dari Teknisi → jalur per
     // alat dengan jenis dari hashtag. Teks bebas lama tetap ke teknisi_report di bawah.
-    if (teknisiPlanReportAktif() && /^\s*status\s*:/im.test(row.body ?? "")) {
+    // `[*_~]*` = label boleh bertanda tebal/miring WA ("*Status:* Selesai").
+    if (teknisiPlanReportAktif() && /^\s*[*_~]*status[*_~]*\s*:/im.test(row.body ?? "")) {
       const tek = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
       if (tek?.aktif && isTeknisi(tek.role)) {
         const jenis = ({ install: "Install", servis: "Service", training: "Training", kalibrasi: "Kalibrasi" } as const)[kind];
