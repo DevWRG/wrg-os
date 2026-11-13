@@ -43,6 +43,9 @@ echo "→ anonimkan spine karyawan (migrasi 053 membawa 53 karyawan SUNGGUHAN) .
 # jalan di semua environment — termasuk demo. Lihat komentar di skrip itu.
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-employee-spine.sql
 
+echo "→ anonimkan rekening bank (migrasi 169 membawa rekening perusahaan SUNGGUHAN) ..."
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-bank-account.sql
+
 echo "→ seed data sintetis (SATU SUMBER dengan dev) ..."
 # Urutan seed-dev.sql lalu seed-dev-full.sql WAJIB: yang kedua merujuk am_id
 # demo1/demo2/demo3 yang dibuat yang pertama.
