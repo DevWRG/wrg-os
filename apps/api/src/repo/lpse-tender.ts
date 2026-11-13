@@ -93,7 +93,29 @@ export interface CreateTenderInput {
   created_by_user_id?: string | null;
 }
 
+// Cek tipe field body POST/PATCH sebelum `.trim()` — dulu `{"pic_employee_id":null}`
+// / `{"judul":123}` lolos ke `.trim()` dan jadi 500 (uji fungsional 12 Nov).
+// undefined = field tak dikirim (dibiarkan); null hanya sah utk field opsional.
+const FIELD_WAJIB_TEKS = ["judul", "instansi", "pic_employee_id"] as const;
+const FIELD_OPSIONAL_TEKS = ["tender_no", "platform", "dept", "notes"] as const;
+
+export function cekTipeFieldTender(input: Record<string, unknown> | null): string | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return "body harus objek JSON";
+  for (const k of FIELD_WAJIB_TEKS) {
+    const v = input[k];
+    if (v === null) return `${k} wajib`;
+    if (v !== undefined && typeof v !== "string") return `${k} harus berupa teks`;
+  }
+  for (const k of FIELD_OPSIONAL_TEKS) {
+    const v = input[k];
+    if (v != null && typeof v !== "string") return `${k} harus berupa teks`;
+  }
+  return null;
+}
+
 export async function createTender(input: CreateTenderInput): Promise<LpseTenderRow | ActionResult> {
+  const tipeErr = cekTipeFieldTender(input as unknown as Record<string, unknown>);
+  if (tipeErr) return { ok: false, error: tipeErr };
   const sql = db();
   // (input.judul ?? "") — dulu `input.judul.trim()` langsung, crash 500
   // "Cannot read properties of undefined (reading 'trim')" kalau field-nya
@@ -156,6 +178,8 @@ export interface UpdateTenderInput {
 // (waktu itu masih opsional) tak pernah bisa ditambal, cuma bisa maju status.
 // Ditemukan user 2026-09-07 bareng temuan "PIC harusnya wajib".
 export async function updateTender(id: string, input: UpdateTenderInput): Promise<LpseTenderRow | ActionResult> {
+  const tipeErr = cekTipeFieldTender(input as unknown as Record<string, unknown>);
+  if (tipeErr) return { ok: false, error: tipeErr };
   const sql = db();
   const current = await sql`SELECT * FROM lpse_tender WHERE id = ${id}`;
   if (current.length === 0) return { ok: false, error: "tender tidak ditemukan" };

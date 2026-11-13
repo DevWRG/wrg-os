@@ -24,11 +24,15 @@ export async function GET(req: Request, ctx: { params: Promise<{ path?: string[]
 }
 
 export async function POST(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const guard = await requireFeature("/lpse-tender", "create");
-  if (!guard.ok) return guard.res;
-  const me = guard.me;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
+  // reminder/run = pemicu WA khusus operator (cron/service token), bukan aksi
+  // menu — dulu siapa pun dgn izin "create" bisa memicu WA lewat sini.
+  if (sub === "reminder" || sub.startsWith("reminder/")) return Response.json({ error: "tidak ditemukan" }, { status: 404 });
+  // Naik status = mengubah tender yang sudah ada → izin "edit", bukan "create".
+  const guard = await requireFeature("/lpse-tender", /^[^/]+\/advance$/.test(sub) ? "edit" : "create");
+  if (!guard.ok) return guard.res;
+  const me = guard.me;
   const body = await req.text();
   try {
     return relay(
