@@ -20,6 +20,28 @@ const PO_MATI_SQL = `(po.cancelled_at IS NOT NULL
   OR EXISTS (SELECT 1 FROM purchase_order_approval pa WHERE pa.purchase_order_id = po.id AND pa.status = 'rejected')
   OR (po.source = 'accurate' AND po.accurate_status = 'Ditutup' AND COALESCE(po.percent_shipped, 0) < 100))`;
 
+// PO tautan usulan sudah diterima penuh — pola sama poStatusExpr di
+// purchase-order.ts: baris Accurate dari header percent_shipped, PO manual
+// lama dari jumlah penerimaan per baris barang vs qty_ordered.
+const PO_DITERIMA_SQL = `(po.id IS NOT NULL AND CASE
+  WHEN po.source = 'accurate' THEN COALESCE(po.percent_shipped, 0) >= 100
+  ELSE EXISTS (SELECT 1 FROM purchase_order_item i WHERE i.purchase_order_id = po.id)
+    AND NOT EXISTS (
+      SELECT 1 FROM purchase_order_item i
+      WHERE i.purchase_order_id = po.id
+        AND COALESCE((SELECT SUM(r.qty_received) FROM purchase_order_receipt r WHERE r.po_item_id = i.id), 0) < i.qty_ordered)
+  END)`;
+
+// Usulan lama yang masih "berjalan" untuk item+gudang yang sama → generate
+// tidak membuat usulan baru. 'ordered' hanya menahan selama PO-nya masih
+// hidup dan barang belum diterima penuh; PO mati / sudah diterima = kebutuhan
+// boleh diusulkan lagi. 'dismissed' tak pernah menahan.
+export function usulanMasihBerjalan(e: { status: string; poDiterima: boolean; poMati: boolean }): boolean {
+  if (e.status === "draft" || e.status === "submitted") return true;
+  if (e.status === "ordered") return !e.poDiterima && !e.poMati;
+  return false;
+}
+
 // postgres.js parse kolom DATE jadi objek Date — dipakai TELANJANG (String()/
 // interpolasi template literal) hasilnya verbose ("Tue Nov 10 2026 07:00:00
 // GMT+0700 ..."), bukan tanggal terbaca. Dikonfirmasi bocor ke deskripsi
@@ -105,7 +127,9 @@ async function findBufferBreaches(): Promise<{ itemId: number; warehouseKode: st
 
 // Item+gudang dgn batch ber-ED dalam ED_NEAR_DAYS ke depan (ed_date IS NOT
 // NULL wajib — batch non-kedaluwarsa tak pernah masuk sini, lihat komentar
-// item_stock_batch.ed_date di migrasi F38).
+// item_stock_batch.ed_date di migrasi F38). Tanpa batas bawah: batch yang
+// SUDAH lewat ED ikut terjaring (perlu dirotasi juga) — label UI/approval
+// membedakannya dari yang baru mendekati.
 async function findEdNear(): Promise<{ itemId: number; warehouseKode: string; nearestEd: string }[]> {
   const sql = db();
   const rows = await sql`
@@ -184,10 +208,21 @@ export async function generateSuggestions(): Promise<GenerateResult> {
   let created = 0;
   let skippedExisting = 0;
   for (const c of combined.values()) {
-    const existingDraft = await sql`
-      SELECT id FROM forecast_suggestion WHERE item_id = ${c.itemId} AND warehouse_kode = ${c.warehouseKode} AND status = 'draft'
+    // Bukan cuma draft: usulan yang sedang di-approval (submitted) atau sudah
+    // jadi PO yang barangnya belum datang (ordered) juga menahan usulan baru —
+    // dulu hanya draft yang dicek, jadi generate ulang membuat draft ganda utk
+    // kekurangan stok yang sama (uji fungsional 12 Nov).
+    const existing = await sql`
+      SELECT fs.status, ${sql.unsafe(PO_DITERIMA_SQL)} AS po_diterima, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
+      FROM forecast_suggestion fs
+      LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
+      WHERE fs.item_id = ${c.itemId} AND fs.warehouse_kode = ${c.warehouseKode}
+        AND fs.status IN ('draft', 'submitted', 'ordered')
     `;
-    if (existingDraft.length > 0) {
+    const masihBerjalan = existing.some((e) =>
+      usulanMasihBerjalan({ status: String(e.status), poDiterima: e.po_diterima === true, poMati: e.po_mati === true }),
+    );
+    if (masihBerjalan) {
       skippedExisting++;
       continue;
     }
@@ -354,7 +389,8 @@ export async function submitSuggestion(
   if (!isKategori(atribut.kategori)) return { ok: false, error: `kategori wajib dipilih (${KATEGORI.join("/")}) — menentukan HoD Bisnis tahap 2` };
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama
+    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama,
+           (fs.nearest_ed_date < (now() AT TIME ZONE 'Asia/Jakarta')::date) AS ed_lewat
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
@@ -367,8 +403,13 @@ export async function submitSuggestion(
   const qty = r.final_qty != null ? Number(r.final_qty) : Number(r.suggested_qty);
   if (!(qty > 0)) return { ok: false, error: "qty final harus > 0 sebelum diajukan (isi final_qty dulu kalau usulan sistem 0)" };
 
+  // Batch ED terdekat yang SUDAH lewat ≠ "mendekati ED" (findEdNear tak
+  // punya batas bawah, jadi batch kedaluwarsa ikut terjaring).
+  const edLewat = r.ed_lewat === true;
   const reasons = (Array.isArray(r.reasons) ? (r.reasons as string[]) : [])
-    .map((x) => (x === "near_buffer" ? "mendekati/di bawah buffer" : x === "near_ed" ? "ada batch mendekati ED" : x))
+    .map((x) =>
+      x === "near_buffer" ? "mendekati/di bawah buffer" : x === "near_ed" ? (edLewat ? "ada batch sudah lewat ED" : "ada batch mendekati ED") : x,
+    )
     .join(", ");
   const description =
     `Item: ${r.item_name}\nGudang: ${r.warehouse_nama}\nQty diusulkan: ${qty}\n` +

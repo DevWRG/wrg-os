@@ -24,12 +24,8 @@ import type { SupplierEtaRow } from "@/components/tables/supplier-eta-table";
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
-export function SupplierEtaRowActions({ row }: { row: SupplierEtaRow }) {
-  const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState({
+function formFromRow(row: SupplierEtaRow) {
+  return {
     vendor_name: row.vendor_name,
     po_number: row.po_number ?? "",
     item_desc: row.item_desc,
@@ -38,7 +34,26 @@ export function SupplierEtaRowActions({ row }: { row: SupplierEtaRow }) {
     status: row.status,
     cabang: row.cabang ?? "",
     notes: row.notes ?? "",
-  });
+  };
+}
+
+export function SupplierEtaRowActions({ row }: { row: SupplierEtaRow }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [f, setF] = useState(() => formFromRow(row));
+
+  // Isi ulang form dari baris TERKINI tiap dialog dibuka — useState hanya
+  // membaca `row` sekali, jadi setelah "Tandai datang" + router.refresh()
+  // form masih memegang status lama dan Simpan mengembalikannya ke pending.
+  function onOpenChange(next: boolean) {
+    if (next) {
+      setF(formFromRow(row));
+      setError(null);
+    }
+    setOpen(next);
+  }
 
   const { confirm, dialog } = useConfirm();
 
@@ -111,7 +126,7 @@ export function SupplierEtaRowActions({ row }: { row: SupplierEtaRow }) {
           <CheckCircle2 />
         </Button>
       )}
-      <Sheet open={open} onOpenChange={setOpen}>
+      <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Edit" />}>
           <Pencil />
         </SheetTrigger>

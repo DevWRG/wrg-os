@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
 import { KATEGORI_OPTIONS, WILAYAH_OPTIONS } from "@/lib/approval-routing";
+import { edSudahLewat, tanggalLokalIso } from "@/lib/forecast-ed";
 
 interface Suggestion {
   id: string;
@@ -36,6 +37,8 @@ interface Suggestion {
 const REASON_LABEL: Record<string, string> = {
   near_buffer: "⚠️ Mendekati/di bawah buffer",
   near_ed: "⏳ Ada batch mendekati ED",
+  // Bukan alasan tersimpan — near_ed yang ED terdekatnya sudah lewat hari ini.
+  ed_lewat: "⛔ Ada batch sudah lewat ED",
 };
 const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   draft: "secondary",
@@ -120,8 +123,12 @@ export default function ForecastSubmissionPage() {
     }
   }
 
-  async function saveEdit(id: string) {
+  // Balikkan false kalau gagal (pesan error sudah di-set) — submit() wajib
+  // berhenti, kalau tidak approval terkirim dgn qty lama (uji 12 Nov: qty −1
+  // ditolak tapi usulan tetap diajukan dgn qty sistem, error tertimpa load()).
+  async function saveEdit(id: string, reload = true): Promise<boolean> {
     setBusy(id);
+    setError(null);
     try {
       const d = drafts[id];
       const res = await fetch(`/api/forecast/suggestions/${id}`, {
@@ -131,9 +138,11 @@ export default function ForecastSubmissionPage() {
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
-      await load(filter);
+      if (reload) await load(filter);
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -163,10 +172,11 @@ export default function ForecastSubmissionPage() {
       setError("pilih wilayah & kategori dulu — keduanya menentukan approver tahap 1 & 2");
       return;
     }
-    setBusy(id);
     setNotice(null);
+    // Pastikan final_qty tersimpan dulu sebelum ajukan; gagal simpan = batal ajukan.
+    if (!(await saveEdit(id, false))) return;
+    setBusy(id);
     try {
-      await saveEdit(id); // pastikan final_qty tersimpan dulu sebelum ajukan
       const res = await fetch(`/api/forecast/suggestions/${id}/submit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -212,6 +222,8 @@ export default function ForecastSubmissionPage() {
       setBusy(null);
     }
   }
+
+  const today = tanggalLokalIso();
 
   return (
     <div className="space-y-6 p-6">
@@ -262,11 +274,14 @@ export default function ForecastSubmissionPage() {
                     {s.itemName} — {s.warehouseNama}
                   </CardTitle>
                   <div className="mt-1 flex flex-wrap gap-1">
-                    {s.reasons.map((r) => (
-                      <span key={r} className="text-muted-foreground text-xs">
-                        {REASON_LABEL[r] ?? r}
-                      </span>
-                    ))}
+                    {s.reasons.map((r) => {
+                      const lewat = r === "near_ed" && edSudahLewat(s.nearestEdDate, today);
+                      return (
+                        <span key={r} className={lewat ? "text-destructive text-xs" : "text-muted-foreground text-xs"}>
+                          {REASON_LABEL[lewat ? "ed_lewat" : r] ?? r}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
                 <Badge variant={STATUS_BADGE[s.status] ?? "secondary"}>{s.status}</Badge>
@@ -275,7 +290,10 @@ export default function ForecastSubmissionPage() {
                 <div className="text-muted-foreground grid grid-cols-2 gap-1 text-xs">
                   <div>Stok saat ini: {s.currentQty}</div>
                   <div>Buffer: {s.bufferQty ?? "-"}</div>
-                  <div>ED terdekat: {s.nearestEdDate ? new Date(s.nearestEdDate).toLocaleDateString("id-ID") : "-"}</div>
+                  <div>
+                    ED terdekat: {s.nearestEdDate ? new Date(s.nearestEdDate).toLocaleDateString("id-ID") : "-"}
+                    {edSudahLewat(s.nearestEdDate, today) && <span className="text-destructive"> (sudah lewat)</span>}
+                  </div>
                   <div>Rata² terjual/bln (6bln): {s.avgMonthlyQty6m ?? "-"}</div>
                   <div className="col-span-2">
                     Deal HOT aktif (konteks): {s.pipelineHotCount} · Usulan sistem: {s.suggestedQty}
