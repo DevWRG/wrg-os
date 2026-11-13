@@ -50,6 +50,13 @@ psql -d "$DB" -v ON_ERROR_STOP=1 -q -c "
   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wrg_demo_app;"
 ok "migrasi + grant beres"
 
+say "Anonimisasi ulang (idempoten)"
+# Migrasi baru bisa membawa data asli lagi (053 karyawan, 169 rekening bank) —
+# dulu langkah ini manual dan sempat terlewat.
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-employee-spine.sql
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-bank-account.sql
+ok "karyawan + rekening bank tersamarkan"
+
 say "Restart pm2 demo"
 pm2 restart ecosystem.demo.config.cjs --update-env
 sleep 3
