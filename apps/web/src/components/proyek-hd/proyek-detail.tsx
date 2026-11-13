@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
+import { OpsPanel } from "./ops-panel";
 import { bulan, kirim, RAG_KELAS, rp, STATUS_RAG, tgl, type Catatan, type Detail } from "./types";
 
 const TAHAP_NAMA: Record<string, string> = {
@@ -105,6 +106,8 @@ export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean
           </CardContent>
         </Card>
       </div>
+
+      <OpsPanel proyekId={p.id} pernefri={d.catatan.some((c) => c.tahap_kode === "2")} />
 
       <div className="grid items-start gap-6 lg:grid-cols-2">
         <StatusUnit d={d} bolehUbah={bolehUbah} onSaved={(np) => setD({ ...d, proyek: np })} />
