@@ -178,6 +178,7 @@ const devEnv = {
   //   APPROVAL_UPLOAD_ROOT  ~/.wrg-os/approval-uploads  → lampiran approval
   //   KSO_KONTRAK_UPLOAD_DIR ~/.wrg-os/uploads/kso-kontrak → dokumen MoU KSO
   //   BUKTI_PEMBAYARAN_UPLOAD_DIR ~/.wrg-os/uploads/bukti-pembayaran → bukti bayar Finance (F32)
+  //   PROYEK_HD_UPLOAD_DIR  ~/.wrg-os/uploads/proyek-hd   → lampiran catatan Proyek HD
   //   OPENCLAW_SESSIONS_FILE ~/.openclaw/agents/…/sessions.json → nama grup WA asli
   // Menyamarkan kolom path di DB dev TIDAK cukup: itu hanya menghapus nama
   // berkasnya (tak bisa ditebak), sementara root-nya tetap di-allow-list.
@@ -186,6 +187,7 @@ const devEnv = {
   APPROVAL_UPLOAD_ROOT: path.join(DEV_FILE_ROOT, "approval-uploads"),
   KSO_KONTRAK_UPLOAD_DIR: path.join(DEV_FILE_ROOT, "uploads/kso-kontrak"),
   BUKTI_PEMBAYARAN_UPLOAD_DIR: path.join(DEV_FILE_ROOT, "uploads/bukti-pembayaran"),
+  PROYEK_HD_UPLOAD_DIR: path.join(DEV_FILE_ROOT, "uploads/proyek-hd"),
   OPENCLAW_SESSIONS_FILE: path.join(DEV_FILE_ROOT, "sessions.json"),
   // Kredensial Accurate: loadCreds() di repo/accurateSync.ts jatuh ke BERKAS
   // BERSAMA ~/.openclaw/credentials/accurate.json kalau env token/secret kosong.

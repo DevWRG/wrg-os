@@ -7076,7 +7076,7 @@ app.get("/arsip-dokumen/:id/berkas", async (c) => {
 });
 // Proyek HD (migrasi 314) — tracker proyek hemodialisa + Simulator HD. Gerbang menu
 // "/proyek-hd" (lihat/buat/ubah) + kunci "proyek-hd-margin" DIPERIKSA DI BFF; service
-// token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi. Lampiran: Drive PRIVAT.
+// token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi. Lampiran: disk server (PROYEK_HD_UPLOAD_DIR).
 const hdErr = (c: Context, e: unknown) => {
   if (e instanceof ProyekHdError) return c.json(e.field ? { error: e.message, field: e.field } : { error: e.message }, e.status as 400);
   console.error("[proyek-hd]", e);
