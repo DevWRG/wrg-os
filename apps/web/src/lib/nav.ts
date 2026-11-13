@@ -37,6 +37,7 @@ import {
   FileBarChart,
   PackageSearch,
   FileClock,
+  HeartPulse,
   type LucideIcon,
 } from "lucide-react";
 
@@ -52,6 +53,7 @@ import { canViewProductScorecard } from "@/lib/product-scorecard-access";
 import { FITUR_PUTUSAN as FITUR_PUTUSAN_PERMINTAAN, canViewPermintaanProduk } from "@/lib/permintaan-produk-access";
 import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
+import { canViewProyekHd, FITUR_MARGIN as FITUR_HD_MARGIN } from "@/lib/proyek-hd-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
@@ -259,6 +261,12 @@ export const NAV: NavGroup[] = [
       // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
       { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
         features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN, ...FITUR_BOTTOMLINE] },
+      // Proyek HD — tracker proyek hemodialisa Deal → layanan berjalan + Simulator HD
+      // (pindahan app terpisah berbasis Google Sheets, 13 Nov 2026). Kunci izin sendiri
+      // ('proyek-hd'); tab Margin WRG = kunci 'proyek-hd-margin', WAJIB di `features`
+      // supaya Sync Fitur tak mematikannya sebagai zombie. Default tertutup.
+      { title: "Proyek HD", url: "/proyek-hd", icon: HeartPulse, badge: "NEW", show: canViewProyekHd,
+        features: [{ key: FITUR_HD_MARGIN, name: "Proyek HD — Margin WRG (harga, biaya & margin simulator)" }] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
