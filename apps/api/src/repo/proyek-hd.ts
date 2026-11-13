@@ -5,12 +5,20 @@
 // parameter margin WRG) DIPERIKSA DI BFF; service token mem-bypass JWT di sini.
 // `oleh` selalu dari sesi (diisi BFF).
 //
-// Lampiran catatan tahap: Google Drive PRIVAT (GDRIVE_HD_FOLDER_ID), diunduh lewat API ini.
+// Lampiran catatan tahap: DISK SERVER (PROYEK_HD_UPLOAD_DIR, default
+// ~/.wrg-os/uploads/proyek-hd — ikut backup-media.sh), diunduh lewat API ini.
+// Tanpa Google Drive (keputusan user 13 Nov 2026, migrasi 315).
 
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { TransactionSql } from "postgres";
 import { db } from "../db.js";
-import { buangKeSampahDrive, DriveError, unduhDariDrive, unggahLampiranHdKeDrive } from "../gdrive.js";
 import { MAKS_DOKUMEN, namaAsliAman, tipeDariIsi } from "./kso-kontrak.js";
+
+export const PROYEK_HD_UPLOAD_ROOT = resolve(process.env.PROYEK_HD_UPLOAD_DIR ?? `${homedir()}/.wrg-os/uploads/proyek-hd`);
+const EXT: Record<string, string> = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png" };
 
 export class ProyekHdError extends Error {
   constructor(public status: number, message: string, public field?: string) {
@@ -464,30 +472,33 @@ type Tx = TransactionSql<Record<string, unknown>>;
 
 async function simpanCatatan(
   tx: Tx,
-  p: ProyekRow, tanggal: string, catatan: string, files: Berkas[], oleh: string | null, driveIds: string[],
+  p: ProyekRow, tanggal: string, catatan: string, files: Berkas[], oleh: string | null, ditulis: string[],
 ): Promise<number> {
   const [c] = await tx`
     INSERT INTO hd_catatan (proyek_id, tahap_kode, tanggal, catatan, oleh)
     VALUES (${p.id}, ${p.tahap_kode}, ${tanggal}, ${catatan || "(lampiran)"}, ${oleh}) RETURNING id::int`;
+  if (files.length) await mkdir(PROYEK_HD_UPLOAD_ROOT, { recursive: true });
   for (const f of files) {
     const mime = tipeDariIsi(f.buf)!;
     const nama = namaAsliAman(f.nama);
-    const up = await unggahLampiranHdKeDrive(Buffer.from(f.buf), `${p.kode} - ${p.tahap_kode} - ${nama}`, mime);
-    driveIds.push(up.id);
+    const namaSimpan = `${p.id}-${c.id}-${Date.now()}-${randomBytes(6).toString("hex")}.${EXT[mime]}`;
+    const abs = resolve(PROYEK_HD_UPLOAD_ROOT, namaSimpan);
+    await writeFile(abs, f.buf);
+    ditulis.push(abs);
     await tx`
-      INSERT INTO hd_lampiran (catatan_id, proyek_id, drive_file_id, nama_asli, mime, ukuran, diunggah_oleh)
-      VALUES (${c.id}, ${p.id}, ${up.id}, ${nama}, ${mime}, ${f.buf.length}, ${oleh})`;
+      INSERT INTO hd_lampiran (catatan_id, proyek_id, nama_simpan, nama_asli, mime, ukuran, diunggah_oleh)
+      VALUES (${c.id}, ${p.id}, ${namaSimpan}, ${nama}, ${mime}, ${f.buf.length}, ${oleh})`;
   }
   return Number(c.id);
 }
 
-async function denganBerkas<T>(fn: (driveIds: string[]) => Promise<T>): Promise<T> {
-  const driveIds: string[] = [];
+/** Berkas yang sudah tertulis ke disk dihapus lagi bila transaksi gagal — tak ada berkas yatim. */
+async function denganBerkas<T>(fn: (ditulis: string[]) => Promise<T>): Promise<T> {
+  const ditulis: string[] = [];
   try {
-    return await fn(driveIds);
+    return await fn(ditulis);
   } catch (e) {
-    for (const d of driveIds) await buangKeSampahDrive(d).catch(() => undefined);
-    if (e instanceof DriveError) throw new ProyekHdError(e.status, e.message);
+    for (const abs of ditulis) await unlink(abs).catch(() => undefined);
     throw e;
   }
 }
@@ -500,14 +511,14 @@ export async function tambahCatatan(idStr: string, b: Record<string, unknown>, f
   const tanggal = tanggalCatatan(b.tanggal);
   const tolak = alasanTolakLampiran(files);
   if (tolak) throw new ProyekHdError(400, tolak, "file");
-  return denganBerkas(async (driveIds) => {
+  return denganBerkas(async (ditulis) => {
     await db().begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`hd_proyek:${id}`}))`;
       const p = await satuProyek(id);
       if (b.tahap_kode && b.tahap_kode !== p.tahap_kode) {
         throw new ProyekHdError(409, `tahap berjalan sudah ${p.tahap_kode}, bukan ${String(b.tahap_kode)} — muat ulang halaman`);
       }
-      await simpanCatatan(tx, p, tanggal, catatan, files, oleh, driveIds);
+      await simpanCatatan(tx, p, tanggal, catatan, files, oleh, ditulis);
       await tx`UPDATE hd_proyek SET diubah_oleh = ${oleh}, diubah_at = now() WHERE id = ${id}`;
     });
     return detailProyek(String(id));
@@ -522,7 +533,7 @@ export async function majuTahap(idStr: string, b: Record<string, unknown>, files
   const tanggal = tanggalCatatan(b.tanggal);
   const tolak = alasanTolakLampiran(files);
   if (tolak) throw new ProyekHdError(400, tolak, "file");
-  return denganBerkas(async (driveIds) => {
+  return denganBerkas(async (ditulis) => {
     let hasil: { dari: string; ke: string; dilompati: string[] } | null = null;
     await db().begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`hd_proyek:${id}`}))`;
@@ -532,7 +543,7 @@ export async function majuTahap(idStr: string, b: Record<string, unknown>, files
       }
       const r = tentukanMaju(p.tipe_proyek, p.tahap_kode, typeof b.ke_tahap === "string" ? b.ke_tahap : null);
       if (!r.ok) throw new ProyekHdError(400, r.error, "ke_tahap");
-      if (adaCatatan) await simpanCatatan(tx, p, tanggal, catatan, files, oleh, driveIds);
+      if (adaCatatan) await simpanCatatan(tx, p, tanggal, catatan, files, oleh, ditulis);
       await tx`INSERT INTO hd_riwayat_tahap (proyek_id, dari_tahap, ke_tahap, tanggal, oleh) VALUES (${id}, ${p.tahap_kode}, ${r.ke}, ${hariIniWib()}, ${oleh})`;
       await tx`UPDATE hd_proyek SET tahap_kode = ${r.ke}, diubah_oleh = ${oleh}, diubah_at = now() WHERE id = ${id}`;
       hasil = { dari: p.tahap_kode, ke: r.ke, dilompati: r.dilompati };
@@ -544,14 +555,17 @@ export async function majuTahap(idStr: string, b: Record<string, unknown>, files
 export async function bacaLampiran(idStr: string): Promise<{ nama: string; mime: string; buf: Buffer }> {
   const id = idDari(idStr);
   const [r] = await db()`
-    SELECT l.drive_file_id, l.nama_asli, l.mime FROM hd_lampiran l JOIN hd_proyek p ON p.id = l.proyek_id
+    SELECT l.nama_simpan, l.nama_asli, l.mime FROM hd_lampiran l JOIN hd_proyek p ON p.id = l.proyek_id
      WHERE l.id = ${id} AND p.dihapus_at IS NULL`;
   if (!r) throw new ProyekHdError(404, "lampiran tidak ditemukan");
+  // nama_simpan dibuat server, tapi tetap dipastikan tak keluar dari root unggahan.
+  const abs = resolve(PROYEK_HD_UPLOAD_ROOT, String(r.nama_simpan));
+  const rel = relative(PROYEK_HD_UPLOAD_ROOT, abs);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new ProyekHdError(404, "lampiran tidak ditemukan");
   try {
-    return { nama: String(r.nama_asli), mime: String(r.mime), buf: await unduhDariDrive(String(r.drive_file_id)) };
-  } catch (e) {
-    if (e instanceof DriveError) throw new ProyekHdError(e.status, e.message);
-    throw e;
+    return { nama: String(r.nama_asli), mime: String(r.mime), buf: await readFile(abs) };
+  } catch {
+    throw new ProyekHdError(404, "berkas lampiran hilang dari server");
   }
 }
 
