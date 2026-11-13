@@ -1,5 +1,6 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { AddProficiencyTestSheet } from "@/components/aftersales/add-proficiency-test-sheet";
 import { ProficiencyTestTable, type ProficiencyTestRow } from "@/components/aftersales/proficiency-test-table";
@@ -31,7 +32,11 @@ export default async function ProficiencyTestsPage() {
           description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 139_proficiency_test_document.sql sudah diterapkan."
         />
       ) : (
-        <ProficiencyTestTable rows={data.rows ?? []} />
+        <Card>
+          <CardContent className="pt-6">
+            <ProficiencyTestTable rows={data.rows ?? []} />
+          </CardContent>
+        </Card>
       )}
     </>
   );

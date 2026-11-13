@@ -111,6 +111,46 @@ export interface ProficiencyTestInput {
   file_mime?: string | null;
 }
 
+// Tanggal YYYY-MM-DD yang benar-benar ada di kalender (2026-02-30 ditolak).
+export function tanggalSah(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[3]);
+}
+
+// Validasi + rapikan body POST (lengkap=true) / PATCH (lengkap=false) sebelum
+// sampai ke SQL — dulu tanggal salah format jadi 500 yg membocorkan pesan
+// Postgres, dan PATCH bisa mengosongkan rs_name/test_name (uji fungsional
+// 12 Nov). Field wajib yg DIKIRIM harus terisi setelah trim; issued_date
+// kosong/"" = null (opsional); expired_date wajib tanggal sah.
+export function rapikanProficiencyTest<T extends ProficiencyTestUpdate>(
+  body: T,
+  lengkap: boolean,
+): { ok: true; data: T } | { ok: false; error: string } {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "body harus objek JSON" };
+  const data = { ...body };
+  for (const k of ["rs_name", "test_name"] as const) {
+    const v: unknown = data[k];
+    if (v === undefined && !lengkap) continue;
+    if (typeof v !== "string" || !v.trim()) return { ok: false, error: `${k} wajib diisi` };
+    data[k] = v.trim();
+  }
+  const exp: unknown = data.expired_date;
+  if (exp !== undefined || lengkap) {
+    if (typeof exp !== "string" || !exp.trim()) return { ok: false, error: "expired_date wajib diisi" };
+    if (!tanggalSah(exp.trim())) return { ok: false, error: "expired_date harus tanggal sah format YYYY-MM-DD" };
+    data.expired_date = exp.trim();
+  }
+  const iss: unknown = data.issued_date;
+  if (iss !== undefined) {
+    if (iss === null || (typeof iss === "string" && !iss.trim())) data.issued_date = null;
+    else if (typeof iss !== "string" || !tanggalSah(iss.trim())) return { ok: false, error: "issued_date harus tanggal sah format YYYY-MM-DD" };
+    else data.issued_date = iss.trim();
+  }
+  return { ok: true, data };
+}
+
 export async function listProficiencyTests(): Promise<ProficiencyTestRow[]> {
   const sql = db();
   const rows = await sql`

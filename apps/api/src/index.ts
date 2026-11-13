@@ -522,6 +522,7 @@ import {
   createProficiencyTest,
   updateProficiencyTest,
   deleteProficiencyTest,
+  rapikanProficiencyTest,
   type ProficiencyTestInput,
   type ProficiencyTestUpdate,
 } from "./repo/proficiency-test.js";
@@ -5041,6 +5042,11 @@ app.post("/lpse-tender/:id/advance", async (c) => {
 });
 app.post("/lpse-tender/reminder/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  // Patuh saklar yang sama dgn cron (scheduler.ts) — dulu pemicu manual tetap
+  // mengirim WA walau saklar mati. runLpseTenderReminder tak punya mode dry-run.
+  if ((process.env.LPSE_TENDER_REMINDER_ENABLED ?? "false").toLowerCase() !== "true") {
+    return c.json({ error: "LPSE_TENDER_REMINDER_ENABLED mati — reminder tidak dijalankan" }, 409);
+  }
   return c.json(await runLpseTenderReminder());
 });
 app.post("/employee-spine/employees/:id/measurements", async (c) => {
@@ -9047,9 +9053,9 @@ app.post("/aftersales/proficiency-tests", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body.rs_name?.trim() || !body.test_name?.trim() || !body.expired_date) {
-    return c.json({ error: "rs_name, test_name, expired_date wajib" }, 400);
-  }
+  const rapi = rapikanProficiencyTest(body, true);
+  if (!rapi.ok) return c.json({ error: rapi.error }, 400);
+  body = rapi.data;
   const dateErr = validateProficiencyTestDates(body.issued_date, body.expired_date);
   if (dateErr) return c.json({ error: dateErr }, 400);
   const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
@@ -9072,6 +9078,9 @@ app.patch("/aftersales/proficiency-tests/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  const rapi = rapikanProficiencyTest(body, false);
+  if (!rapi.ok) return c.json({ error: rapi.error }, 400);
+  body = rapi.data;
   const fileErr = validateProficiencyTestFile(body.file_mime, body.file_base64);
   if (fileErr) return c.json({ error: fileErr }, 400);
   // Validasi thd nilai HASIL MERGE (pola sama BUG-03/vendor-contract) —
