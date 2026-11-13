@@ -129,15 +129,6 @@ export async function unggahArsipKeDrive(isi: Buffer, nama: string, mime: string
   return unggahPrivatKeDrive(isi, nama, mime, process.env.GDRIVE_ARSIP_FOLDER_ID!.trim());
 }
 
-// ── Proyek HD: lampiran catatan tahap, folder GDRIVE_HD_FOLDER_ID, PRIVAT ──
-export const driveHdSiap = (): boolean =>
-  Boolean((process.env.GDRIVE_OAUTH_FILE?.trim() || process.env.GDRIVE_SA_KEY_FILE?.trim()) && process.env.GDRIVE_HD_FOLDER_ID?.trim());
-
-export async function unggahLampiranHdKeDrive(isi: Buffer, nama: string, mime: string): Promise<{ id: string }> {
-  if (!driveHdSiap()) throw new DriveError(503, "folder Google Drive Proyek HD belum dikonfigurasi di server (GDRIVE_HD_FOLDER_ID) — hubungi admin");
-  return unggahPrivatKeDrive(isi, nama, mime, process.env.GDRIVE_HD_FOLDER_ID!.trim());
-}
-
 /** Unggah resumable ke folder privat — berkas tidak dibuka untuk publik. */
 async function unggahPrivatKeDrive(isi: Buffer, nama: string, mime: string, folderId: string): Promise<{ id: string }> {
   const token = await tokenAkses();

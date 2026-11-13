@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// Unduh lampiran (diambil server dari Google Drive privat). Respons BINER — jangan lewat relay() kecuali galat.
+// Unduh lampiran (dibaca server dari disk unggahan, bukan tautan publik). Respons BINER — jangan lewat relay() kecuali galat.
 export async function GET(_req: Request, ctx: Ctx) {
   const g = await gerbang("view");
   if (!g.ok) return g.res;
