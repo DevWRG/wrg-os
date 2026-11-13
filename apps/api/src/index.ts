@@ -5117,7 +5117,7 @@ app.get("/doc-klaim/:id/foto", async (c) => {
 app.patch("/doc-klaim/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const body = await c.req.json().catch(() => ({}));
-  const result = await updateKategori(c.req.param("id"), body.kategori ?? null);
+  const result = await updateKategori(c.req.param("id"), body.kategori ?? null, c.req.header("x-user-id") ?? null);
   if ("ok" in result && !result.ok) return c.json({ error: result.error }, 400);
   return c.json({ klaim: result });
 });

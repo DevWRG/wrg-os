@@ -131,6 +131,8 @@ export default function ApprovalRequestsPage() {
     try {
       setRequests(await ambilDaftar(tampil, jenisFilter));
     } catch (e) {
+      // Kosongkan daftar lama supaya baris basi tak tampil di bawah galat.
+      setRequests([]);
       setError(String(e));
     } finally {
       setLoading(false);
@@ -149,7 +151,10 @@ export default function ApprovalRequestsPage() {
         const rows = await ambilDaftar(tampil, jenisFilter);
         if (active) setRequests(rows);
       } catch (e) {
-        if (active) setError(String(e));
+        if (active) {
+          setRequests([]);
+          setError(String(e));
+        }
       } finally {
         if (active) setLoading(false);
       }

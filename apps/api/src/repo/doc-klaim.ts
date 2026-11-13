@@ -293,13 +293,48 @@ export async function deleteKlaim(id: string): Promise<ActionResult> {
   });
 }
 
-export async function updateKategori(id: string, kategori: string | null): Promise<DocKlaimRow | ActionResult> {
+// Kategori hanya boleh diubah selama klaim belum diputus — setelah
+// disetujui/ditolak/dibayar, kategori ikut jadi jejak keputusan uang. Pure.
+export function alasanTolakUbahKategori(status: string): string | null {
+  if (status === "baru") return null;
+  return `klaim berstatus "${status}" — kategori hanya bisa diubah sebelum diputuskan`;
+}
+
+// Jejak audit aksi manusia atas klaim (audit_log Layer 5 = Human, pola
+// ga-asset-assignment). Ditulis di transaksi yang sama dengan perubahannya.
+async function catatAuditKlaim(
+  tx: Tx,
+  eventType: string,
+  actor: string | null,
+  payload: Record<string, unknown>,
+  decision: string | null,
+): Promise<void> {
+  await tx`
+    INSERT INTO audit_log (use_case_id, layer, event_type, r_tier, payload, human_actor, decision)
+    VALUES ('DOC-KLAIM', 5, ${eventType}, 'R2', ${tx.json(payload as Parameters<typeof tx.json>[0])}, ${actor}, ${decision})
+  `;
+}
+
+export async function updateKategori(
+  id: string,
+  kategori: string | null,
+  userId: string | null = null,
+): Promise<DocKlaimRow | ActionResult> {
   if (kategori && !["kebutuhan_kantor", "perjalanan_dinas", "lainnya"].includes(kategori)) {
     return { ok: false, error: "kategori tidak valid" };
   }
   const sql = db();
-  const rows = await sql`UPDATE doc_klaim SET kategori = ${kategori}, updated_at = now() WHERE id = ${id} RETURNING id`;
-  if (!rows.length) return { ok: false, error: "klaim tidak ditemukan" };
+  const res = await sql.begin(async (txRaw): Promise<ActionResult> => {
+    const tx = txRaw as unknown as Tx;
+    const [row] = await tx`SELECT status, kategori FROM doc_klaim WHERE id = ${id} FOR UPDATE`;
+    if (!row) return { ok: false, error: "klaim tidak ditemukan" };
+    const tolak = alasanTolakUbahKategori(String(row.status));
+    if (tolak) return { ok: false, error: tolak };
+    await tx`UPDATE doc_klaim SET kategori = ${kategori}, updated_at = now() WHERE id = ${id}`;
+    await catatAuditKlaim(tx, "doc_klaim.kategori", userId, { klaim_id: id, dari: row.kategori ?? null, ke: kategori }, "modify");
+    return { ok: true };
+  });
+  if (!res.ok) return res;
   return (await getKlaim(id)) as DocKlaimRow;
 }
 
@@ -456,13 +491,17 @@ export async function markDibayar(id: string, aktor: AktorKlaim): Promise<Action
   }
   const tolak = alasanTolakBayar({ am_id: row.am_id ?? null }, aktor);
   if (tolak) return { ok: false, error: tolak };
-  const upd = await sql`
-    UPDATE doc_klaim SET status = 'dibayar', dibayar_at = now(), dibayar_by_user_id = ${aktor.userId}, updated_at = now()
-    WHERE id = ${id} AND status = 'disetujui'
-    RETURNING id
-  `;
-  if (!upd.length) return { ok: false, error: "status klaim berubah — muat ulang halaman" };
-  return { ok: true };
+  return sql.begin(async (txRaw): Promise<ActionResult> => {
+    const tx = txRaw as unknown as Tx;
+    const upd = await tx`
+      UPDATE doc_klaim SET status = 'dibayar', dibayar_at = now(), dibayar_by_user_id = ${aktor.userId}, updated_at = now()
+      WHERE id = ${id} AND status = 'disetujui'
+      RETURNING id, nominal_disetujui
+    `;
+    if (!upd.length) return { ok: false, error: "status klaim berubah — muat ulang halaman" };
+    await catatAuditKlaim(tx, "doc_klaim.dibayar", aktor.userId, { klaim_id: id, nominal_disetujui: upd[0].nominal_disetujui ?? null }, "dibayar");
+    return { ok: true };
+  });
 }
 
 // Dipanggil dari inbound.ts saat #KLAIM + foto terdeteksi. Baca file dari

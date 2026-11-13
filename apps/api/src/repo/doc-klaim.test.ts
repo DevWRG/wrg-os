@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { type AktorKlaim, alasanTolakBayar, alasanTolakPutus, hitungNominalDisetujui, parseNominalRupiah } from "./doc-klaim.js";
+import {
+  type AktorKlaim,
+  alasanTolakBayar,
+  alasanTolakPutus,
+  alasanTolakUbahKategori,
+  hitungNominalDisetujui,
+  parseNominalRupiah,
+} from "./doc-klaim.js";
 
 // Wewenang klaim reimburse (keputusan user 15 Okt 2026): HoD pengaju memutus,
 // Finance membayar, pengaju tak boleh memutus/membayar klaimnya sendiri.
@@ -79,4 +86,9 @@ test("nominal disetujui: nota tak terbaca & isian kosong → ditolak (WA #APPROV
 test("nominal disetujui: batas maksimum & nol", () => {
   assert.equal(hitungNominalDisetujui(null, 100_000_001).ok, false);
   assert.equal(hitungNominalDisetujui(null, 0).ok, false);
+});
+
+test("kategori hanya bisa diubah selama klaim berstatus baru", () => {
+  assert.equal(alasanTolakUbahKategori("baru"), null);
+  for (const st of ["disetujui", "ditolak", "dibayar"]) assert.match(alasanTolakUbahKategori(st) ?? "", /sebelum diputuskan/);
 });

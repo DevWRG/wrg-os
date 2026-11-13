@@ -1,4 +1,5 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { pilihIsianFormApproval } from "@/lib/approval-request-body";
 import { actorName, requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
@@ -38,12 +39,12 @@ export async function POST(req: Request) {
       method: "POST",
       headers: { "content-type": "application/json" },
       // Pengaju = akun login, bukan isian form (dulu bisa "atas nama Direktur").
-      // requestedByWa dibuang dari body; API mengambil nomor WA dari akunnya.
+      // Hanya field form yang diteruskan; requestedByWa tak ikut — API
+      // mengambil nomor WA dari akunnya.
       body: JSON.stringify({
-        ...(body as Record<string, unknown>),
+        ...pilihIsianFormApproval(body),
         requestedBy: actorName(guard.me),
         requestedByUserId: guard.me.id,
-        requestedByWa: undefined,
       }),
     });
     const data = await res.json();
