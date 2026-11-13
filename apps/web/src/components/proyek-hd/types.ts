@@ -66,3 +66,33 @@ export const RAG_KELAS: Record<string, string> = {
   Kuning: "bg-amber-400 text-amber-950",
   Merah: "bg-destructive text-white",
 };
+
+// ---------------------------------------------------------------- fase 2: data operasional
+export type TipeKolom = "text" | "longtext" | "int" | "number" | "rupiah" | "percent" | "date" | "month" | "bool" | "enum" | "pic";
+export interface Kolom { nama: string; label: string; tipe: TipeKolom; pilihan?: string[]; wajib?: boolean }
+export interface TabOps { slug: string; label: string; tunggal?: boolean; proyekOpsional?: boolean; kolom: Kolom[] }
+export type BarisOps = Record<string, unknown> & {
+  id: number; proyek_id: number | null; proyek_kode: string | null; proyek_nama: string | null; pic_nama: string | null;
+  diubah_oleh: string | null; diubah_at: string;
+};
+export interface Gate { kode: string; label: string; ok: boolean }
+export interface OpsProyek { konstruksi: BarisOps | null; kurva: BarisOps[]; ro: BarisOps | null; mesin: BarisOps[]; isu_terbuka: BarisOps[]; gate: Gate[] }
+export interface RingkasanOps {
+  isu_terbuka: { id: number; proyek_id: number; proyek_nama: string; isu: string; tindakan: string | null; status: string; pic_nama: string | null }[];
+  gate_terbuka: { id: number; kode: string; nama_rs: string; tahap_kode: string; kurang: string[] }[];
+}
+
+/** Tampilan satu nilai kolom operasional. */
+export function tampil(k: Kolom, v: unknown, picNama?: string | null): string {
+  if (k.tipe === "pic") return picNama ?? "—";
+  if (k.tipe === "bool") return v === true ? "Ya" : "Belum";
+  if (v === null || v === undefined || v === "") return "—";
+  switch (k.tipe) {
+    case "rupiah": return rp(Number(v));
+    case "percent": return `${Number(v).toLocaleString("id-ID")}%`;
+    case "date": return tgl(String(v));
+    case "month": return bulan(String(v));
+    case "number": case "int": return Number(v).toLocaleString("id-ID");
+    default: return String(v);
+  }
+}

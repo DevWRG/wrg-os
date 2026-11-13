@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Calculator, Plus, SlidersHorizontal } from "lucide-react";
+import { Calculator, Database, FileSpreadsheet, Plus, SlidersHorizontal } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -13,13 +13,14 @@ import { cn } from "@/lib/utils";
 
 import { ParamDialog } from "./param-dialog";
 import { TambahProyekDialog } from "./tambah-proyek-dialog";
-import { bulan, kirim, RAG_KELAS, rpRingkas, type Proyek, type Ringkasan } from "./types";
+import { bulan, kirim, RAG_KELAS, rpRingkas, type Proyek, type Ringkasan, type RingkasanOps } from "./types";
 
 // Dashboard Proyek HD: KPI (dihitung SQL atas semua proyek), posisi per tahap (klik =
 // saring tabel), dan daftar proyek. Data dimuat di klien lewat BFF berizin.
 export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bolehParam: boolean }) {
   const router = useRouter();
   const [ring, setRing] = useState<Ringkasan | null>(null);
+  const [ops, setOps] = useState<RingkasanOps | null>(null);
   const [items, setItems] = useState<Proyek[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tahap, setTahap] = useState<string | null>(null);
@@ -30,8 +31,8 @@ export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bole
   const muat = useCallback(() => setVersi((v) => v + 1), []);
   useEffect(() => {
     let batal = false;
-    Promise.all([kirim<Ringkasan>("/api/proyek-hd/ringkasan"), kirim<{ items: Proyek[] }>("/api/proyek-hd")])
-      .then(([r, l]) => { if (!batal) { setRing(r); setItems(l.items); setErr(null); } })
+    Promise.all([kirim<Ringkasan>("/api/proyek-hd/ringkasan"), kirim<{ items: Proyek[] }>("/api/proyek-hd"), kirim<RingkasanOps>("/api/proyek-hd/ops-ringkasan")])
+      .then(([r, l, o]) => { if (!batal) { setRing(r); setItems(l.items); setOps(o); setErr(null); } })
       .catch((e) => { if (!batal) setErr((e as Error).message); });
     return () => { batal = true; };
   }, [versi]);
@@ -80,6 +81,10 @@ export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bole
         {bolehBuat && <Button onClick={() => setTambah((n) => n + 1)}><Plus />Tambah proyek</Button>}
         <Link href="/proyek-hd/simulator" className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>
         {bolehParam && <Button variant="soft" onClick={() => setParam(true)}><SlidersHorizontal />Parameter</Button>}
+        <Link href="/proyek-hd/data/konstruksi" className={buttonVariants({ variant: "soft" })}><Database />Data operasional</Link>
+        {/* Unduhan tetap <a href> (pola produktivitas KSO): browser memakai nama berkas dari content-disposition. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- route API biner, bukan halaman */}
+        <a href="/api/proyek-hd/ekspor" className={buttonVariants({ variant: "soft" })}><FileSpreadsheet />Ekspor Excel</a>
       </div>
 
       {err && <p className="text-destructive text-sm">{err}</p>}
@@ -117,6 +122,40 @@ export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bole
           })}
         </CardContent>
       </Card>
+
+      {ops && (ops.isu_terbuka.length > 0 || ops.gate_terbuka.length > 0) && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="flex flex-row items-baseline justify-between gap-2">
+              <CardTitle>Isu terbuka</CardTitle>
+              <Link href="/proyek-hd/data/isu" className="text-primary text-sm font-semibold">Kelola</Link>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {ops.isu_terbuka.length === 0 && <p className="text-muted-foreground">Tidak ada isu terbuka.</p>}
+              {ops.isu_terbuka.slice(0, 8).map((i) => (
+                <Link key={i.id} href={`/proyek-hd/${i.proyek_id}`} className="block border-b pb-2 last:border-b-0">
+                  <div className="font-medium">{i.proyek_nama}</div>
+                  <div>{i.isu}</div>
+                  <div className="text-muted-foreground text-xs">{[i.tindakan, i.pic_nama, i.status].filter(Boolean).join(" · ")}</div>
+                </Link>
+              ))}
+              {ops.isu_terbuka.length > 8 && <p className="text-muted-foreground text-xs">+{ops.isu_terbuka.length - 8} isu lain</p>}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle>Gate sebelum tukang masuk</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {ops.gate_terbuka.length === 0 && <p className="text-muted-foreground">Semua proyek DED/CIP sudah lengkap G1–G3.</p>}
+              {ops.gate_terbuka.map((g) => (
+                <Link key={g.id} href={`/proyek-hd/${g.id}`} className="block border-b pb-2 last:border-b-0">
+                  <div className="font-medium">{g.nama_rs} <span className="text-muted-foreground text-xs">· tahap {g.tahap_kode}</span></div>
+                  <div className="text-muted-foreground text-xs">Belum: {g.kurang.join(" · ")}</div>
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-baseline justify-between gap-2">

@@ -7,6 +7,8 @@ import { actorName, requireFeature, type GuardResult } from "@/lib/feature-guard
 import type { Action } from "@/lib/perms";
 
 export const idAman = (id: string) => (/^\d{1,12}$/.test(id) ? id : null);
+/** Slug tab data operasional (konstruksi, kurva-s, …) — daftar sahnya dicek ulang di API. */
+export const slugAman = (s: string) => (/^[a-z][a-z-]{1,19}$/.test(s) ? s : null);
 
 export const gerbang = (aksi: Action): Promise<GuardResult> => requireFeature("/proyek-hd", aksi);
 

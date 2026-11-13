@@ -51,6 +51,7 @@ import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js"
 import { CekError, buatCek, daftarCek, runCekHarian, ubahDraft, ubahStatus } from "./repo/cek-keluar.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
 import { bacaLampiran as hdBacaLampiran, buatProyek as hdBuatProyek, cariFaskes as hdCariFaskes, detailProyek as hdDetail, JENIS_SIMULASI as HD_JENIS_SIMULASI, listParam as hdListParam, listProyek as hdListProyek, listSimulasi as hdListSimulasi, majuTahap as hdMajuTahap, ProyekHdError, referensi as hdReferensi, ringkasan as hdRingkasan, simpanSimulasi as hdSimpanSimulasi, tambahCatatan as hdTambahCatatan, ubahParam as hdUbahParam, ubahProyek as hdUbahProyek, type JenisSimulasi as HdJenisSimulasi } from "./repo/proyek-hd.js";
+import { buatOps as hdBuatOps, eksporXlsx as hdEksporXlsx, hapusOps as hdHapusOps, listOps as hdListOps, OPS as HD_OPS, opsProyek as hdOpsProyek, ringkasanOps as hdRingkasanOps, ubahOps as hdUbahOps } from "./repo/proyek-hd-ops.js";
 import {
   PameranError, buatAcara as pmBuatAcara, daftarPublik as pmDaftarPublik, hapusPengunjung as pmHapusPengunjung, infoPublik as pmInfoPublik,
   jadikanDeal as pmJadikanDeal, kocokPemenang as pmKocok, listAcara as pmListAcara, listPengunjung as pmListPengunjung,
@@ -7140,6 +7141,49 @@ app.post("/proyek-hd", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const b = await hdBody(c);
   try { return c.json(await hdBuatProyek(b, hdOleh(b.oleh)), 201); } catch (e) { return hdErr(c, e); }
+});
+// Proyek HD fase 2 (migrasi 316) — data operasional. Spesifikasi kolom dilayani dari sini
+// supaya form web tak menyalin daftar kolom. Rute statis WAJIB sebelum /proyek-hd/:id.
+app.get("/proyek-hd/ops-spek", (c) => c.json({ items: HD_OPS.map((o) => ({ slug: o.slug, label: o.label, tunggal: o.tunggal, proyekOpsional: o.proyekOpsional, kolom: o.kolom })) }));
+app.get("/proyek-hd/ops-ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdRingkasanOps()); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ekspor.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const buf = await hdEksporXlsx();
+    const tgl = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+    return c.body(new Uint8Array(buf), 200, {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="Proyek_HD_${tgl}.xlsx"`,
+      "cache-control": "private, no-store",
+    });
+  } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ops/:slug", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await hdListOps(c.req.param("slug"), c.req.query("proyek_id") || null) }); } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd/ops/:slug", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdBuatOps(c.req.param("slug"), b, hdOleh(b.oleh)), 201); } catch (e) { return hdErr(c, e); }
+});
+app.patch("/proyek-hd/ops/:slug/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdUbahOps(c.req.param("slug"), c.req.param("id"), b, hdOleh(b.oleh))); } catch (e) { return hdErr(c, e); }
+});
+app.delete("/proyek-hd/ops/:slug/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdHapusOps(c.req.param("slug"), c.req.param("id"), hdOleh(c.req.query("oleh")))); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/:id/ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  if (!/^\d{1,12}$/.test(id)) return c.json({ error: "id tidak valid" }, 400);
+  try { return c.json(await hdOpsProyek(Number(id))); } catch (e) { return hdErr(c, e); }
 });
 app.get("/proyek-hd/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
