@@ -993,7 +993,7 @@ export async function listApprovalRequests(filter: ListApprovalFilter = {}): Pro
           AND (
             (s.target_type = 'direktur' AND ${me.role === "direktur"})
             OR (s.target_type IN ('hod', 'hod_pengaju') AND s.hod_key IS NOT NULL AND s.hod_key = ${me.hodKey ?? ""})
-            OR (s.target_type = 'grup' AND s.group_key = ANY(${sql.array(me.groups.length ? me.groups : [""])}::text[]))
+            OR (s.target_type = 'grup' AND s.group_key = ANY(${me.groups.length ? me.groups : [""]}::text[]))
           )
       )
       AND NOT EXISTS (

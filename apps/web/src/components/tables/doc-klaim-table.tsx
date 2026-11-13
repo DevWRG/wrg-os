@@ -63,7 +63,7 @@ export function DocKlaimTable({ klaim, pemutus }: { klaim: DocKlaim[]; pemutus: 
       cell: (k) => (
         <div>
           <div>{fmt(k.created_at)}</div>
-          <div className="text-muted-foreground text-xs">
+          <div className="text-muted-foreground max-w-[12rem] text-xs break-words [overflow-wrap:anywhere]">
             {k.employee_nama ?? k.sender_name ?? "-"}
             {!k.employee_id && k.sender_name && <Badge variant="outline" className="ml-1">belum terhubung roster</Badge>}
           </div>
@@ -80,11 +80,14 @@ export function DocKlaimTable({ klaim, pemutus }: { klaim: DocKlaim[]; pemutus: 
             <span className="text-muted-foreground text-xs">OCR belum aktif</span>
           </div>
         ) : (
-          <div className="text-xs">
-            {k.nomor_dokumen && <div>No: {k.nomor_dokumen}</div>}
-            {k.tanggal_dokumen && <div>Tanggal: {k.tanggal_dokumen}</div>}
-            {k.nominal && <div>Nominal: {k.nominal}</div>}
-            {k.pihak && <div>Pihak: {k.pihak}</div>}
+          // Lebar dibatasi + truncate (teks lengkap di tooltip): hasil OCR
+          // panjang tanpa spasi dulu mendorong kolom Foto/Kategori/Status/Aksi
+          // keluar layar.
+          <div className="max-w-[16rem] text-xs">
+            {k.nomor_dokumen && <div className="truncate" title={k.nomor_dokumen}>No: {k.nomor_dokumen}</div>}
+            {k.tanggal_dokumen && <div className="truncate" title={k.tanggal_dokumen}>Tanggal: {k.tanggal_dokumen}</div>}
+            {k.nominal && <div className="truncate" title={k.nominal}>Nominal: {k.nominal}</div>}
+            {k.pihak && <div className="truncate" title={k.pihak}>Pihak: {k.pihak}</div>}
             {!k.nomor_dokumen && !k.tanggal_dokumen && !k.nominal && !k.pihak && (
               <span className="text-muted-foreground">Tak terekstrak — lihat teks mentah</span>
             )}
