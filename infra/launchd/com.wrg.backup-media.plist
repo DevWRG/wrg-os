@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent cadangan harian BERKAS produksi (Mac mini, user development).
+  Tiap 02:30 (sesudah backup-harian 01:30): scripts/ops/backup-media.sh — media WA
+  (~/.openclaw/media/inbound) + ~/.wrg-os/uploads + approval-uploads, terenkripsi,
+  bertambah (hanya berkas baru sejak run sukses terakhir) ke Drive "WRG-OS Cadangan Media".
+
+  Run PERTAMA = arsip penuh (±8 GB, bisa berjam-jam) — jalankan manual dulu di latar:
+    nohup bash ~/DevWRG/wrg-os/scripts/ops/backup-media.sh >/dev/null 2>&1 &
+    tail -f ~/DevWRG/ops/backup-media.log
+  Setelah log berakhir "SELESAI (penuh)", pasang sekali:
+    cp infra/launchd/com.wrg.backup-media.plist ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.wrg.backup-media.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.wrg.backup-media</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec /bin/bash "$HOME/DevWRG/wrg-os/scripts/ops/backup-media.sh"</string>
+  </array>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/development/DevWRG/ops/backup-media.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/development/DevWRG/ops/backup-media.launchd.log</string>
+</dict>
+</plist>
