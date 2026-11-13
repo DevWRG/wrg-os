@@ -110,11 +110,30 @@ export interface SupplierEtaUpdate {
   notes?: string | null;
 }
 
+// Kolom wajib (sama dgn POST) yang IKUT dikirim di PATCH tak boleh kosong /
+// spasi saja — dulu PATCH menerima "" lalu menyimpannya apa adanya.
+export function validateSupplierEtaPatch(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "body harus objek JSON";
+  const f = body as Record<string, unknown>;
+  for (const k of ["vendor_name", "item_desc", "eta_date"] as const) {
+    if (k in f && (typeof f[k] !== "string" || !(f[k] as string).trim())) return `${k} wajib diisi`;
+  }
+  return null;
+}
+
 export async function updateSupplierEta(id: string, f: SupplierEtaUpdate): Promise<SupplierEtaRow | null> {
   const sql = db();
-  // Tandai 'arrived' tanpa actual_arrival_date eksplisit → pakai hari ini.
+  // Tandai 'arrived' tanpa actual_arrival_date eksplisit → pakai hari ini,
+  // TAPI hanya saat status BERUBAH jadi arrived (status lama ≠ arrived, atau
+  // tanggalnya masih kosong). Form Edit selalu mengirim status, jadi dulu
+  // menyimpan baris yang sudah datang menimpa tanggal datang aslinya.
+  const today = new Date().toISOString().slice(0, 10);
   const actualArrival =
-    f.actual_arrival_date !== undefined ? f.actual_arrival_date : f.status === "arrived" ? new Date().toISOString().slice(0, 10) : undefined;
+    f.actual_arrival_date !== undefined
+      ? f.actual_arrival_date
+      : f.status === "arrived"
+        ? sql`CASE WHEN status <> 'arrived' OR actual_arrival_date IS NULL THEN ${today}::date ELSE actual_arrival_date END`
+        : sql`actual_arrival_date`;
   const rows = await sql`
     UPDATE supplier_eta SET
       vendor_id           = COALESCE(${f.vendor_id ?? null}, vendor_id),
@@ -124,7 +143,7 @@ export async function updateSupplierEta(id: string, f: SupplierEtaUpdate): Promi
       qty                 = ${f.qty !== undefined ? f.qty : sql`qty`},
       eta_date            = COALESCE(${f.eta_date ?? null}, eta_date),
       status              = COALESCE(${f.status ?? null}, status),
-      actual_arrival_date = ${actualArrival !== undefined ? actualArrival : sql`actual_arrival_date`},
+      actual_arrival_date = ${actualArrival},
       cabang              = ${f.cabang !== undefined ? f.cabang : sql`cabang`},
       notes               = ${f.notes !== undefined ? f.notes : sql`notes`},
       updated_at          = now()

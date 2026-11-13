@@ -129,7 +129,7 @@ import {
 } from "./repo/rbac.js";
 import { listTerritory, createTerritory, updateTerritory, deleteTerritory } from "./repo/territory.js";
 import { listPricelist, upsertPricelist, publishPricelist, unpublishPricelist, deletePricelist, type PricelistInput } from "./repo/pricelist.js";
-import { listSupplierEta, createSupplierEta, updateSupplierEta, deleteSupplierEta, type SupplierEtaInput, type SupplierEtaUpdate, type SupplierEtaStatus } from "./repo/supplier-eta.js";
+import { listSupplierEta, createSupplierEta, updateSupplierEta, deleteSupplierEta, validateSupplierEtaPatch, type SupplierEtaInput, type SupplierEtaUpdate, type SupplierEtaStatus } from "./repo/supplier-eta.js";
 import {
   listItems as listPricebookItems, summary as pricebookSummary,
   outsideKeagenan, periodeList as pricebookPeriode,
@@ -6146,6 +6146,8 @@ app.patch("/supplier-eta/:id", async (c) => {
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
+  const wajib = validateSupplierEtaPatch(body);
+  if (wajib) return c.json({ error: wajib }, 400);
   if (body.status && !SUPPLIER_ETA_STATUSES.includes(body.status)) {
     return c.json({ error: "status tidak valid" }, 400);
   }
