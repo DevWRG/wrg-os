@@ -177,7 +177,16 @@ test("balasan plan & format salah", () => {
   });
   assert.match(t, /^✅ Plan tercatat, Budi\n📅 Sab, 7 Nov 2026 · 1 alat\n⚠️ telat/);
   assert.match(t, /No\. 3 sudah dilaporkan/);
-  assert.match(t, /⚠️ faskes "RS A" tak dikenali/);
+  assert.match(t, /⚠️ No\. 1: faskes "RS A" tak dikenali/);
+  assert.doesNotMatch(t, /RS A · EXC200/); // daftar item tak diulang
+  const bersih = balasanPlanTeknisi({
+    nama: "Budi", tanggalTampil: "Sab, 7 Nov 2026", late: false, dilewati: [],
+    items: [
+      { urut: 1, faskes: "RS A", alatLabel: "EXC200", jenis: "PM", masalah: null },
+      { urut: 2, faskes: "RS A", alatLabel: "Z3", jenis: "Service", masalah: null },
+    ],
+  });
+  assert.equal(bersih, "✅ Plan tercatat, Budi\n📅 Sab, 7 Nov 2026 · 2 alat");
   const f = balasanFormatSalah("report", "Budi", ["Blok 1: `Status:` wajib"]);
   assert.match(f, /belum tersimpan, Budi:\n• Blok 1/);
   assert.match(f, /#REPORT 1\nStatus: Selesai/);
