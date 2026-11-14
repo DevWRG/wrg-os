@@ -51,11 +51,12 @@ psql -d "$DB" -v ON_ERROR_STOP=1 -q -c "
 ok "migrasi + grant beres"
 
 say "Anonimisasi ulang (idempoten)"
-# Migrasi baru bisa membawa data asli lagi (053 karyawan, 169 rekening bank) —
-# dulu langkah ini manual dan sempat terlewat.
+# Migrasi baru bisa membawa data asli lagi (053 karyawan, 169 rekening bank,
+# 198 nama HoD) — dulu langkah ini manual dan sempat terlewat.
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-employee-spine.sql
 psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-bank-account.sql
-ok "karyawan + rekening bank tersamarkan"
+psql -d "$DB" -v ON_ERROR_STOP=1 -q -f scripts/db/anonymize-master-hod.sql
+ok "karyawan + rekening bank + nama HoD tersamarkan"
 
 say "Restart pm2 demo"
 pm2 restart ecosystem.demo.config.cjs --update-env
