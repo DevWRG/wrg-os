@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Calculator, FileText, Paperclip } from "lucide-react";
+import { Calculator, FileText, Link2, Paperclip } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 import { OpsPanel } from "./ops-panel";
+import { CariFaskes, type Faskes } from "./tambah-proyek-dialog";
 import { bulan, kirim, RAG_KELAS, rp, STATUS_RAG, tgl, type Catatan, type Detail } from "./types";
 
 const TAHAP_NAMA: Record<string, string> = {
@@ -27,6 +28,7 @@ export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [maju, setMaju] = useState(false);
+  const [faskes, setFaskes] = useState(false);
 
   // Respons yang datang sesudah efek dibersihkan dibuang — kalau tidak, muatan awal yang
   // lambat bisa menimpa detail hasil simpan catatan (diubah_at basi → maju tahap 409).
@@ -52,7 +54,14 @@ export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean
             <h2 className="text-xl font-bold">{p.nama_rs}</h2>
             <p className="text-muted-foreground text-sm">
               {[p.kode, p.tipe_proyek, p.nama_alat, p.nomor_kontrak ? `Kontrak ${p.nomor_kontrak}` : "Kontrak: proses",
-                p.pic_nama ? `PIC ${p.pic_nama}` : null, p.faskes_nama ? `Faskes ${p.faskes_nama}` : null].filter(Boolean).join(" · ")}
+                p.pic_nama ? `PIC ${p.pic_nama}` : null].filter(Boolean).join(" · ")}
+            </p>
+            <p className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Faskes WRG-OS:</span>
+              {p.faskes_nama ? <strong>{p.faskes_nama}</strong> : <span className="text-amber-700 dark:text-amber-400">belum ditautkan</span>}
+              {bolehUbah && (
+                <Button size="xs" variant="soft" onClick={() => setFaskes(true)}><Link2 />{p.faskes_nama ? "Ganti" : "Tautkan faskes"}</Button>
+              )}
             </p>
             <p className="text-muted-foreground text-sm">
               Prioritas {p.prioritas} · target go-live {bulan(p.target_golive)} · target {p.target_tindakan_bln ?? "—"} tindakan/bln · harga unit {rp(p.harga_unit)}
@@ -126,6 +135,7 @@ export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean
         </Card>
       </div>
 
+      {faskes && <FaskesDialog d={d} onClose={() => setFaskes(false)} onSaved={(np) => { setD({ ...d, proyek: np }); setFaskes(false); }} />}
       {maju && <MajuDialog d={d} onClose={() => setMaju(false)} onSaved={(nd) => { setD(nd); setMaju(false); }} />}
     </div>
   );
@@ -266,6 +276,52 @@ function MajuDialog({ d, onClose, onSaved }: { d: Detail; onClose: () => void; o
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button disabled={busy || !ke} onClick={simpan}>{busy ? "Menyimpan…" : `Pindah ke ${ke}`}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Tautkan / ganti / lepas faskes (master pelanggan Accurate) — dipakai bila proyek dibuat
+// atau diimpor tanpa faskes. `diubah_at` ikut supaya tak menimpa ubahan orang lain.
+function FaskesDialog({ d, onClose, onSaved }: { d: Detail; onClose: () => void; onSaved: (p: Detail["proyek"]) => void }) {
+  const p = d.proyek;
+  const [pilih, setPilih] = useState<Faskes | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function simpan(accountId: number | null) {
+    setBusy(true);
+    setErr(null);
+    try {
+      onSaved(await kirim<Detail["proyek"]>(`/api/proyek-hd/${p.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ diubah_at: p.diubah_at, account_id: accountId }),
+      }));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Faskes untuk {p.nama_rs}</DialogTitle>
+          <DialogDescription>
+            {p.faskes_nama ? <>Sekarang tertaut ke <strong>{p.faskes_nama}</strong>.</> : "Proyek ini belum tertaut ke faskes di WRG-OS."} Cari nama atau kode pelanggan Accurate.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          {err && <p className="text-destructive text-sm">{err}</p>}
+          <CariFaskes value={pilih} onPilih={setPilih} />
+        </DialogBody>
+        <DialogFooter className="flex-wrap">
+          {p.account_id != null && <Button variant="outline" disabled={busy} onClick={() => simpan(null)}>Lepas tautan</Button>}
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button disabled={busy || !pilih} onClick={() => pilih && simpan(pilih.id)}>{busy ? "Menyimpan…" : "Simpan"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

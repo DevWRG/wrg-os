@@ -62,6 +62,10 @@ test("isianUbah hanya membawa kolom yang dikirim", () => {
   assert.deepEqual(isianUbah({ status_rag: "Merah" }), { status_rag: "Merah" });
   assert.deepEqual(isianUbah({ next_action: "  " }), { next_action: null });
   assert.throws(() => isianUbah({ unit_running: -1 }), /unit_running/);
+  // tautkan / lepas faskes
+  assert.deepEqual(isianUbah({ account_id: 123 }), { account_id: 123 });
+  assert.deepEqual(isianUbah({ account_id: null }), { account_id: null });
+  assert.throws(() => isianUbah({ account_id: 0 }), /account_id/);
 });
 
 test("tanggal catatan: kosong = hari ini; masa depan & tanggal palsu ditolak", () => {
