@@ -428,17 +428,19 @@ export function balasanPlanTeknisi(input: {
   items: { urut: number; faskes: string; alatLabel: string | null; jenis: string; masalah: string | null }[];
   dilewati: number[];
 }): string {
+  // Daftar item TIDAK diulang di balasan (permintaan user 14 Nov 2026: teknisi sudah
+  // menulisnya sendiri). Yang ditampilkan hanya ringkasan + item yang bermasalah.
   const baris = [`✅ Plan tercatat, ${input.nama}`, `📅 ${input.tanggalTampil} · ${input.items.length} alat`];
   if (input.late) baris.push("⚠️ telat (lewat batas)");
-  baris.push("");
-  for (const it of input.items) {
-    baris.push(`${it.urut}. ${it.faskes} · ${it.alatLabel ?? "?"} · ${it.jenis}`);
-    if (it.masalah) baris.push(`   ⚠️ ${it.masalah}`);
+  const bermasalah = input.items.filter((i) => i.masalah);
+  if (bermasalah.length) {
+    baris.push("");
+    for (const it of bermasalah) baris.push(`⚠️ No. ${it.urut}: ${it.masalah}`);
   }
   if (input.dilewati.length) {
     baris.push("", `ℹ️ No. ${input.dilewati.join(", ")} sudah dilaporkan — tak diganti.`);
   }
-  if (input.items.some((i) => i.masalah)) {
+  if (bermasalah.length) {
     baris.push("", "Item bertanda ⚠️ tetap tersimpan; laporkan dengan SN supaya alatnya pasti.");
   }
   return baris.join("\n");
