@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 
 import { kirim, PRIORITAS, SEGMEN, TIPE_PROYEK, type Proyek } from "./types";
 
-type Faskes = { id: number; nama: string; no: string | null };
+export type Faskes = { id: number; nama: string; no: string | null };
 type Karyawan = { id: string; nama: string };
 
 const opsi = (xs: readonly string[]) => xs.map((x) => ({ value: x, label: x }));
