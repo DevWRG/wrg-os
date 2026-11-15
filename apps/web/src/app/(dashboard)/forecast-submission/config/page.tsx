@@ -285,16 +285,24 @@ interface WilayahRow {
   kode: string;
   nama: string;
   wilayah: string | null;
+  sumber: "hod" | "manual" | null;
+  wilayahManual: string | null;
+  cabang: { cabang: string; hod: string | null }[];
+  catatan?: string;
 }
 
-// Wilayah approval per cabang (migrasi 317): dokumen forecast cabang diajukan
-// ke HoD Sales wilayah ini di tahap 1 — dipetakan sekali di sini, bukan dipilih
-// tiap kali mengajukan. Cabang tanpa wilayah: dokumennya tak bisa diajukan.
+const labelWil = (w: string | null) => WILAYAH_OPTIONS.find((o) => o.value === w)?.label.split(" — ")[0] ?? "–";
+const kapital = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+
+// Wilayah approval per gudang DINAMIS (keputusan user 15 Nov 2026): diturunkan
+// dari HoD Sales cabang penjualan yang dilayani gudang (teritori HoD). Isian
+// manual hanya cadangan untuk gudang yang tak bisa diturunkan.
 function WilayahCabangCard() {
   const [rows, setRows] = useState<WilayahRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -313,7 +321,7 @@ function WilayahCabangCard() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [tick]);
 
   async function ubah(kode: string, wilayah: string) {
     setBusy(kode);
@@ -326,7 +334,7 @@ function WilayahCabangCard() {
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
-      setRows((prev) => prev.map((r) => (r.kode === kode ? { ...r, wilayah: wilayah || null } : r)));
+      setTick((t) => t + 1);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -338,35 +346,57 @@ function WilayahCabangCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Wilayah Approval per Cabang</CardTitle>
+        <CardTitle className="text-base">Wilayah Approval per Gudang</CardTitle>
         <p className="text-muted-foreground text-xs">
-          Menentukan HoD Sales tahap 1 untuk dokumen forecast cabang itu.
-          {belum > 0 && <span className="text-destructive"> {belum} cabang belum dipetakan — dokumennya belum bisa diajukan.</span>}
+          Otomatis dari HoD Sales cabang penjualan yang dilayani gudang (teritori HoD), jadi ikut berubah bila teritori
+          HoD berubah. Isian manual hanya cadangan untuk gudang yang tak bisa diturunkan.
+          {belum > 0 && <span className="text-destructive"> {belum} gudang belum punya wilayah — dokumennya belum bisa diajukan.</span>}
         </p>
       </CardHeader>
       <CardContent>
         {error && <p className="text-destructive mb-2 text-sm">{error}</p>}
         {loading ? (
-          <SkeletonTable rows={4} cols={2} />
+          <SkeletonTable rows={4} cols={3} />
         ) : (
-          <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
-            {rows.map((r) => (
-              <div key={r.kode} className="flex items-center justify-between gap-3 text-sm">
-                <span className={r.wilayah ? "" : "text-destructive"}>{r.nama}</span>
-                <select
-                  className="border-input bg-card h-8 w-32 rounded-lg border px-2 text-sm"
-                  value={r.wilayah ?? ""}
-                  disabled={busy === r.kode}
-                  onChange={(e) => void ubah(r.kode, e.target.value)}
-                >
-                  <option value="">Belum diatur</option>
-                  {WILAYAH_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label.split(" — ")[0]}</option>
-                  ))}
-                </select>
-              </div>
+          <PagedTable
+            label="gudang"
+            header={
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Gudang</TableHead>
+                  <TableHead>Wilayah</TableHead>
+                  <TableHead>Dasar</TableHead>
+                </TableRow>
+              </TableHeader>
+            }
+            rows={rows.map((r) => (
+              <TableRow key={r.kode}>
+                <TableCell className={r.wilayah ? "" : "text-destructive"}>{r.nama}</TableCell>
+                <TableCell>
+                  {r.sumber === "hod" ? (
+                    <span className="font-medium">{labelWil(r.wilayah)}</span>
+                  ) : (
+                    <select
+                      className="border-input bg-card h-8 w-32 rounded-lg border px-2 text-sm"
+                      value={r.wilayahManual ?? ""}
+                      disabled={busy === r.kode}
+                      onChange={(e) => void ubah(r.kode, e.target.value)}
+                    >
+                      <option value="">Belum diatur</option>
+                      {WILAYAH_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label.split(" — ")[0]}</option>
+                      ))}
+                    </select>
+                  )}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-xs whitespace-normal">
+                  {r.sumber === "hod"
+                    ? `Otomatis — ${r.cabang.filter((c) => c.hod).map((c) => `${c.cabang} (${kapital(String(c.hod))})`).join(", ")}`
+                    : `Cadangan manual — ${r.catatan ?? "tak bisa diturunkan dari HoD"}`}
+                </TableCell>
+              </TableRow>
             ))}
-          </div>
+          />
         )}
       </CardContent>
     </Card>

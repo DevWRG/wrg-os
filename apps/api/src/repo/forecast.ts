@@ -677,7 +677,7 @@ export async function listDokumen(filter: { status?: string; bulan?: string } = 
   const sql = db();
   const periode = periodeDariBulan(filter.bulan);
   const docs = await sql`
-    SELECT d.*, w.nama AS warehouse_nama, w.wilayah, w.urutan, ar.kode AS approval_kode, ar.status AS approval_status
+    SELECT d.*, w.nama AS warehouse_nama, w.urutan, ar.kode AS approval_kode, ar.status AS approval_status
     FROM forecast_dokumen d
     JOIN warehouse w ON w.kode = d.warehouse_kode
     LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
@@ -687,6 +687,7 @@ export async function listDokumen(filter: { status?: string; bulan?: string } = 
     LIMIT 200
   `;
   if (docs.length === 0) return [];
+  const wil = await wilayahGudang(sql);
   const ids = docs.map((d) => String(d.id));
   const lines = (
     await sql`
@@ -703,7 +704,7 @@ export async function listDokumen(filter: { status?: string; bulan?: string } = 
       kode: String(d.kode),
       warehouseKode: String(d.warehouse_kode),
       warehouseNama: String(d.warehouse_nama),
-      wilayah: d.wilayah ? String(d.wilayah) : null,
+      wilayah: wil.get(String(d.warehouse_kode))?.wilayah ?? null,
       kategori: d.kategori ? String(d.kategori) : null,
       periode: toIsoDate(d.periode).slice(0, 7),
       status: String(d.status),
@@ -889,17 +890,18 @@ export function labelRentang(rentang: (Rentang | null)[]): string | null {
 export async function submitDokumen(id: string, submittedBy: string): Promise<SubmitResult> {
   const sql = db();
   const [d] = await sql`
-    SELECT d.*, w.nama AS warehouse_nama, w.wilayah
+    SELECT d.*, w.nama AS warehouse_nama
     FROM forecast_dokumen d JOIN warehouse w ON w.kode = d.warehouse_kode
     WHERE d.id = ${id}
   `;
   if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  const wilayah = (await wilayahGudang(sql)).get(String(d.warehouse_kode))?.wilayah ?? null;
   if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}` };
   if (!isKategori(d.kategori)) {
     return { ok: false, error: "barang di dokumen ini belum punya kategori — pilih IVD/Medical per barang dulu" };
   }
-  if (!isWilayah(d.wilayah)) {
-    return { ok: false, error: `wilayah ${d.warehouse_nama} belum dipetakan (East/West) — atur di Setup` };
+  if (!isWilayah(wilayah)) {
+    return { ok: false, error: `wilayah ${d.warehouse_nama} tak bisa diturunkan dari HoD dan belum diisi cadangan manual — atur di Setup` };
   }
 
   const lines = await sql`
@@ -970,7 +972,7 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
       title: `Forecast ${d.warehouse_nama} — ${d.kategori} — ${namaBulan(toIsoDate(d.periode))}`,
       description,
       requestedBy: submittedBy,
-      wilayah: d.wilayah,
+      wilayah,
       kategori: d.kategori,
       // index unik approval_request_ref_pending_uq = pagar kedua submit kembar.
       refTabel: "forecast_dokumen",
@@ -990,16 +992,101 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
   return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
 }
 
+// ── Wilayah approval dinamis ───────────────────────────────────────────────
+// Keputusan user 15 Nov 2026: wilayah gudang tidak diisi manual, tapi ikut
+// HoD Sales dari cabang penjualan yang dilayani gudang itu. Rantai:
+// gudang ← cabang penjualan (peta 319: nama sama / peta manual) →
+// hod_territory (cabang → hod_key) → peta approval tahap 1 (hod_key_map
+// {"east": "rocky", "west": "yogi"}, dibalik). warehouse.wilayah (manual)
+// hanya CADANGAN bila tak bisa diturunkan: gudang tanpa cabang penjualan,
+// cabang tanpa HoD, atau cabangnya terbagi ke dua wilayah.
+
+export interface WilayahTurunan {
+  wilayah: string | null;
+  sumber: "hod" | "manual" | null;
+  /** Cabang penjualan yang dilayani gudang ini beserta HoD-nya. */
+  cabang: { cabang: string; hod: string | null }[];
+  /** Alasan jatuh ke cadangan manual. */
+  catatan?: string;
+}
+
+/** Wilayah satu gudang dari HoD cabang-cabang penjualannya; null = tak bisa diturunkan. */
+export function tentukanWilayah(
+  cabang: { cabang: string; hod: string | null }[],
+  hodKeWilayah: Map<string, string>,
+): { wilayah: string | null; catatan?: string } {
+  if (cabang.length === 0) return { wilayah: null, catatan: "tidak ada cabang penjualan yang dilayani gudang ini" };
+  const w = new Set(cabang.map((c) => (c.hod ? hodKeWilayah.get(c.hod.toLowerCase()) ?? null : null)).filter((x): x is string => !!x));
+  if (w.size === 0) return { wilayah: null, catatan: "cabang penjualannya belum punya HoD di teritori HoD" };
+  if (w.size > 1) return { wilayah: null, catatan: "cabang penjualannya terbagi ke HoD East dan West" };
+  return { wilayah: [...w][0] };
+}
+
+async function wilayahGudang(sql: Sql): Promise<Map<string, WilayahTurunan>> {
+  const [gudangRows, teritori, petaRows, chain] = await Promise.all([
+    sql`SELECT kode, nama, cabang, wilayah FROM warehouse WHERE jenis = 'cabang'`,
+    sql`SELECT DISTINCT ON (upper(cabang)) cabang, hod_key FROM hod_territory ORDER BY upper(cabang), (source = 'manual') DESC, updated_at DESC`,
+    sql`SELECT cabang FROM forecast_cabang_gudang`,
+    sql`SELECT hod_key_map FROM approval_chain_config WHERE hod_key_map ? 'east' OR hod_key_map ? 'west' LIMIT 1`,
+  ]);
+  const hodKeWilayah = new Map<string, string>();
+  const peta = (chain[0]?.hod_key_map ?? {}) as Record<string, string>;
+  for (const [wil, hod] of Object.entries(peta)) if (isWilayah(wil) && hod) hodKeWilayah.set(String(hod).toLowerCase(), wil);
+  const hodCabang = new Map(teritori.map((t) => [normal(String(t.cabang)), String(t.hod_key)]));
+  const { manual, gudang } = await muatPeta(sql);
+  // Semua nama cabang penjualan yang dikenal: teritori HoD + peta manual.
+  const namaCabang = new Map<string, string>();
+  for (const t of teritori) namaCabang.set(normal(String(t.cabang)), String(t.cabang));
+  for (const r of petaRows) namaCabang.set(normal(String(r.cabang)), String(r.cabang));
+
+  const out = new Map<string, WilayahTurunan>();
+  for (const g of gudangRows) {
+    const kode = String(g.kode);
+    const dilayani = [...namaCabang.values()]
+      .filter((c) => gudangUntukCabang(c, manual, gudang) === kode)
+      .map((c) => ({ cabang: c, hod: hodCabang.get(normal(c)) ?? null }));
+    const t = tentukanWilayah(dilayani, hodKeWilayah);
+    const manualWil = g.wilayah ? String(g.wilayah) : null;
+    out.set(
+      kode,
+      t.wilayah
+        ? { wilayah: t.wilayah, sumber: "hod", cabang: dilayani }
+        : { wilayah: manualWil, sumber: manualWil ? "manual" : null, cabang: dilayani, catatan: t.catatan },
+    );
+  }
+  return out;
+}
+
 export interface WilayahCabangRow {
   kode: string;
   nama: string;
+  /** Wilayah yang dipakai approval (turunan HoD, atau cadangan manual). */
   wilayah: string | null;
+  sumber: "hod" | "manual" | null;
+  /** Isian manual (cadangan). */
+  wilayahManual: string | null;
+  cabang: { cabang: string; hod: string | null }[];
+  catatan?: string;
 }
 
 export async function listWilayahCabang(): Promise<WilayahCabangRow[]> {
   const sql = db();
-  const rows = await sql`SELECT kode, nama, wilayah FROM warehouse WHERE jenis = 'cabang' AND aktif ORDER BY urutan, nama`;
-  return rows.map((r) => ({ kode: String(r.kode), nama: String(r.nama), wilayah: r.wilayah ? String(r.wilayah) : null }));
+  const [rows, turunan] = await Promise.all([
+    sql`SELECT kode, nama, wilayah FROM warehouse WHERE jenis = 'cabang' AND aktif ORDER BY urutan, nama`,
+    wilayahGudang(sql),
+  ]);
+  return rows.map((r) => {
+    const t = turunan.get(String(r.kode));
+    return {
+      kode: String(r.kode),
+      nama: String(r.nama),
+      wilayah: t?.wilayah ?? null,
+      sumber: t?.sumber ?? null,
+      wilayahManual: r.wilayah ? String(r.wilayah) : null,
+      cabang: t?.cabang ?? [],
+      ...(t?.catatan ? { catatan: t.catatan } : {}),
+    };
+  });
 }
 
 export async function setWilayahCabang(kode: string, wilayah: unknown): Promise<{ ok: boolean; error?: string }> {
