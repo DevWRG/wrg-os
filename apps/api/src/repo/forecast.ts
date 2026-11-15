@@ -53,12 +53,105 @@ export function usulanMasihBerjalan(e: { status: string; poDiterima: boolean; po
 const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
 
+// ── Rentang rata-rata penjualan (migrasi 318) ─────────────────────────────
+// Keputusan user 15 Nov 2026: rata-rata terjual/bulan dihitung dari rentang
+// tanggal pilihan pemakai (3/6/12 bulan terakhir atau bebas), bukan tetap
+// 6 bulan. Rata-rata = total qty dalam rentang ÷ jumlah bulan rentang —
+// bulan tanpa penjualan ikut dihitung (dulu AVG hanya atas bulan yang ada
+// penjualannya, jadi barang yang jarang laku terlihat lebih laris).
+
+export interface Rentang {
+  dari: string;
+  sampai: string;
+}
+
+const RENTANG_MAKS_BULAN = 36;
+const ISO_TGL = /^\d{4}-\d{2}-\d{2}$/;
+const tglUtc = (iso: string) => new Date(`${iso}T00:00:00Z`);
+const isoUtc = (d: Date) => d.toISOString().slice(0, 10);
+
+/** Jumlah bulan rentang: bulan kalender utuh (tgl 1 s/d akhir bulan) dihitung bulat, selain itu hari ÷ 30,4375. */
+export function jumlahBulan(r: Rentang): number {
+  const a = tglUtc(r.dari);
+  const b = tglUtc(r.sampai);
+  const besokB = new Date(b.getTime() + 86_400_000);
+  if (a.getUTCDate() === 1 && besokB.getUTCDate() === 1) {
+    return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth()) + 1;
+  }
+  return ((b.getTime() - a.getTime()) / 86_400_000 + 1) / 30.4375;
+}
+
+/** Bawaan: N bulan kalender utuh sebelum bulan berjalan (hari ini = YYYY-MM-DD). */
+export function rentangBulanTerakhir(hariIni: string, n = 6): Rentang {
+  const t = tglUtc(hariIni);
+  const awal = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() - n, 1));
+  const akhir = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 0));
+  return { dari: isoUtc(awal), sampai: isoUtc(akhir) };
+}
+
+/** Validasi rentang masukan; kosong → bawaan 6 bulan terakhir. */
+export function validasiRentang(input: { dari?: unknown; sampai?: unknown } | undefined, hariIni: string): Rentang | { error: string } {
+  const dari = String(input?.dari ?? "").trim();
+  const sampai = String(input?.sampai ?? "").trim();
+  if (!dari && !sampai) return rentangBulanTerakhir(hariIni);
+  if (!ISO_TGL.test(dari) || !ISO_TGL.test(sampai) || Number.isNaN(tglUtc(dari).getTime()) || Number.isNaN(tglUtc(sampai).getTime())) {
+    return { error: "rentang rata-rata harus berisi tanggal Dari & Sampai (YYYY-MM-DD)" };
+  }
+  if (dari > sampai) return { error: "tanggal Dari harus sebelum Sampai" };
+  if (sampai > hariIni) return { error: "tanggal Sampai tidak boleh melewati hari ini" };
+  if (jumlahBulan({ dari, sampai }) > RENTANG_MAKS_BULAN) return { error: `rentang maksimal ${RENTANG_MAKS_BULAN} bulan` };
+  return { dari, sampai };
+}
+
+/** Stok minimum: persen × rata-rata/bulan bila buffer persen, selain itu angka tetap lama. */
+export function bufferEfektif(b: { bufferPersen: number | null; bufferQty: number | null }, avgBulanan: number): number | null {
+  if (b.bufferPersen != null) return Math.round(((b.bufferPersen / 100) * avgBulanan) * 100) / 100;
+  return b.bufferQty;
+}
+
+/** Usulan awal: tutup kekurangan ke buffer + estimasi 1 bulan pemakaian. */
+export function hitungUsulan(currentQty: number, bufferQty: number | null, avgBulanan: number): number {
+  const gap = bufferQty != null ? Math.max(0, bufferQty - currentQty) : 0;
+  return Math.round(gap + avgBulanan);
+}
+
+async function hariIniJakarta(sql: ReturnType<typeof db>): Promise<string> {
+  const [r] = await sql`SELECT (now() AT TIME ZONE 'Asia/Jakarta')::date::text AS d`;
+  return String(r.d);
+}
+
+// Rata-rata qty terjual/bulan dalam rentang — dari mirror Accurate. Satu
+// angka GLOBAL per item (semua cabang): hampir semua faktur keluar dari satu
+// gudang, jadi penjualan belum bisa dipisah per cabang dari data faktur.
+async function avgBulanan(itemIds: number[], r: Rentang): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (itemIds.length === 0) return out;
+  const sql = db();
+  const rows = await sql`
+    SELECT ii.item_id, COALESCE(SUM(ii.qty), 0) AS qty
+    FROM accurate_invoice_item ii
+    JOIN accurate_invoice i ON i.id = ii.invoice_id
+    WHERE ii.item_id = ANY(${itemIds}::bigint[]) AND i.tanggal >= ${r.dari}::date AND i.tanggal <= ${r.sampai}::date
+    GROUP BY ii.item_id
+  `;
+  const bulan = jumlahBulan(r);
+  for (const id of itemIds) out.set(id, 0);
+  for (const row of rows) out.set(Number(row.item_id), Math.round((Number(row.qty) / bulan) * 100) / 100);
+  return out;
+}
+
 export interface BufferConfigRow {
   itemId: number;
   itemName: string;
   warehouseKode: string;
   warehouseNama: string;
-  bufferQty: number;
+  /** Persen dari rata-rata penjualan/bulan; null = baris lama berangka tetap. */
+  bufferPersen: number | null;
+  /** Angka tetap lama (sebelum 318). */
+  bufferQty: number | null;
+  /** Perkiraan stok minimum dengan rata-rata 6 bulan terakhir (hanya tampilan). */
+  bufferPerkiraan: number | null;
+  avg6Bulan: number;
   currentQty: number;
   updatedBy: string | null;
   updatedAt: string;
@@ -68,63 +161,80 @@ export async function listBufferConfig(): Promise<BufferConfigRow[]> {
   const sql = db();
   const rows = await sql`
     SELECT b.item_id, ai.name AS item_name, b.warehouse_kode, w.nama AS warehouse_nama,
-           b.buffer_qty, COALESCE(isb.quantity, 0) AS current_qty, b.updated_by, b.updated_at::text
+           b.buffer_qty, b.buffer_persen, COALESCE(isb.quantity, 0) AS current_qty, b.updated_by, b.updated_at::text
     FROM item_stock_buffer b
     JOIN accurate_item ai ON ai.id = b.item_id
     JOIN warehouse w ON w.kode = b.warehouse_kode
     LEFT JOIN item_stock_branch isb ON isb.item_id = b.item_id AND isb.warehouse_kode = b.warehouse_kode
     ORDER BY ai.name, w.urutan
   `;
-  return rows.map((r) => ({
-    itemId: Number(r.item_id),
-    itemName: String(r.item_name),
-    warehouseKode: String(r.warehouse_kode),
-    warehouseNama: String(r.warehouse_nama),
-    bufferQty: Number(r.buffer_qty),
-    currentQty: Number(r.current_qty),
-    updatedBy: r.updated_by ? String(r.updated_by) : null,
-    updatedAt: String(r.updated_at),
-  }));
+  const avg = await avgBulanan([...new Set(rows.map((r) => Number(r.item_id)))], rentangBulanTerakhir(await hariIniJakarta(sql)));
+  return rows.map((r) => {
+    const b = { bufferPersen: r.buffer_persen != null ? Number(r.buffer_persen) : null, bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null };
+    const a = avg.get(Number(r.item_id)) ?? 0;
+    return {
+      itemId: Number(r.item_id),
+      itemName: String(r.item_name),
+      warehouseKode: String(r.warehouse_kode),
+      warehouseNama: String(r.warehouse_nama),
+      ...b,
+      bufferPerkiraan: bufferEfektif(b, a),
+      avg6Bulan: a,
+      currentQty: Number(r.current_qty),
+      updatedBy: r.updated_by ? String(r.updated_by) : null,
+      updatedAt: String(r.updated_at),
+    };
+  });
 }
 
 export interface UpsertBufferInput {
   itemId: number;
   warehouseKode: string;
-  bufferQty: number;
+  bufferPersen: number;
   updatedBy?: string | null;
 }
 
 export async function upsertBufferConfig(input: UpsertBufferInput): Promise<{ ok: boolean; error?: string }> {
-  if (!(input.bufferQty >= 0)) return { ok: false, error: "buffer_qty harus >= 0" };
+  if (!(Number.isFinite(input.bufferPersen) && input.bufferPersen >= 0 && input.bufferPersen <= 1000)) {
+    return { ok: false, error: "buffer (%) harus 0–1000" };
+  }
   const sql = db();
   const item = await sql`SELECT id, name FROM accurate_item WHERE id = ${input.itemId}`;
   if (item.length === 0) return { ok: false, error: `item #${input.itemId} tidak ditemukan` };
   const wh = await sql`SELECT kode FROM warehouse WHERE kode = ${input.warehouseKode} AND jenis = 'cabang'`;
   if (wh.length === 0) return { ok: false, error: `gudang "${input.warehouseKode}" tidak ditemukan (atau bukan gudang cabang)` };
+  // Persen menggantikan angka tetap lama (buffer_qty dikosongkan).
   await sql`
-    INSERT INTO item_stock_buffer (item_id, warehouse_kode, buffer_qty, updated_by)
-    VALUES (${input.itemId}, ${input.warehouseKode}, ${input.bufferQty}, ${input.updatedBy ?? null})
+    INSERT INTO item_stock_buffer (item_id, warehouse_kode, buffer_persen, buffer_qty, updated_by)
+    VALUES (${input.itemId}, ${input.warehouseKode}, ${input.bufferPersen}, NULL, ${input.updatedBy ?? null})
     ON CONFLICT (item_id, warehouse_kode) DO UPDATE SET
-      buffer_qty = EXCLUDED.buffer_qty, updated_by = EXCLUDED.updated_by, updated_at = now()
+      buffer_persen = EXCLUDED.buffer_persen, buffer_qty = NULL, updated_by = EXCLUDED.updated_by, updated_at = now()
   `;
   return { ok: true };
 }
 
-// Item+gudang yg PUNYA buffer terkonfigurasi TAPI qty saat ini <= buffer.
-async function findBufferBreaches(): Promise<{ itemId: number; warehouseKode: string; currentQty: number; bufferQty: number }[]> {
+// Item+gudang ber-buffer yang stoknya <= stok minimum. Stok minimum buffer
+// persen bergantung rata-rata rentang, jadi dihitung di sini (bukan di SQL).
+// Buffer persen dengan rata-rata 0 (tak pernah terjual di rentang itu) =
+// stok minimum 0 → tak diusulkan (tak ada yang perlu dipesan).
+async function findBufferBreaches(
+  avg: (itemId: number) => number,
+): Promise<{ itemId: number; warehouseKode: string; currentQty: number; bufferQty: number; bufferPersen: number | null }[]> {
   const sql = db();
   const rows = await sql`
-    SELECT b.item_id, b.warehouse_kode, COALESCE(isb.quantity, 0) AS current_qty, b.buffer_qty
+    SELECT b.item_id, b.warehouse_kode, COALESCE(isb.quantity, 0) AS current_qty, b.buffer_qty, b.buffer_persen
     FROM item_stock_buffer b
     LEFT JOIN item_stock_branch isb ON isb.item_id = b.item_id AND isb.warehouse_kode = b.warehouse_kode
-    WHERE COALESCE(isb.quantity, 0) <= b.buffer_qty
   `;
-  return rows.map((r) => ({
-    itemId: Number(r.item_id),
-    warehouseKode: String(r.warehouse_kode),
-    currentQty: Number(r.current_qty),
-    bufferQty: Number(r.buffer_qty),
-  }));
+  const out: { itemId: number; warehouseKode: string; currentQty: number; bufferQty: number; bufferPersen: number | null }[] = [];
+  for (const r of rows) {
+    const bufferPersen = r.buffer_persen != null ? Number(r.buffer_persen) : null;
+    const buf = bufferEfektif({ bufferPersen, bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null }, avg(Number(r.item_id)));
+    if (buf == null || (bufferPersen != null && buf <= 0)) continue;
+    const currentQty = Number(r.current_qty);
+    if (currentQty <= buf) out.push({ itemId: Number(r.item_id), warehouseKode: String(r.warehouse_kode), currentQty, bufferQty: buf, bufferPersen });
+  }
+  return out;
 }
 
 // Item+gudang dgn batch ber-ED dalam ED_NEAR_DAYS ke depan (ed_date IS NOT
@@ -141,23 +251,6 @@ async function findEdNear(): Promise<{ itemId: number; warehouseKode: string; ne
     GROUP BY item_id, warehouse_kode
   `;
   return rows.map((r) => ({ itemId: Number(r.item_id), warehouseKode: String(r.warehouse_kode), nearestEd: String(r.nearest_ed) }));
-}
-
-// Rata-rata qty terjual/bulan, 6 bulan terakhir — dari mirror Accurate.
-// Peta 1 angka global per item (BUKAN per-gudang, krn accurate_invoice_item
-// tak punya kolom gudang) — dipakai sbg estimasi kasar semua gudang.
-async function avgMonthlyQty6m(itemId: number): Promise<number> {
-  const sql = db();
-  const rows = await sql`
-    SELECT AVG(monthly.qty) AS avg_qty FROM (
-      SELECT date_trunc('month', i.tanggal) AS bulan, SUM(ii.qty) AS qty
-      FROM accurate_invoice_item ii
-      JOIN accurate_invoice i ON i.id = ii.invoice_id
-      WHERE ii.item_id = ${itemId} AND i.tanggal >= (current_date - interval '6 months')
-      GROUP BY bulan
-    ) monthly
-  `;
-  return rows[0]?.avg_qty != null ? Number(rows[0].avg_qty) : 0;
 }
 
 // KONTEKS saja (lihat komentar migrasi 107) — jumlah deal HOT aktif,
@@ -255,14 +348,20 @@ export interface GenerateResult {
   skippedExisting: number;
   /** Jumlah dokumen cabang yang menerima baris baru. */
   dokumen: number;
+  /** Rentang rata-rata penjualan yang dipakai. */
+  rentang?: Rentang;
+  error?: string;
 }
 
 // Scan buffer+ED → baris draft baru, dikelompokkan ke dokumen cabang ×
 // kategori × bulan berjalan. Skip kalau item+gudang masih punya usulan yang
 // berjalan. Dipanggil manual (tombol "Generate Usulan"), bukan cron.
-export async function generateSuggestions(): Promise<GenerateResult> {
+// Rata-rata penjualan dari rentang pilihan pemakai (kosong = 6 bulan terakhir).
+export async function generateSuggestions(input?: { dari?: unknown; sampai?: unknown }): Promise<GenerateResult> {
   if (!isDbEnabled()) return { created: 0, skippedExisting: 0, dokumen: 0 };
   const sql = db();
+  const rentang = validasiRentang(input, await hariIniJakarta(sql));
+  if ("error" in rentang) return { created: 0, skippedExisting: 0, dokumen: 0, error: rentang.error };
   const periode = await periodeSekarang(sql);
   const dokumenTersentuh = new Set<string>();
 
@@ -277,17 +376,23 @@ export async function generateSuggestions(): Promise<GenerateResult> {
   }
 
   const hotCount = await pipelineHotCount();
-  const breaches = await findBufferBreaches();
-  const edNear = await findEdNear();
+  const [bufferItems, edNear] = await Promise.all([sql`SELECT DISTINCT item_id FROM item_stock_buffer`, findEdNear()]);
+  const avg = await avgBulanan(
+    [...new Set([...bufferItems.map((r) => Number(r.item_id)), ...edNear.map((e) => e.itemId)])],
+    rentang,
+  );
+  const avgOf = (id: number) => avg.get(id) ?? 0;
+  const breaches = await findBufferBreaches(avgOf);
 
   // Gabung per (item,gudang) — 1 baris bisa kena 2 alasan sekaligus.
   const combined = new Map<
     string,
-    { itemId: number; warehouseKode: string; currentQty?: number; bufferQty?: number; nearestEd?: string; reasons: string[] }
+    { itemId: number; warehouseKode: string; currentQty?: number; bufferQty?: number; bufferPersen?: number | null; nearestEd?: string; reasons: string[] }
   >();
   for (const b of breaches) {
     combined.set(`${b.itemId}:${b.warehouseKode}`, {
-      itemId: b.itemId, warehouseKode: b.warehouseKode, currentQty: b.currentQty, bufferQty: b.bufferQty, reasons: ["near_buffer"],
+      itemId: b.itemId, warehouseKode: b.warehouseKode, currentQty: b.currentQty, bufferQty: b.bufferQty,
+      bufferPersen: b.bufferPersen, reasons: ["near_buffer"],
     });
   }
   for (const e of edNear) {
@@ -323,25 +428,26 @@ export async function generateSuggestions(): Promise<GenerateResult> {
     const currentQty =
       c.currentQty ??
       Number((await sql`SELECT COALESCE(quantity,0) AS q FROM item_stock_branch WHERE item_id=${c.itemId} AND warehouse_kode=${c.warehouseKode}`)[0]?.q ?? 0);
-    const avgQty = await avgMonthlyQty6m(c.itemId);
+    const avgQty = avgOf(c.itemId);
     // Heuristik AWAL (Supply Chain WAJIB review): tutup gap ke buffer + 1
     // bulan estimasi pemakaian; kalau cuma dipicu ED, cukup estimasi 1 bulan.
-    const gapToBuffer = c.bufferQty != null ? Math.max(0, c.bufferQty - currentQty) : 0;
-    const suggestedQty = Math.round(gapToBuffer + avgQty);
+    const suggestedQty = hitungUsulan(currentQty, c.bufferQty ?? null, avgQty);
     const kategori = await kategoriItem(sql, c.itemId);
     const dokumenId = await pastikanDokumenDraft(sql, c.warehouseKode, kategori, periode);
 
     await sql`
       INSERT INTO forecast_suggestion
-        (item_id, warehouse_kode, reasons, current_qty, buffer_qty, nearest_ed_date, avg_monthly_qty_6m, pipeline_hot_count, suggested_qty, dokumen_id, kategori)
+        (item_id, warehouse_kode, reasons, current_qty, buffer_qty, buffer_persen, nearest_ed_date, avg_monthly_qty_6m, avg_dari, avg_sampai,
+         pipeline_hot_count, suggested_qty, dokumen_id, kategori)
       VALUES
         (${c.itemId}, ${c.warehouseKode}, ${sql.json(c.reasons as unknown as Parameters<typeof sql.json>[0])}, ${currentQty},
-         ${c.bufferQty ?? null}, ${c.nearestEd ?? null}, ${avgQty}, ${hotCount}, ${suggestedQty}, ${dokumenId}, ${kategori})
+         ${c.bufferQty ?? null}, ${c.bufferPersen ?? null}, ${c.nearestEd ?? null}, ${avgQty}, ${rentang.dari}::date, ${rentang.sampai}::date,
+         ${hotCount}, ${suggestedQty}, ${dokumenId}, ${kategori})
     `;
     dokumenTersentuh.add(dokumenId);
     created++;
   }
-  return { created, skippedExisting, dokumen: dokumenTersentuh.size };
+  return { created, skippedExisting, dokumen: dokumenTersentuh.size, rentang };
 }
 
 export interface ForecastSuggestionRow {
@@ -357,7 +463,11 @@ export interface ForecastSuggestionRow {
   currentQty: number;
   bufferQty: number | null;
   nearestEdDate: string | null;
+  /** Rata-rata qty terjual/bulan dalam rentang avgDari..avgSampai. */
   avgMonthlyQty6m: number | null;
+  avgDari: string | null;
+  avgSampai: string | null;
+  bufferPersen: number | null;
   pipelineHotCount: number;
   suggestedQty: number;
   finalQty: number | null;
@@ -392,6 +502,9 @@ function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
     bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null,
     nearestEdDate: r.nearest_ed_date ? toIsoDate(r.nearest_ed_date) : null,
     avgMonthlyQty6m: r.avg_monthly_qty_6m != null ? Number(r.avg_monthly_qty_6m) : null,
+    avgDari: r.avg_dari ? toIsoDate(r.avg_dari) : null,
+    avgSampai: r.avg_sampai ? toIsoDate(r.avg_sampai) : null,
+    bufferPersen: r.buffer_persen != null ? Number(r.buffer_persen) : null,
     pipelineHotCount: Number(r.pipeline_hot_count),
     suggestedQty: Number(r.suggested_qty),
     finalQty: r.final_qty != null ? Number(r.final_qty) : null,
@@ -555,6 +668,39 @@ export async function dismissSuggestion(id: string, reviewedBy?: string): Promis
   return { ok: true };
 }
 
+// Hitung ulang rata-rata penjualan (dan stok minimum buffer persen + usulan
+// sistem) seluruh baris draft satu dokumen dengan rentang baru. Qty final
+// yang sudah diisi Supply Chain TIDAK disentuh; stok & buffer tetap memakai
+// snapshot saat Generate.
+export async function hitungUlangDokumen(
+  id: string,
+  input: { dari?: unknown; sampai?: unknown },
+): Promise<{ ok: boolean; error?: string; baris?: number; rentang?: Rentang }> {
+  const sql = db();
+  const rentang = validasiRentang(input, await hariIniJakarta(sql));
+  if ("error" in rentang) return { ok: false, error: rentang.error };
+  const [d] = await sql`SELECT status FROM forecast_dokumen WHERE id = ${id}`;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}, tak bisa dihitung ulang` };
+  const lines = await sql`
+    SELECT id, item_id, current_qty, buffer_qty, buffer_persen FROM forecast_suggestion
+    WHERE dokumen_id = ${id} AND status = 'draft'
+  `;
+  const avg = await avgBulanan([...new Set(lines.map((l) => Number(l.item_id)))], rentang);
+  for (const l of lines) {
+    const a = avg.get(Number(l.item_id)) ?? 0;
+    const persen = l.buffer_persen != null ? Number(l.buffer_persen) : null;
+    const buf = persen != null ? bufferEfektif({ bufferPersen: persen, bufferQty: null }, a) : l.buffer_qty != null ? Number(l.buffer_qty) : null;
+    await sql`
+      UPDATE forecast_suggestion SET
+        avg_monthly_qty_6m = ${a}, avg_dari = ${rentang.dari}::date, avg_sampai = ${rentang.sampai}::date,
+        buffer_qty = ${buf}, suggested_qty = ${hitungUsulan(Number(l.current_qty), buf, a)}
+      WHERE id = ${l.id} AND status = 'draft'
+    `;
+  }
+  return { ok: true, baris: lines.length, rentang };
+}
+
 // Tutup dokumen: draft yang batal diajukan, atau dokumen yang approval-nya
 // ditolak/dibatalkan (dulu barisnya tertahan 'submitted' selamanya).
 export async function tutupDokumen(id: string, oleh?: string | null): Promise<{ ok: boolean; error?: string }> {
@@ -599,7 +745,7 @@ const namaBulan = (periode: string): string =>
 
 /** Deskripsi approval satu dokumen — ringkas, karena ikut terkirim ke WA approver. */
 export function deskripsiDokumen(
-  d: { kode: string; warehouseNama: string; kategori: string; periode: string; pipelineHot: number },
+  d: { kode: string; warehouseNama: string; kategori: string; periode: string; pipelineHot: number; rentangRata?: string | null },
   lines: { itemName: string; qty: number; currentQty: number; bufferQty: number | null; edLewat: boolean; nearEd: boolean; notes: string | null }[],
 ): string {
   const total = lines.reduce((a, l) => a + l.qty, 0);
@@ -611,10 +757,25 @@ export function deskripsiDokumen(
   const sisa = lines.length - BARIS_DESKRIPSI_MAKS;
   return (
     `Dokumen: ${d.kode}\nCabang: ${d.warehouseNama} · Kategori: ${d.kategori} · Periode: ${namaBulan(d.periode)}\n` +
-    `Jumlah barang: ${lines.length} · Total qty: ${total}\n\nRincian:\n${rincian.join("\n")}` +
+    `Jumlah barang: ${lines.length} · Total qty: ${total}\n` +
+    (d.rentangRata ? `Rata-rata penjualan dari: ${d.rentangRata}\n` : "") +
+    `\nRincian:\n${rincian.join("\n")}` +
     (sisa > 0 ? `\n(+${sisa} barang lainnya — lihat dokumen di WRG-OS)` : "") +
     `\n\nDeal HOT aktif (konteks, bukan pemicu): ${d.pipelineHot}`
   );
+}
+
+const tglId = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/** Label rentang rata-rata satu dokumen; baris dengan rentang berbeda → "beragam". */
+export function labelRentang(rentang: (Rentang | null)[]): string | null {
+  const unik = [...new Set(rentang.map((r) => (r ? `${r.dari}|${r.sampai}` : "lama")))];
+  if (unik.length === 0) return null;
+  if (unik.length > 1) return "beragam per barang";
+  if (unik[0] === "lama") return "6 bulan terakhir";
+  const [dari, sampai] = unik[0].split("|");
+  return `${tglId(dari)} – ${tglId(sampai)}`;
 }
 
 // "Ajukan" — satu dokumen cabang ke approval berjenjang F11.
@@ -656,6 +817,7 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
       kategori: String(d.kategori),
       periode: toIsoDate(d.periode),
       pipelineHot: Math.max(...lines.map((l) => Number(l.pipeline_hot_count))),
+      rentangRata: labelRentang(lines.map((l) => (l.avg_dari && l.avg_sampai ? { dari: toIsoDate(l.avg_dari), sampai: toIsoDate(l.avg_sampai) } : null))),
     },
     lines.map((l) => {
       const reasons = Array.isArray(l.reasons) ? (l.reasons as string[]) : [];

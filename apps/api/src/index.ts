@@ -690,6 +690,7 @@ import {
   dismissSuggestion,
   listDokumen,
   submitDokumen,
+  hitungUlangDokumen,
   tutupDokumen,
   listWilayahCabang,
   setWilayahCabang,
@@ -2414,7 +2415,14 @@ app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
 // Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
 app.post("/forecast/generate", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  return c.json(await generateSuggestions());
+  let body: { dari?: unknown; sampai?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional — kosong = 6 bulan terakhir */
+  }
+  const r = await generateSuggestions({ dari: body.dari, sampai: body.sampai });
+  return c.json(r, r.error ? 400 : 200);
 });
 
 app.get("/forecast/suggestions", async (c) => {
@@ -2464,6 +2472,18 @@ app.post("/forecast/dokumen/:id/submit", async (c) => {
   }
   if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
   const r = await submitDokumen(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/dokumen/:id/hitung-ulang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dari?: unknown; sampai?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await hitungUlangDokumen(c.req.param("id"), body);
   return c.json(r, r.ok ? 200 : 400);
 });
 
@@ -2550,19 +2570,19 @@ app.get("/forecast/buffer-config", async (c) => {
 
 app.post("/forecast/buffer-config", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { itemId?: number; warehouseKode?: string; bufferQty?: number; updatedBy?: string } = {};
+  let body: { itemId?: number; warehouseKode?: string; bufferPersen?: number; updatedBy?: string } = {};
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
-  if (!body.itemId || !body.warehouseKode || body.bufferQty == null) {
-    return c.json({ error: "itemId, warehouseKode, bufferQty wajib" }, 400);
+  if (!body.itemId || !body.warehouseKode || body.bufferPersen == null) {
+    return c.json({ error: "itemId, warehouseKode, bufferPersen wajib" }, 400);
   }
   const r = await upsertBufferConfig({
     itemId: body.itemId,
     warehouseKode: body.warehouseKode,
-    bufferQty: body.bufferQty,
+    bufferPersen: Number(body.bufferPersen),
     updatedBy: body.updatedBy ?? null,
   });
   return c.json(r, r.ok ? 200 : 400);

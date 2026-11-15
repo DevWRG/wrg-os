@@ -30,6 +30,9 @@ interface Line {
   bufferQty: number | null;
   nearestEdDate: string | null;
   avgMonthlyQty6m: number | null;
+  avgDari: string | null;
+  avgSampai: string | null;
+  bufferPersen: number | null;
   suggestedQty: number;
   finalQty: number | null;
   notes: string | null;
@@ -98,6 +101,63 @@ const bulanIni = () => tanggalLokalIso().slice(0, 7);
 const namaBulan = (ym: string) =>
   new Date(`${ym}-01T00:00:00`).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
 
+interface Rentang {
+  dari: string;
+  sampai: string;
+}
+
+// N bulan kalender utuh sebelum bulan berjalan — sama dengan bawaan API.
+function bulanTerakhir(n: number): Rentang {
+  const t = new Date();
+  return {
+    dari: tanggalLokalIso(new Date(t.getFullYear(), t.getMonth() - n, 1)),
+    sampai: tanggalLokalIso(new Date(t.getFullYear(), t.getMonth(), 0)),
+  };
+}
+const tglPendek = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+
+/** Rentang rata-rata baris dokumen: satu rentang, "beragam", atau baris lama (6 bulan terakhir). */
+function labelRentang(lines: Line[]): string | null {
+  const unik = [...new Set(lines.map((l) => (l.avgDari && l.avgSampai ? `${l.avgDari}|${l.avgSampai}` : "lama")))];
+  if (unik.length === 0) return null;
+  if (unik.length > 1) return "beragam per barang";
+  if (unik[0] === "lama") return "6 bulan terakhir";
+  const [a, b] = unik[0].split("|");
+  return `${tglPendek(a)} – ${tglPendek(b)}`;
+}
+
+const PRESET = [3, 6, 12] as const;
+
+function RentangPicker({ value, onChange }: { value: Rentang; onChange: (r: Rentang) => void }) {
+  const hariIni = tanggalLokalIso();
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="grid gap-1">
+        <Label className="text-xs">Rata-rata penjualan dari</Label>
+        <Input type="date" className="bg-card h-8 w-auto" max={value.sampai || hariIni} value={value.dari}
+          onChange={(e) => onChange({ ...value, dari: e.target.value })} />
+      </div>
+      <div className="grid gap-1">
+        <Label className="text-xs">Sampai</Label>
+        <Input type="date" className="bg-card h-8 w-auto" min={value.dari} max={hariIni} value={value.sampai}
+          onChange={(e) => onChange({ ...value, sampai: e.target.value })} />
+      </div>
+      <div className="flex gap-1">
+        {PRESET.map((n) => {
+          const r = bulanTerakhir(n);
+          const aktif = r.dari === value.dari && r.sampai === value.sampai;
+          return (
+            <Button key={n} size="sm" variant={aktif ? "default" : "soft"} onClick={() => onChange(r)}>
+              {n} bln
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 async function kirim(url: string, method: string, body?: unknown) {
   const res = await fetch(url, {
     method,
@@ -115,13 +175,18 @@ export default function ForecastSubmissionPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [rentang, setRentang] = useState<Rentang>(() => bulanTerakhir(6));
 
   async function generate() {
+    if (!rentang.dari || !rentang.sampai) {
+      setError("isi rentang rata-rata penjualan (Dari & Sampai) dulu");
+      return;
+    }
     setGenerating(true);
     setError(null);
     setNotice(null);
     try {
-      const data = await kirim("/api/forecast/generate", "POST");
+      const data = await kirim("/api/forecast/generate", "POST", rentang);
       setNotice(
         data.created > 0
           ? `${data.created} barang baru masuk ke ${data.dokumen} dokumen cabang` +
@@ -147,15 +212,19 @@ export default function ForecastSubmissionPage() {
             diajukan sekali ke approval berjenjang; Purchasing memakai rekap semua cabang.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="soft" render={<Link href="/forecast-submission/config" />} nativeButton={false}>
-            Setup Buffer & Wilayah
-          </Button>
+        <Button size="sm" variant="soft" render={<Link href="/forecast-submission/config" />} nativeButton={false}>
+          Setup Buffer & Wilayah
+        </Button>
+      </div>
+
+      <Card>
+        <CardContent className="flex flex-wrap items-end justify-between gap-3 pt-4">
+          <RentangPicker value={rentang} onChange={setRentang} />
           <Button size="sm" onClick={() => void generate()} disabled={generating}>
             {generating ? "Men-generate…" : "Generate Usulan"}
           </Button>
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as "dokumen" | "rekap")}>
         <TabsList>
@@ -168,7 +237,7 @@ export default function ForecastSubmissionPage() {
       {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
 
       {tab === "dokumen" ? (
-        <DokumenTab reloadKey={reloadKey} onError={setError} onNotice={setNotice} />
+        <DokumenTab reloadKey={reloadKey} rentang={rentang} onError={setError} onNotice={setNotice} />
       ) : (
         <RekapTab onError={setError} onNotice={setNotice} />
       )}
@@ -180,10 +249,12 @@ export default function ForecastSubmissionPage() {
 
 function DokumenTab({
   reloadKey,
+  rentang,
   onError,
   onNotice,
 }: {
   reloadKey: number;
+  rentang: Rentang;
   onError: (e: string | null) => void;
   onNotice: (n: string | null) => void;
 }) {
@@ -251,7 +322,8 @@ function DokumenTab({
             <DokumenCard
               // Kunci ikut isi baris: data berubah (pindah kategori, simpan) → state edit dibangun ulang.
               key={`${d.id}:${d.lines.map((l) => `${l.id}${l.status}${l.finalQty ?? ""}${l.notes ?? ""}`).join("|")}`}
-              dok={d} onChanged={reload} onError={onError} onNotice={onNotice} />
+              dok={d}
+              rentang={rentang} onChanged={reload} onError={onError} onNotice={onNotice} />
           ))}
         </div>
       )}
@@ -261,11 +333,13 @@ function DokumenTab({
 
 function DokumenCard({
   dok,
+  rentang,
   onChanged,
   onError,
   onNotice,
 }: {
   dok: Dokumen;
+  rentang: Rentang;
   onChanged: () => void;
   onError: (e: string | null) => void;
   onNotice: (n: string | null) => void;
@@ -375,6 +449,23 @@ function DokumenCard({
       onChanged();
     });
 
+  const labelRata = labelRentang(aktif);
+  const rentangBaru = `${tglPendek(rentang.dari)} – ${tglPendek(rentang.sampai)}`;
+  const hitungUlang = () =>
+    confirm(
+      {
+        title: `Hitung ulang ${dok.kode}?`,
+        description: `Rata-rata penjualan, stok minimum (buffer %), dan usulan sistem dihitung ulang dari ${rentangBaru}. Qty final yang sudah disimpan tidak berubah.`,
+        confirmLabel: "Hitung ulang",
+      },
+      () => void jalankan(async () => {
+        if (!(await simpanSemua())) return;
+        await kirim(`/api/forecast/dokumen/${dok.id}/hitung-ulang`, "POST", rentang);
+        onNotice(`${dok.kode}: dihitung ulang dari ${rentangBaru}.`);
+        onChanged();
+      }),
+    );
+
   const kolom = draft ? (dok.kategori ? 8 : 9) : 6;
   const header = (
     <TableHeader>
@@ -382,7 +473,7 @@ function DokumenCard({
         <TableHead>Barang</TableHead>
         <TableHead className="text-right">Stok</TableHead>
         <TableHead className="text-right">Buffer</TableHead>
-        {draft && <TableHead className="text-right">Rata² 6 bln</TableHead>}
+        {draft && <TableHead className="text-right">Rata²/bln</TableHead>}
         {draft && <TableHead className="text-right">Usulan</TableHead>}
         <TableHead className="w-28">{draft ? "Qty Final" : "Qty"}</TableHead>
         <TableHead>Catatan</TableHead>
@@ -412,7 +503,10 @@ function DokumenCard({
           </div>
         </TableCell>
         <TableCell className="text-right tabular-nums">{angka(l.currentQty)}</TableCell>
-        <TableCell className="text-right tabular-nums">{l.bufferQty == null ? "–" : angka(l.bufferQty)}</TableCell>
+        <TableCell className="text-right tabular-nums">
+          {l.bufferQty == null ? "–" : angka(l.bufferQty)}
+          {l.bufferPersen != null && <div className="text-muted-foreground text-xs">{angka(l.bufferPersen)}%</div>}
+        </TableCell>
         {draft && <TableCell className="text-right tabular-nums">{l.avgMonthlyQty6m == null ? "–" : angka(l.avgMonthlyQty6m)}</TableCell>}
         {draft && <TableCell className="text-right tabular-nums">{angka(l.suggestedQty)}</TableCell>}
         <TableCell>
@@ -494,6 +588,7 @@ function DokumenCard({
                   </Link>
                 )}
               </span>
+              {labelRata && <span>Rata-rata penjualan: {labelRata}</span>}
               {dok.submittedBy && <span>Diajukan oleh {dok.submittedBy}</span>}
             </div>
           </div>
@@ -519,6 +614,9 @@ function DokumenCard({
           <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
             <Button size="sm" variant="ghost" disabled={busy} onClick={tutup}>
               Tutup dokumen
+            </Button>
+            <Button size="sm" variant="soft" disabled={busy || !rentang.dari || !rentang.sampai || aktif.length === 0} onClick={hitungUlang}>
+              Hitung ulang ({rentangBaru})
             </Button>
             <Button size="sm" variant="soft" disabled={busy || !aktif.some(berubah)} onClick={() => void simpan()}>
               Simpan perubahan

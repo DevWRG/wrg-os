@@ -18,7 +18,10 @@ interface BufferRow {
   itemName: string;
   warehouseKode: string;
   warehouseNama: string;
-  bufferQty: number;
+  bufferPersen: number | null;
+  bufferQty: number | null;
+  bufferPerkiraan: number | null;
+  avg6Bulan: number;
   currentQty: number;
 }
 interface StockItem {
@@ -42,7 +45,7 @@ export default function ForecastBufferConfigPage() {
   const [searching, setSearching] = useState(false);
   const [selectedItem, setSelectedItem] = useState<StockItem | null>(null);
   const [selectedWh, setSelectedWh] = useState("");
-  const [bufferQty, setBufferQty] = useState("");
+  const [bufferPersen, setBufferPersen] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -115,8 +118,8 @@ export default function ForecastBufferConfigPage() {
 
   async function save() {
     setSaveError(null);
-    if (!selectedItem || !selectedWh || !bufferQty) {
-      setSaveError("pilih item, gudang, dan isi buffer dulu");
+    if (!selectedItem || !selectedWh || !bufferPersen) {
+      setSaveError("pilih item, gudang, dan isi buffer (%) dulu");
       return;
     }
     setSaving(true);
@@ -127,15 +130,14 @@ export default function ForecastBufferConfigPage() {
         body: JSON.stringify({
           itemId: Number(selectedItem.item_id),
           warehouseKode: selectedWh,
-          bufferQty: Number(bufferQty),
-          updatedBy: "web-ui",
+          bufferPersen: Number(bufferPersen),
         }),
       });
       const data = await res.json();
       if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
       setSelectedItem(null);
       setSelectedWh("");
-      setBufferQty("");
+      setBufferPersen("");
       setResults([]);
       setQ("");
       await load();
@@ -151,8 +153,9 @@ export default function ForecastBufferConfigPage() {
       <div>
         <h1 className="text-2xl font-semibold">Setup Buffer & Wilayah</h1>
         <p className="text-muted-foreground">
-          F19 — safety stock per item per gudang, dipakai sistem sbg salah satu pemicu usulan forecast. Item
-          tanpa buffer tidak pernah kena alert (bukan error).
+          F19 — safety stock per item per gudang dalam <b>persen dari rata-rata penjualan per bulan</b>. Stok minimum =
+          persen × rata-rata penjualan pada rentang yang dipilih saat Generate (mis. 20% × 70/bln = 14). Item tanpa
+          buffer tidak pernah kena alert (bukan error).
         </p>
         <p className="text-muted-foreground mt-1 text-xs italic">
           ⚠️ Sementara diisi manual — Accurate kemungkinan sudah punya data buffer ini secara native, tapi
@@ -215,8 +218,8 @@ export default function ForecastBufferConfigPage() {
                 </Select>
               </div>
               <div className="w-32">
-                <Label className="mb-1 block text-xs">Buffer Qty</Label>
-                <Input type="number" min={0} value={bufferQty} onChange={(e) => setBufferQty(e.target.value)} />
+                <Label className="mb-1 block text-xs">Buffer (%)</Label>
+                <Input type="number" min={0} max={1000} step="any" placeholder="mis. 20" value={bufferPersen} onChange={(e) => setBufferPersen(e.target.value)} />
               </div>
               <Button onClick={() => void save()} disabled={saving}>
                 {saving ? "Menyimpan…" : "Simpan"}
@@ -245,8 +248,10 @@ export default function ForecastBufferConfigPage() {
                   <TableRow>
                     <TableHead>Item</TableHead>
                     <TableHead>Gudang</TableHead>
-                    <TableHead>Buffer</TableHead>
-                    <TableHead>Stok Saat Ini</TableHead>
+                    <TableHead className="text-right">Buffer</TableHead>
+                    <TableHead className="text-right">Rata²/bln (6 bln)</TableHead>
+                    <TableHead className="text-right">≈ Stok minimum</TableHead>
+                    <TableHead className="text-right">Stok Saat Ini</TableHead>
                   </TableRow>
                 </TableHeader>
               }
@@ -254,8 +259,14 @@ export default function ForecastBufferConfigPage() {
                 <TableRow key={`${r.itemId}-${r.warehouseKode}`}>
                   <TableCell>{r.itemName}</TableCell>
                   <TableCell>{r.warehouseNama}</TableCell>
-                  <TableCell>{r.bufferQty}</TableCell>
-                  <TableCell className={r.currentQty <= r.bufferQty ? "text-destructive font-medium" : ""}>
+                  <TableCell className="text-right">
+                    {r.bufferPersen != null ? `${r.bufferPersen.toLocaleString("id-ID")}%` : `${r.bufferQty ?? "–"} (angka lama)`}
+                  </TableCell>
+                  <TableCell className="text-right">{r.avg6Bulan.toLocaleString("id-ID")}</TableCell>
+                  <TableCell className="text-right">{r.bufferPerkiraan == null ? "–" : r.bufferPerkiraan.toLocaleString("id-ID")}</TableCell>
+                  <TableCell
+                    className={`text-right ${r.bufferPerkiraan != null && r.bufferPerkiraan > 0 && r.currentQty <= r.bufferPerkiraan ? "text-destructive font-medium" : ""}`}
+                  >
                     {r.currentQty}
                   </TableCell>
                 </TableRow>
