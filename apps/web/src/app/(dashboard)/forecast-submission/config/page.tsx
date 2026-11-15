@@ -169,6 +169,8 @@ export default function ForecastBufferConfigPage() {
 
       <WilayahCabangCard />
 
+      <CabangGudangCard />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Tambah / Ubah Buffer</CardTitle>
@@ -249,7 +251,7 @@ export default function ForecastBufferConfigPage() {
                     <TableHead>Item</TableHead>
                     <TableHead>Gudang</TableHead>
                     <TableHead className="text-right">Buffer</TableHead>
-                    <TableHead className="text-right">Rata²/bln (6 bln)</TableHead>
+                    <TableHead className="text-right">Rata²/bln gudang (6 bln)</TableHead>
                     <TableHead className="text-right">≈ Stok minimum</TableHead>
                     <TableHead className="text-right">Stok Saat Ini</TableHead>
                   </TableRow>
@@ -365,6 +367,129 @@ function WilayahCabangCard() {
               </div>
             ))}
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+interface CabangGudangRow {
+  cabang: string;
+  faktur: number;
+  warehouseKode: string | null;
+  sumber: "manual" | "otomatis" | null;
+}
+
+// Rata-rata penjualan per gudang memakai cabang AM pada tanggal faktur
+// (migrasi 319). Nama cabang AM yang tak sama dengan gudang mana pun dipetakan
+// di sini; yang tak dipetakan tidak dihitung ke gudang mana pun.
+function CabangGudangCard() {
+  const [rows, setRows] = useState<CabangGudangRow[]>([]);
+  const [tanpa, setTanpa] = useState(0);
+  const [gudang, setGudang] = useState<Warehouse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const [r, w] = await Promise.all([
+          fetch("/api/forecast/cabang-gudang", { cache: "no-store" }),
+          fetch("/api/forecast/wilayah-cabang", { cache: "no-store" }),
+        ]);
+        const data = await r.json();
+        const wd = await w.json();
+        if (!r.ok) throw new Error(data.error ?? "gagal memuat peta cabang");
+        if (!active) return;
+        setRows(data.rows ?? []);
+        setTanpa(Number(data.persenTanpaGudang ?? 0));
+        setGudang((wd.rows ?? []).map((x: { kode: string; nama: string }) => ({ kode: x.kode, nama: x.nama })));
+      } catch (e) {
+        if (active) setError(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [tick]);
+
+  async function ubah(cabang: string, warehouseKode: string) {
+    setBusy(cabang);
+    setError(null);
+    try {
+      const res = await fetch("/api/forecast/cabang-gudang", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cabang, warehouseKode: warehouseKode || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
+      setTick((t) => t + 1);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const belum = rows.filter((r) => !r.warehouseKode).length;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Cabang Penjualan → Gudang</CardTitle>
+        <p className="text-muted-foreground text-xs">
+          Rata-rata penjualan per gudang dihitung dari cabang AM pada tanggal faktur (faktur tanpa AM: area lokasi
+          customer). Nama cabang yang sama dengan gudang terpetakan otomatis; sisanya pilih gudangnya di sini.
+          {tanpa > 0 && (
+            <span className="text-destructive"> {tanpa.toLocaleString("id-ID")}% qty penjualan 12 bulan terakhir belum terhitung ke gudang mana pun.</span>
+          )}
+          {belum > 0 && <span className="text-destructive"> {belum} cabang belum dipetakan.</span>}
+        </p>
+      </CardHeader>
+      <CardContent>
+        {error && <p className="text-destructive mb-2 text-sm">{error}</p>}
+        {loading ? (
+          <SkeletonTable rows={4} cols={3} />
+        ) : (
+          <PagedTable
+            label="cabang"
+            header={
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Cabang penjualan</TableHead>
+                  <TableHead className="text-right">Baris faktur 12 bln</TableHead>
+                  <TableHead className="w-56">Gudang</TableHead>
+                </TableRow>
+              </TableHeader>
+            }
+            rows={rows.map((r) => (
+              <TableRow key={r.cabang}>
+                <TableCell className={r.warehouseKode ? "" : "text-destructive"}>{r.cabang}</TableCell>
+                <TableCell className="text-right">{r.faktur.toLocaleString("id-ID")}</TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="border-input bg-card h-8 w-40 rounded-lg border px-2 text-sm"
+                      value={r.warehouseKode ?? ""}
+                      disabled={busy === r.cabang}
+                      onChange={(e) => void ubah(r.cabang, e.target.value)}
+                    >
+                      <option value="">Belum dipetakan</option>
+                      {gudang.map((g) => (
+                        <option key={g.kode} value={g.kode}>{g.nama}</option>
+                      ))}
+                    </select>
+                    {r.sumber === "otomatis" && <span className="text-muted-foreground text-xs">otomatis</span>}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          />
         )}
       </CardContent>
     </Card>
