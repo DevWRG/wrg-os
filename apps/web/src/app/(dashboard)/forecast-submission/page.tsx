@@ -306,6 +306,16 @@ function DokumenTab({
             <Button size="sm" variant="ghost" onClick={() => setBulan("")}>Semua bulan</Button>
           )}
         </div>
+        <Button
+          size="sm"
+          variant="soft"
+          className="ml-auto"
+          disabled={docs.length === 0}
+          render={<a href={`/api/forecast/dokumen/ekspor?${new URLSearchParams({ status, ...(bulan ? { bulan } : {}) })}`} />}
+          nativeButton={false}
+        >
+          Ekspor Excel
+        </Button>
       </div>
 
       {loading ? (
@@ -593,6 +603,9 @@ function DokumenCard({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button size="sm" variant="soft" render={<a href={`/api/forecast/dokumen/ekspor?id=${dok.id}`} />} nativeButton={false}>
+              Excel
+            </Button>
             {appr && <Badge variant={appr.variant}>{appr.label}</Badge>}
             {dok.approvalRequestId && (
               <Link href={`/approval-requests/${dok.approvalRequestId}`} className="text-primary text-xs underline">
