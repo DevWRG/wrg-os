@@ -10,6 +10,7 @@ import {
   rentangBulanTerakhir,
   validasiRentang,
   deskripsiDokumen,
+  gudangUntukCabang,
   kategoriDariKlasifikasi,
   kelompokkanRekap,
   kodeDokumen,
@@ -129,4 +130,19 @@ test("labelRentang: satu rentang, beragam, atau baris lama", () => {
   assert.equal(labelRentang([{ dari: "2026-08-01", sampai: "2026-10-31" }, { dari: "2026-08-01", sampai: "2026-10-31" }]), "1 Agu 2026 – 31 Okt 2026");
   assert.equal(labelRentang([{ dari: "2026-08-01", sampai: "2026-10-31" }, null]), "beragam per barang");
   assert.equal(labelRentang([null]), "6 bulan terakhir");
+});
+
+test("gudangUntukCabang: peta manual menang, lalu nama sama dengan kode/cabang/nama gudang", () => {
+  const gudang = [
+    { kode: "SBY", cabang: "Surabaya", nama: "Gudang Surabaya" },
+    { kode: "JEMBER", cabang: "Jember", nama: "Gudang Jember" },
+    { kode: "SOLO", cabang: "Solo", nama: "Gudang Solo" },
+  ];
+  const manual = new Map([["SBY 2", "SBY"], ["SOLO & YOGYAKARTA", "SOLO"]]);
+  assert.equal(gudangUntukCabang("JEMBER", manual, gudang), "JEMBER");
+  assert.equal(gudangUntukCabang("surabaya", manual, gudang), "SBY");
+  assert.equal(gudangUntukCabang("SBY 2", manual, gudang), "SBY");
+  assert.equal(gudangUntukCabang(" solo & yogyakarta ", manual, gudang), "SOLO");
+  assert.equal(gudangUntukCabang("MALANG", manual, gudang), null);
+  assert.equal(gudangUntukCabang(null, manual, gudang), null);
 });

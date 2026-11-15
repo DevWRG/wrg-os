@@ -694,6 +694,8 @@ import {
   tutupDokumen,
   listWilayahCabang,
   setWilayahCabang,
+  listCabangGudang,
+  setCabangGudang,
   rekapPurchasing,
   linkPoRekap,
   rekapXlsx,
@@ -2527,6 +2529,24 @@ app.post("/forecast/rekap/link-po", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   const r = await linkPoRekap({ bulan: String(body.bulan ?? ""), itemId: Number(body.itemId), poNumber: String(body.poNumber ?? "") });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Peta cabang penjualan (cabang AM saat faktur) → gudang, untuk rata-rata per gudang (migrasi 319).
+app.get("/forecast/cabang-gudang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listCabangGudang());
+});
+
+app.post("/forecast/cabang-gudang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cabang?: string; warehouseKode?: string | null; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await setCabangGudang(String(body.cabang ?? ""), body.warehouseKode ?? null, body.updatedBy ?? null);
   return c.json(r, r.ok ? 200 : 400);
 });
 

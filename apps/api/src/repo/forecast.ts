@@ -11,6 +11,7 @@
 import ExcelJS from "exceljs";
 
 import { db, isDbEnabled } from "../db.js";
+import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
 import { createApprovalRequest, isKategori, isWilayah, KATEGORI, WILAYAH, type NotifyResult } from "./approval.js";
 
 // Ambang ED "dekat kedaluwarsa" — dipakai sbg SATU pemicu sederhana (bukan
@@ -120,24 +121,129 @@ async function hariIniJakarta(sql: ReturnType<typeof db>): Promise<string> {
   return String(r.d);
 }
 
-// Rata-rata qty terjual/bulan dalam rentang — dari mirror Accurate. Satu
-// angka GLOBAL per item (semua cabang): hampir semua faktur keluar dari satu
-// gudang, jadi penjualan belum bisa dipisah per cabang dari data faktur.
-async function avgBulanan(itemIds: number[], r: Rentang): Promise<Map<number, number>> {
-  const out = new Map<number, number>();
-  if (itemIds.length === 0) return out;
-  const sql = db();
-  const rows = await sql`
-    SELECT ii.item_id, COALESCE(SUM(ii.qty), 0) AS qty
+// ── Cabang penjualan → gudang (migrasi 319) ──────────────────────────────
+// Keputusan user 15 Nov 2026: rata-rata penjualan dihitung PER GUDANG CABANG.
+// Faktur hampir semua keluar dari satu gudang, jadi cabang faktur = cabang AM
+// pada tanggal faktur (cadangan: area lokasi customer) — definisi yang sama
+// dengan revenue Per Cabang (salesman-am.ts). Nama cabang itu dipetakan ke
+// gudang: peta manual dulu, lalu nama yang persis sama dengan kode / cabang /
+// nama gudang. Tanpa peta → penjualannya tak dihitung ke gudang mana pun.
+
+export interface GudangRef {
+  kode: string;
+  cabang: string | null;
+  nama: string;
+}
+
+const normal = (x: string | null | undefined) => String(x ?? "").trim().toUpperCase();
+
+/** Gudang untuk satu nama cabang penjualan; null = belum terpetakan. */
+export function gudangUntukCabang(cabang: string | null, manual: Map<string, string>, gudang: GudangRef[]): string | null {
+  const c = normal(cabang);
+  if (!c) return null;
+  const m = manual.get(c);
+  if (m) return m;
+  const cocok = gudang.find((g) => normal(g.kode) === c || normal(g.cabang) === c || normal(g.nama.replace(/^gudang\s+/i, "")) === c);
+  return cocok?.kode ?? null;
+}
+
+async function muatPeta(sql: Sql): Promise<{ manual: Map<string, string>; gudang: GudangRef[] }> {
+  const [manual, gudang] = await Promise.all([
+    sql`SELECT cabang, warehouse_kode FROM forecast_cabang_gudang`,
+    sql`SELECT kode, cabang, nama FROM warehouse WHERE jenis = 'cabang'`,
+  ]);
+  return {
+    manual: new Map(manual.map((r) => [normal(String(r.cabang)), String(r.warehouse_kode)])),
+    gudang: gudang.map((r) => ({ kode: String(r.kode), cabang: r.cabang ? String(r.cabang) : null, nama: String(r.nama) })),
+  };
+}
+
+// Penjualan per item × cabang penjualan dalam rentang (itemIds null = semua item).
+async function penjualanPerCabang(sql: Sql, itemIds: number[] | null, r: Rentang) {
+  return sql`
+    SELECT ii.item_id, ${cabangEffSql(sql)} AS cabang, count(*)::int AS faktur, COALESCE(SUM(ii.qty), 0) AS qty
     FROM accurate_invoice_item ii
-    JOIN accurate_invoice i ON i.id = ii.invoice_id
-    WHERE ii.item_id = ANY(${itemIds}::bigint[]) AND i.tanggal >= ${r.dari}::date AND i.tanggal <= ${r.sampai}::date
-    GROUP BY ii.item_id
+    JOIN accurate_invoice ai ON ai.id = ii.invoice_id
+    LEFT JOIN accurate_salesman acs ON acs.id = ai.salesman_id
+    ${joinAmFromSalesman(sql)}
+    WHERE ${itemIds ? sql`ii.item_id = ANY(${itemIds}::bigint[])` : sql`true`}
+      AND ai.tanggal >= ${r.dari}::date AND ai.tanggal <= ${r.sampai}::date
+    GROUP BY 1, 2
   `;
-  const bulan = jumlahBulan(r);
-  for (const id of itemIds) out.set(id, 0);
-  for (const row of rows) out.set(Number(row.item_id), Math.round((Number(row.qty) / bulan) * 100) / 100);
-  return out;
+}
+
+const kunciAvg = (itemId: number, warehouseKode: string) => `${itemId}:${warehouseKode}`;
+
+// Rata-rata qty terjual/bulan per item × gudang dalam rentang.
+async function avgBulanan(itemIds: number[], r: Rentang): Promise<(itemId: number, warehouseKode: string) => number> {
+  const out = new Map<string, number>();
+  if (itemIds.length > 0) {
+    const sql = db();
+    const [rows, peta] = await Promise.all([penjualanPerCabang(sql, itemIds, r), muatPeta(sql)]);
+    const bulan = jumlahBulan(r);
+    for (const row of rows) {
+      const wh = gudangUntukCabang(row.cabang ? String(row.cabang) : null, peta.manual, peta.gudang);
+      if (!wh) continue;
+      const k = kunciAvg(Number(row.item_id), wh);
+      out.set(k, (out.get(k) ?? 0) + Number(row.qty));
+    }
+    for (const [k, qty] of out) out.set(k, Math.round((qty / bulan) * 100) / 100);
+  }
+  return (itemId, warehouseKode) => out.get(kunciAvg(itemId, warehouseKode)) ?? 0;
+}
+
+export interface CabangGudangRow {
+  cabang: string;
+  /** Baris faktur 12 bulan terakhir dari cabang ini. */
+  faktur: number;
+  warehouseKode: string | null;
+  sumber: "manual" | "otomatis" | null;
+}
+
+/** Cabang penjualan 12 bulan terakhir + petanya ke gudang (untuk Setup). */
+export async function listCabangGudang(): Promise<{ rows: CabangGudangRow[]; persenTanpaGudang: number }> {
+  const sql = db();
+  const rentang = rentangBulanTerakhir(await hariIniJakarta(sql), 12);
+  const [rows, peta] = await Promise.all([penjualanPerCabang(sql, null, rentang), muatPeta(sql)]);
+  const per = new Map<string, { faktur: number; qty: number }>();
+  for (const r of rows) {
+    const c = r.cabang ? String(r.cabang) : "";
+    const x = per.get(c) ?? { faktur: 0, qty: 0 };
+    x.faktur += Number(r.faktur);
+    x.qty += Number(r.qty);
+    per.set(c, x);
+  }
+  let total = 0;
+  let tanpa = 0;
+  const out: CabangGudangRow[] = [];
+  for (const [cabang, x] of per) {
+    const wh = gudangUntukCabang(cabang || null, peta.manual, peta.gudang);
+    total += x.qty;
+    if (!wh) tanpa += x.qty;
+    if (!cabang) continue; // faktur tanpa cabang sama sekali — tak bisa dipetakan
+    out.push({ cabang, faktur: x.faktur, warehouseKode: wh, sumber: wh ? (peta.manual.has(normal(cabang)) ? "manual" : "otomatis") : null });
+  }
+  out.sort((a, b) => Number(!!a.warehouseKode) - Number(!!b.warehouseKode) || b.faktur - a.faktur);
+  return { rows: out, persenTanpaGudang: total > 0 ? Math.round((tanpa / total) * 1000) / 10 : 0 };
+}
+
+export async function setCabangGudang(cabang: string, warehouseKode: unknown, oleh?: string | null): Promise<{ ok: boolean; error?: string }> {
+  const c = String(cabang ?? "").trim();
+  if (!c) return { ok: false, error: "cabang wajib" };
+  const sql = db();
+  if (warehouseKode == null || warehouseKode === "") {
+    await sql`DELETE FROM forecast_cabang_gudang WHERE upper(cabang) = ${normal(c)}`;
+    return { ok: true };
+  }
+  const [wh] = await sql`SELECT kode FROM warehouse WHERE kode = ${String(warehouseKode)} AND jenis = 'cabang'`;
+  if (!wh) return { ok: false, error: `gudang cabang "${String(warehouseKode)}" tidak ditemukan` };
+  await sql`DELETE FROM forecast_cabang_gudang WHERE upper(cabang) = ${normal(c)} AND cabang <> ${c}`;
+  await sql`
+    INSERT INTO forecast_cabang_gudang (cabang, warehouse_kode, updated_by)
+    VALUES (${c}, ${String(wh.kode)}, ${oleh ?? null})
+    ON CONFLICT (cabang) DO UPDATE SET warehouse_kode = EXCLUDED.warehouse_kode, updated_by = EXCLUDED.updated_by, updated_at = now()
+  `;
+  return { ok: true };
 }
 
 export interface BufferConfigRow {
@@ -149,7 +255,7 @@ export interface BufferConfigRow {
   bufferPersen: number | null;
   /** Angka tetap lama (sebelum 318). */
   bufferQty: number | null;
-  /** Perkiraan stok minimum dengan rata-rata 6 bulan terakhir (hanya tampilan). */
+  /** Perkiraan stok minimum dengan rata-rata 6 bulan terakhir gudang ini (hanya tampilan). */
   bufferPerkiraan: number | null;
   avg6Bulan: number;
   currentQty: number;
@@ -171,7 +277,7 @@ export async function listBufferConfig(): Promise<BufferConfigRow[]> {
   const avg = await avgBulanan([...new Set(rows.map((r) => Number(r.item_id)))], rentangBulanTerakhir(await hariIniJakarta(sql)));
   return rows.map((r) => {
     const b = { bufferPersen: r.buffer_persen != null ? Number(r.buffer_persen) : null, bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null };
-    const a = avg.get(Number(r.item_id)) ?? 0;
+    const a = avg(Number(r.item_id), String(r.warehouse_kode));
     return {
       itemId: Number(r.item_id),
       itemName: String(r.item_name),
@@ -218,7 +324,7 @@ export async function upsertBufferConfig(input: UpsertBufferInput): Promise<{ ok
 // Buffer persen dengan rata-rata 0 (tak pernah terjual di rentang itu) =
 // stok minimum 0 → tak diusulkan (tak ada yang perlu dipesan).
 async function findBufferBreaches(
-  avg: (itemId: number) => number,
+  avg: (itemId: number, warehouseKode: string) => number,
 ): Promise<{ itemId: number; warehouseKode: string; currentQty: number; bufferQty: number; bufferPersen: number | null }[]> {
   const sql = db();
   const rows = await sql`
@@ -229,7 +335,7 @@ async function findBufferBreaches(
   const out: { itemId: number; warehouseKode: string; currentQty: number; bufferQty: number; bufferPersen: number | null }[] = [];
   for (const r of rows) {
     const bufferPersen = r.buffer_persen != null ? Number(r.buffer_persen) : null;
-    const buf = bufferEfektif({ bufferPersen, bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null }, avg(Number(r.item_id)));
+    const buf = bufferEfektif({ bufferPersen, bufferQty: r.buffer_qty != null ? Number(r.buffer_qty) : null }, avg(Number(r.item_id), String(r.warehouse_kode)));
     if (buf == null || (bufferPersen != null && buf <= 0)) continue;
     const currentQty = Number(r.current_qty);
     if (currentQty <= buf) out.push({ itemId: Number(r.item_id), warehouseKode: String(r.warehouse_kode), currentQty, bufferQty: buf, bufferPersen });
@@ -381,8 +487,7 @@ export async function generateSuggestions(input?: { dari?: unknown; sampai?: unk
     [...new Set([...bufferItems.map((r) => Number(r.item_id)), ...edNear.map((e) => e.itemId)])],
     rentang,
   );
-  const avgOf = (id: number) => avg.get(id) ?? 0;
-  const breaches = await findBufferBreaches(avgOf);
+  const breaches = await findBufferBreaches(avg);
 
   // Gabung per (item,gudang) — 1 baris bisa kena 2 alasan sekaligus.
   const combined = new Map<
@@ -428,7 +533,7 @@ export async function generateSuggestions(input?: { dari?: unknown; sampai?: unk
     const currentQty =
       c.currentQty ??
       Number((await sql`SELECT COALESCE(quantity,0) AS q FROM item_stock_branch WHERE item_id=${c.itemId} AND warehouse_kode=${c.warehouseKode}`)[0]?.q ?? 0);
-    const avgQty = avgOf(c.itemId);
+    const avgQty = avg(c.itemId, c.warehouseKode);
     // Heuristik AWAL (Supply Chain WAJIB review): tutup gap ke buffer + 1
     // bulan estimasi pemakaian; kalau cuma dipicu ED, cukup estimasi 1 bulan.
     const suggestedQty = hitungUsulan(currentQty, c.bufferQty ?? null, avgQty);
@@ -683,12 +788,12 @@ export async function hitungUlangDokumen(
   if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
   if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}, tak bisa dihitung ulang` };
   const lines = await sql`
-    SELECT id, item_id, current_qty, buffer_qty, buffer_persen FROM forecast_suggestion
+    SELECT id, item_id, warehouse_kode, current_qty, buffer_qty, buffer_persen FROM forecast_suggestion
     WHERE dokumen_id = ${id} AND status = 'draft'
   `;
   const avg = await avgBulanan([...new Set(lines.map((l) => Number(l.item_id)))], rentang);
   for (const l of lines) {
-    const a = avg.get(Number(l.item_id)) ?? 0;
+    const a = avg(Number(l.item_id), String(l.warehouse_kode));
     const persen = l.buffer_persen != null ? Number(l.buffer_persen) : null;
     const buf = persen != null ? bufferEfektif({ bufferPersen: persen, bufferQty: null }, a) : l.buffer_qty != null ? Number(l.buffer_qty) : null;
     await sql`
