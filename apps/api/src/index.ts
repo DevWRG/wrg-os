@@ -699,6 +699,7 @@ import {
   rekapPurchasing,
   linkPoRekap,
   rekapXlsx,
+  dokumenXlsx,
   listBufferConfig,
   upsertBufferConfig,
   linkPurchaseOrder,
@@ -2462,6 +2463,21 @@ app.get("/forecast/dokumen", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listDokumen({ status: c.req.query("status") || undefined, bulan: c.req.query("bulan") || undefined });
   return c.json({ count: rows.length, dokumen: rows });
+});
+
+app.get("/forecast/dokumen.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await dokumenXlsx({
+    status: c.req.query("status") || undefined,
+    bulan: c.req.query("bulan") || undefined,
+    id: c.req.query("id") || undefined,
+  });
+  if ("error" in r) return c.json(r, 400);
+  return c.body(new Uint8Array(r.buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="${r.nama.replace(/[^\w.-]/g, "_")}"`,
+    "cache-control": "private, no-store",
+  });
 });
 
 app.post("/forecast/dokumen/:id/submit", async (c) => {

@@ -673,15 +673,19 @@ export function periodeDariBulan(bulan: string | null | undefined): string | nul
   return `${m[1]}-${m[2]}-01`;
 }
 
-export async function listDokumen(filter: { status?: string; bulan?: string } = {}): Promise<ForecastDokumenRow[]> {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function listDokumen(filter: { status?: string; bulan?: string; id?: string } = {}): Promise<ForecastDokumenRow[]> {
   const sql = db();
   const periode = periodeDariBulan(filter.bulan);
+  if (filter.id && !UUID.test(filter.id)) return [];
   const docs = await sql`
     SELECT d.*, w.nama AS warehouse_nama, w.urutan, ar.kode AS approval_kode, ar.status AS approval_status
     FROM forecast_dokumen d
     JOIN warehouse w ON w.kode = d.warehouse_kode
     LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
     WHERE ${filter.status ? sql`d.status = ${filter.status}` : sql`true`}
+      AND ${filter.id ? sql`d.id = ${filter.id}::uuid` : sql`true`}
       AND ${periode ? sql`d.periode = ${periode}::date` : sql`true`}
     ORDER BY d.periode DESC, w.urutan, w.nama, d.kategori NULLS LAST, d.created_at
     LIMIT 200
@@ -1382,4 +1386,77 @@ export async function rekapXlsx(bulan: string): Promise<Buffer | { error: string
   }
   gayaHeader(rinci);
   return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+const STATUS_DOK: Record<string, string> = { draft: "Draft", submitted: "Diajukan", closed: "Ditutup" };
+const STATUS_APPROVAL: Record<string, string> = { pending: "Menunggu approval", approved: "Disetujui", rejected: "Ditolak", canceled: "Dibatalkan" };
+const STATUS_BARIS: Record<string, string> = { draft: "Draft", submitted: "Diajukan", ordered: "PO tertaut", dismissed: "Diabaikan" };
+
+/** Excel dokumen cabang: sheet Dokumen (ringkasan) + Barang (semua baris, termasuk yang diabaikan). */
+export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?: string }): Promise<{ buf: Buffer; nama: string } | { error: string }> {
+  if (filter.bulan && !periodeDariBulan(filter.bulan)) return { error: "bulan harus berformat YYYY-MM" };
+  const docs = await listDokumen(filter);
+  if (filter.id && docs.length === 0) return { error: "dokumen tidak ditemukan" };
+  const wb = new ExcelJS.Workbook();
+
+  const ws = wb.addWorksheet("Dokumen");
+  ws.columns = [
+    { header: "Kode", key: "kode", width: 24 },
+    { header: "Cabang", key: "cabang", width: 20 },
+    { header: "Kategori", key: "kategori", width: 10 },
+    { header: "Periode", key: "periode", width: 16 },
+    { header: "Wilayah", key: "wilayah", width: 9 },
+    { header: "Status", key: "status", width: 11 },
+    { header: "Approval", key: "approval", width: 20 },
+    { header: "Jumlah Barang", key: "jumlah", width: 13, style: { numFmt: "#,##0" } },
+    { header: "Total Qty", key: "total", width: 12, style: { numFmt: "#,##0" } },
+    { header: "Diajukan oleh", key: "oleh", width: 22 },
+  ];
+  for (const d of docs) {
+    ws.addRow({
+      kode: d.kode, cabang: d.warehouseNama, kategori: d.kategori ?? "Belum ada", periode: namaBulan(`${d.periode}-01`),
+      wilayah: d.wilayah ? d.wilayah.charAt(0).toUpperCase() + d.wilayah.slice(1) : "", status: STATUS_DOK[d.status] ?? d.status,
+      approval: d.approvalStatus ? `${d.approvalKode ?? ""} ${STATUS_APPROVAL[d.approvalStatus] ?? d.approvalStatus}`.trim() : "",
+      jumlah: d.jumlahBarang, total: d.totalQty, oleh: d.submittedBy ?? "",
+    });
+  }
+  gayaHeader(ws);
+
+  const wsb = wb.addWorksheet("Barang");
+  wsb.columns = [
+    { header: "Dokumen", key: "dok", width: 24 },
+    { header: "Cabang", key: "cabang", width: 20 },
+    { header: "Kategori", key: "kategori", width: 10 },
+    { header: "Kode Barang", key: "item_no", width: 16 },
+    { header: "Nama Barang", key: "item_name", width: 44 },
+    { header: "Alasan", key: "alasan", width: 26 },
+    { header: "Stok", key: "stok", width: 9, style: { numFmt: "#,##0.##" } },
+    { header: "Buffer %", key: "persen", width: 9, style: { numFmt: "#,##0.##" } },
+    { header: "Stok Minimum", key: "buffer", width: 12, style: { numFmt: "#,##0.##" } },
+    { header: "ED Terdekat", key: "ed", width: 12 },
+    { header: "Rata²/bln", key: "avg", width: 10, style: { numFmt: "#,##0.##" } },
+    { header: "Rentang Rata²", key: "rentang", width: 24 },
+    { header: "Usulan Sistem", key: "usulan", width: 12, style: { numFmt: "#,##0" } },
+    { header: "Qty Final", key: "final", width: 10, style: { numFmt: "#,##0" } },
+    { header: "Catatan", key: "notes", width: 32 },
+    { header: "Status", key: "status", width: 12 },
+    { header: "No. PO", key: "po", width: 22 },
+  ];
+  const alasan: Record<string, string> = { near_buffer: "Di bawah buffer", near_ed: "Batch mendekati/lewat ED" };
+  for (const d of docs) {
+    for (const l of d.lines) {
+      wsb.addRow({
+        dok: d.kode, cabang: d.warehouseNama, kategori: l.kategori ?? d.kategori ?? "", item_no: l.itemNo ?? "", item_name: l.itemName,
+        alasan: l.reasons.map((r) => alasan[r] ?? r).join(", "), stok: l.currentQty, persen: l.bufferPersen, buffer: l.bufferQty,
+        ed: l.nearestEdDate ?? "", avg: l.avgMonthlyQty6m, rentang: labelRentang([l.avgDari && l.avgSampai ? { dari: l.avgDari, sampai: l.avgSampai } : null]) ?? "",
+        usulan: l.suggestedQty, final: qtyEfektif(l), notes: l.notes ?? "", status: STATUS_BARIS[l.status] ?? l.status, po: l.purchaseOrderNumber ?? "",
+      });
+    }
+  }
+  gayaHeader(wsb);
+
+  const nama = filter.id && docs[0]
+    ? `${docs[0].kode}.xlsx`
+    : `Dokumen_Forecast${filter.bulan ? `_${filter.bulan}` : ""}${filter.status ? `_${filter.status}` : ""}.xlsx`;
+  return { buf: Buffer.from(await wb.xlsx.writeBuffer()), nama };
 }
