@@ -1,10 +1,14 @@
 // F19 — Forecast Submission Engine (SALES forecast; QC diabaikan dulu per
 // arahan Direktur). Sistem scan gudang (F37 item_stock_branch, F38
 // item_stock_batch) → usulan otomatis (draft) → Supply Chain edit/sortir →
-// "ajukan" masuk approval berjenjang F11 (repo/approval.ts).
+// "ajukan" masuk approval berjenjang F11 (repo/approval.ts). Sejak migrasi
+// 317 usulan dikumpulkan per DOKUMEN cabang × kategori × bulan, dan
+// Purchasing melihat rekap semua cabang.
 //
 // TIDAK ADA hashtag WA di sini — beda dari blueprint lama, alur hasil
 // meeting 100% sistem→Supply Chain→approval (lihat komentar migrasi 107).
+
+import ExcelJS from "exceljs";
 
 import { db, isDbEnabled } from "../db.js";
 import { createApprovalRequest, isKategori, isWilayah, KATEGORI, WILAYAH, type NotifyResult } from "./approval.js";
@@ -48,8 +52,6 @@ export function usulanMasihBerjalan(e: { status: string; poDiterima: boolean; po
 // approval F11 (ikut terkirim sbg pesan WA ke HoD) via curl 09-04.
 const toIsoDate = (x: unknown): string => new Date(x as string | Date).toISOString().slice(0, 10);
 const toIsoTs = (x: unknown): string => new Date(x as string | Date).toISOString();
-const toIdDate = (x: unknown): string =>
-  new Date(x as string | Date).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
 
 export interface BufferConfigRow {
   itemId: number;
@@ -167,20 +169,114 @@ async function pipelineHotCount(): Promise<number> {
   return Number(count);
 }
 
+// ── Dokumen cabang (migrasi 317) ───────────────────────────────────────────
+// Keputusan user 15 Nov 2026: usulan TIDAK diajukan satu-satu per barang.
+// Generate mengumpulkan semua barang satu cabang ke satu dokumen per kategori
+// (IVD / Medical — approver tahap 2 ikut kategori) per bulan; satu dokumen =
+// satu approval_request. Wilayah tahap 1 ikut pemetaan cabang (warehouse.wilayah).
+
+export const KATEGORI_KODE: Record<string, string> = { IVD: "IVD", Medical: "MED" };
+
+/** Kategori approval dari id kategori Klasifikasi Produk: 01 = IVD, selebihnya (NON IVD/OBAT/Utility) = Medical. */
+export function kategoriDariKlasifikasi(kategoriId: string | null | undefined): Kategori | null {
+  if (!kategoriId) return null;
+  return kategoriId === "01" ? "IVD" : "Medical";
+}
+
+/** Kode dokumen: FC-<gudang>-<yyyymm>-<IVD|MED|NA>, ditambah -<n> bila bulan itu sudah ada dokumen serupa. */
+export function kodeDokumen(warehouseKode: string, periode: string, kategori: string | null, urut: number): string {
+  const base = `FC-${warehouseKode}-${periode.slice(0, 7).replace("-", "")}-${kategori ? (KATEGORI_KODE[kategori] ?? kategori) : "NA"}`;
+  return urut > 1 ? `${base}-${urut}` : base;
+}
+
+type Kategori = (typeof KATEGORI)[number];
+type Sql = ReturnType<typeof db>;
+
+async function kategoriItem(sql: Sql, itemId: number): Promise<Kategori | null> {
+  // Pola join sama dengan product-scorecard: tautan langsung, atau kode 2025 = no item Accurate.
+  const [r] = await sql`
+    SELECT pc.kategori_id
+    FROM accurate_item ai
+    JOIN product_code pc ON pc.accurate_item_id = ai.id OR (pc.kode_2025 IS NOT NULL AND pc.kode_2025 = ai.no)
+    WHERE ai.id = ${itemId}
+    ORDER BY (pc.accurate_item_id = ai.id) DESC NULLS LAST
+    LIMIT 1
+  `;
+  return kategoriDariKlasifikasi(r?.kategori_id ? String(r.kategori_id) : null);
+}
+
+async function periodeSekarang(sql: Sql): Promise<string> {
+  const [r] = await sql`SELECT date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')::date::text AS p`;
+  return String(r.p);
+}
+
+// Dokumen draft untuk cabang × kategori × bulan — dibuat bila belum ada.
+async function pastikanDokumenDraft(sql: Sql, warehouseKode: string, kategori: Kategori | null, periode: string): Promise<string> {
+  const cari = () => sql`
+    SELECT id FROM forecast_dokumen
+    WHERE warehouse_kode = ${warehouseKode} AND COALESCE(kategori, '-') = ${kategori ?? "-"}
+      AND periode = ${periode}::date AND status = 'draft'
+  `;
+  const [ada] = await cari();
+  if (ada) return String(ada.id);
+  const [{ n }] = await sql`
+    SELECT count(*)::int AS n FROM forecast_dokumen
+    WHERE warehouse_kode = ${warehouseKode} AND COALESCE(kategori, '-') = ${kategori ?? "-"} AND periode = ${periode}::date
+  `;
+  const kode = kodeDokumen(warehouseKode, periode, kategori, Number(n) + 1);
+  const [baru] = await sql`
+    INSERT INTO forecast_dokumen (kode, warehouse_kode, kategori, periode)
+    VALUES (${kode}, ${warehouseKode}, ${kategori}, ${periode}::date)
+    ON CONFLICT (warehouse_kode, (COALESCE(kategori, '-')), periode) WHERE status = 'draft' DO NOTHING
+    RETURNING id
+  `;
+  if (baru) return String(baru.id);
+  const [lagi] = await cari(); // kalah balapan dengan generate lain — pakai milik dia
+  return String(lagi.id);
+}
+
+// Dokumen draft yang tak lagi punya baris draft → dihapus bila kosong sama
+// sekali, ditutup bila sisanya baris yang diabaikan.
+async function rapikanDokumen(sql: Sql, dokumenId: string, oleh?: string | null): Promise<void> {
+  const [r] = await sql`
+    SELECT count(*) FILTER (WHERE status = 'draft')::int AS draft, count(*)::int AS semua
+    FROM forecast_suggestion WHERE dokumen_id = ${dokumenId}
+  `;
+  if (Number(r.draft) > 0) return;
+  if (Number(r.semua) === 0) {
+    await sql`DELETE FROM forecast_dokumen WHERE id = ${dokumenId} AND status = 'draft'`;
+  } else {
+    await sql`UPDATE forecast_dokumen SET status = 'closed', closed_by = ${oleh ?? null}, closed_at = now() WHERE id = ${dokumenId} AND status = 'draft'`;
+  }
+}
+
 export interface GenerateResult {
   created: number;
   skippedExisting: number;
+  /** Jumlah dokumen cabang yang menerima baris baru. */
+  dokumen: number;
 }
 
-// Scan buffer+ED → upsert baris 'draft' baru (skip kalau sudah ada draft
-// aktif utk kombinasi item+gudang yg sama — anti-spam, lihat index parsial
-// di migrasi 107). Dipanggil manual (tombol "Generate Usulan") — BUKAN cron
-// otomatis di versi ini (base engine dulu, lihat catatan F19 di memory).
+// Scan buffer+ED → baris draft baru, dikelompokkan ke dokumen cabang ×
+// kategori × bulan berjalan. Skip kalau item+gudang masih punya usulan yang
+// berjalan. Dipanggil manual (tombol "Generate Usulan"), bukan cron.
 export async function generateSuggestions(): Promise<GenerateResult> {
-  if (!isDbEnabled()) return { created: 0, skippedExisting: 0 };
+  if (!isDbEnabled()) return { created: 0, skippedExisting: 0, dokumen: 0 };
   const sql = db();
-  const hotCount = await pipelineHotCount();
+  const periode = await periodeSekarang(sql);
+  const dokumenTersentuh = new Set<string>();
 
+  // Usulan draft dari sebelum migrasi 317 belum punya dokumen — adopsi ke
+  // dokumen bulan berjalan supaya tetap bisa diajukan.
+  const yatim = await sql`SELECT id, item_id, warehouse_kode, kategori FROM forecast_suggestion WHERE status = 'draft' AND dokumen_id IS NULL`;
+  for (const y of yatim) {
+    const kat = (y.kategori as Kategori | null) ?? (await kategoriItem(sql, Number(y.item_id)));
+    const dok = await pastikanDokumenDraft(sql, String(y.warehouse_kode), kat, periode);
+    await sql`UPDATE forecast_suggestion SET dokumen_id = ${dok}, kategori = ${kat} WHERE id = ${y.id}`;
+    dokumenTersentuh.add(dok);
+  }
+
+  const hotCount = await pipelineHotCount();
   const breaches = await findBufferBreaches();
   const edNear = await findEdNear();
 
@@ -208,10 +304,8 @@ export async function generateSuggestions(): Promise<GenerateResult> {
   let created = 0;
   let skippedExisting = 0;
   for (const c of combined.values()) {
-    // Bukan cuma draft: usulan yang sedang di-approval (submitted) atau sudah
-    // jadi PO yang barangnya belum datang (ordered) juga menahan usulan baru —
-    // dulu hanya draft yang dicek, jadi generate ulang membuat draft ganda utk
-    // kekurangan stok yang sama (uji fungsional 12 Nov).
+    // Usulan yang masih draft, sedang di-approval, atau sudah jadi PO yang
+    // barangnya belum datang menahan usulan baru (uji fungsional 12 Nov).
     const existing = await sql`
       SELECT fs.status, ${sql.unsafe(PO_DITERIMA_SQL)} AS po_diterima, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
       FROM forecast_suggestion fs
@@ -230,29 +324,33 @@ export async function generateSuggestions(): Promise<GenerateResult> {
       c.currentQty ??
       Number((await sql`SELECT COALESCE(quantity,0) AS q FROM item_stock_branch WHERE item_id=${c.itemId} AND warehouse_kode=${c.warehouseKode}`)[0]?.q ?? 0);
     const avgQty = await avgMonthlyQty6m(c.itemId);
-    // Heuristik AWAL sederhana (Supply Chain WAJIB review, bukan angka final):
-    // kalau ada gap ke buffer, tutup gap itu + 1 bulan estimasi pemakaian;
-    // kalau cuma dipicu ED (barang mau kedaluwarsa, bukan kurang stok),
-    // usulan cuma estimasi 1 bulan pemakaian (rotasi stok, bukan nambah).
+    // Heuristik AWAL (Supply Chain WAJIB review): tutup gap ke buffer + 1
+    // bulan estimasi pemakaian; kalau cuma dipicu ED, cukup estimasi 1 bulan.
     const gapToBuffer = c.bufferQty != null ? Math.max(0, c.bufferQty - currentQty) : 0;
     const suggestedQty = Math.round(gapToBuffer + avgQty);
+    const kategori = await kategoriItem(sql, c.itemId);
+    const dokumenId = await pastikanDokumenDraft(sql, c.warehouseKode, kategori, periode);
 
     await sql`
       INSERT INTO forecast_suggestion
-        (item_id, warehouse_kode, reasons, current_qty, buffer_qty, nearest_ed_date, avg_monthly_qty_6m, pipeline_hot_count, suggested_qty)
+        (item_id, warehouse_kode, reasons, current_qty, buffer_qty, nearest_ed_date, avg_monthly_qty_6m, pipeline_hot_count, suggested_qty, dokumen_id, kategori)
       VALUES
         (${c.itemId}, ${c.warehouseKode}, ${sql.json(c.reasons as unknown as Parameters<typeof sql.json>[0])}, ${currentQty},
-         ${c.bufferQty ?? null}, ${c.nearestEd ?? null}, ${avgQty}, ${hotCount}, ${suggestedQty})
+         ${c.bufferQty ?? null}, ${c.nearestEd ?? null}, ${avgQty}, ${hotCount}, ${suggestedQty}, ${dokumenId}, ${kategori})
     `;
+    dokumenTersentuh.add(dokumenId);
     created++;
   }
-  return { created, skippedExisting };
+  return { created, skippedExisting, dokumen: dokumenTersentuh.size };
 }
 
 export interface ForecastSuggestionRow {
   id: string;
+  dokumenId: string | null;
   itemId: number;
+  itemNo: string | null;
   itemName: string;
+  kategori: string | null;
   warehouseKode: string;
   warehouseNama: string;
   reasons: string[];
@@ -269,29 +367,24 @@ export interface ForecastSuggestionRow {
   approvalStatus: string | null;
   purchaseOrderId: string | null;
   purchaseOrderNumber: string | null;
-  /** PO hasil draft dibatalkan / ditolak approval → usulan boleh didraft ulang. */
+  /** PO tautan dibatalkan / ditutup sebelum diterima → boleh ditautkan ulang. */
   purchaseOrderMati: boolean;
   createdAt: string;
 }
 
-export async function listSuggestions(status?: string): Promise<ForecastSuggestionRow[]> {
-  const sql = db();
-  const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
-           po.po_number AS po_number,
-           ${sql.unsafe(PO_MATI_SQL)} AS po_mati
-    FROM forecast_suggestion fs
-    JOIN accurate_item ai ON ai.id = fs.item_id
-    JOIN warehouse w ON w.kode = fs.warehouse_kode
-    LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
-    LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
-    WHERE ${status ? sql`fs.status = ${status}` : sql`true`}
-    ORDER BY fs.created_at DESC LIMIT 200
-  `;
-  return rows.map((r) => ({
+/** Qty yang diajukan: qty final Supply Chain, atau usulan sistem bila belum diisi. */
+export function qtyEfektif(r: { finalQty: number | null; suggestedQty: number }): number {
+  return r.finalQty ?? r.suggestedQty;
+}
+
+function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
+  return {
     id: String(r.id),
+    dokumenId: r.dokumen_id ? String(r.dokumen_id) : null,
     itemId: Number(r.item_id),
+    itemNo: r.item_no ? String(r.item_no) : null,
     itemName: String(r.item_name),
+    kategori: r.kategori ? String(r.kategori) : null,
     warehouseKode: String(r.warehouse_kode),
     warehouseNama: String(r.warehouse_nama),
     reasons: Array.isArray(r.reasons) ? (r.reasons as string[]) : [],
@@ -309,56 +402,183 @@ export async function listSuggestions(status?: string): Promise<ForecastSuggesti
     purchaseOrderId: r.purchase_order_id ? String(r.purchase_order_id) : null,
     purchaseOrderNumber: r.po_number ? String(r.po_number) : null,
     purchaseOrderMati: r.po_mati === true,
-    // Sebelumnya String(r.created_at) — postgres.js parse kolom timestamptz
-    // jadi objek Date, String() di atasnya hasilnya Date.toString() mentah
-    // ("Fri Sep 04 2026 ... GMT+0700 ..."), bukan ISO. Pola bug yang sama
-    // dgn nearestEdDate sebelum PR #1174, di kolom berbeda (ditemukan QA
-    // jalur tulis 2026-09-07).
+    // timestamptz → objek Date; String() di atasnya bukan ISO (QA 2026-09-07).
     createdAt: toIsoTs(r.created_at),
-  }));
+  };
+}
+
+const SUGGESTION_SELECT = `
+  fs.*, ai.no AS item_no, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
+  po.po_number AS po_number, ${PO_MATI_SQL} AS po_mati`;
+const SUGGESTION_FROM = `
+  FROM forecast_suggestion fs
+  JOIN accurate_item ai ON ai.id = fs.item_id
+  JOIN warehouse w ON w.kode = fs.warehouse_kode
+  LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+  LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id`;
+
+export async function listSuggestions(status?: string): Promise<ForecastSuggestionRow[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT ${sql.unsafe(SUGGESTION_SELECT)} ${sql.unsafe(SUGGESTION_FROM)}
+    WHERE ${status ? sql`fs.status = ${status}` : sql`true`}
+    ORDER BY fs.created_at DESC LIMIT 200
+  `;
+  return rows.map(mapSuggestion);
+}
+
+export interface ForecastDokumenRow {
+  id: string;
+  kode: string;
+  warehouseKode: string;
+  warehouseNama: string;
+  wilayah: string | null;
+  kategori: string | null;
+  periode: string;
+  status: string;
+  approvalRequestId: string | null;
+  approvalKode: string | null;
+  approvalStatus: string | null;
+  submittedBy: string | null;
+  submittedAt: string | null;
+  createdAt: string;
+  /** Baris selain yang diabaikan. */
+  jumlahBarang: number;
+  totalQty: number;
+  lines: ForecastSuggestionRow[];
+}
+
+/** "2026-11" → "2026-11-01"; null kalau formatnya salah. */
+export function periodeDariBulan(bulan: string | null | undefined): string | null {
+  const m = /^(\d{4})-(\d{2})$/.exec(String(bulan ?? "").trim());
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return null;
+  return `${m[1]}-${m[2]}-01`;
+}
+
+export async function listDokumen(filter: { status?: string; bulan?: string } = {}): Promise<ForecastDokumenRow[]> {
+  const sql = db();
+  const periode = periodeDariBulan(filter.bulan);
+  const docs = await sql`
+    SELECT d.*, w.nama AS warehouse_nama, w.wilayah, w.urutan, ar.kode AS approval_kode, ar.status AS approval_status
+    FROM forecast_dokumen d
+    JOIN warehouse w ON w.kode = d.warehouse_kode
+    LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
+    WHERE ${filter.status ? sql`d.status = ${filter.status}` : sql`true`}
+      AND ${periode ? sql`d.periode = ${periode}::date` : sql`true`}
+    ORDER BY d.periode DESC, w.urutan, w.nama, d.kategori NULLS LAST, d.created_at
+    LIMIT 200
+  `;
+  if (docs.length === 0) return [];
+  const ids = docs.map((d) => String(d.id));
+  const lines = (
+    await sql`
+      SELECT ${sql.unsafe(SUGGESTION_SELECT)} ${sql.unsafe(SUGGESTION_FROM)}
+      WHERE fs.dokumen_id = ANY(${ids}::uuid[])
+      ORDER BY ai.name
+    `
+  ).map(mapSuggestion);
+  return docs.map((d) => {
+    const own = lines.filter((l) => l.dokumenId === String(d.id));
+    const aktif = own.filter((l) => l.status !== "dismissed");
+    return {
+      id: String(d.id),
+      kode: String(d.kode),
+      warehouseKode: String(d.warehouse_kode),
+      warehouseNama: String(d.warehouse_nama),
+      wilayah: d.wilayah ? String(d.wilayah) : null,
+      kategori: d.kategori ? String(d.kategori) : null,
+      periode: toIsoDate(d.periode).slice(0, 7),
+      status: String(d.status),
+      approvalRequestId: d.approval_request_id ? String(d.approval_request_id) : null,
+      approvalKode: d.approval_kode ? String(d.approval_kode) : null,
+      approvalStatus: d.approval_status ? String(d.approval_status) : null,
+      submittedBy: d.submitted_by ? String(d.submitted_by) : null,
+      submittedAt: d.submitted_at ? toIsoTs(d.submitted_at) : null,
+      createdAt: toIsoTs(d.created_at),
+      jumlahBarang: aktif.length,
+      totalQty: aktif.reduce((a, l) => a + qtyEfektif(l), 0),
+      lines: own,
+    };
+  });
 }
 
 export async function updateSuggestion(
   id: string,
-  patch: { finalQty?: number | null; notes?: string | null },
+  patch: { finalQty?: number | null; notes?: string | null; kategori?: string | null },
 ): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
   if (patch.finalQty != null && (!Number.isFinite(patch.finalQty) || patch.finalQty < 0)) {
-    return { ok: false, error: "finalQty tidak boleh negatif" };
+    return { ok: false, error: "qty final tidak boleh negatif" };
   }
-  const rows = await sql`SELECT status FROM forecast_suggestion WHERE id = ${id}`;
+  if (patch.kategori !== undefined && !isKategori(patch.kategori)) {
+    return { ok: false, error: `kategori harus ${KATEGORI.join("/")}` };
+  }
+  const rows = await sql`
+    SELECT fs.status, fs.warehouse_kode, fs.kategori, fs.dokumen_id, d.periode::text AS periode
+    FROM forecast_suggestion fs LEFT JOIN forecast_dokumen d ON d.id = fs.dokumen_id
+    WHERE fs.id = ${id}
+  `;
   if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
-  if (rows[0].status !== "draft") return { ok: false, error: `usulan sudah ${rows[0].status}, tak bisa diedit` };
+  const r = rows[0];
+  if (r.status !== "draft") return { ok: false, error: `usulan sudah ${r.status}, tak bisa diedit` };
   await sql`
     UPDATE forecast_suggestion SET
       final_qty = ${patch.finalQty === undefined ? sql`final_qty` : patch.finalQty},
       notes = ${patch.notes === undefined ? sql`notes` : patch.notes}
     WHERE id = ${id}
   `;
+  // Ganti kategori = pindah ke dokumen cabang × kategori itu (bulan yang sama).
+  if (patch.kategori !== undefined && patch.kategori !== r.kategori) {
+    const periode = r.periode ? String(r.periode) : await periodeSekarang(sql);
+    const tujuan = await pastikanDokumenDraft(sql, String(r.warehouse_kode), patch.kategori as Kategori, periode);
+    await sql`UPDATE forecast_suggestion SET kategori = ${patch.kategori}, dokumen_id = ${tujuan} WHERE id = ${id}`;
+    if (r.dokumen_id && String(r.dokumen_id) !== tujuan) await rapikanDokumen(sql, String(r.dokumen_id));
+  }
   return { ok: true };
 }
 
-// Selain draft, usulan 'submitted' yang approval F11-nya DITOLAK/dibatalkan
-// juga boleh ditutup — dulu ia tertahan 'submitted' selamanya (tak bisa
-// diedit, diajukan ulang, maupun didraft jadi PO). Kekurangan stoknya sendiri
-// tetap terbaca: generate berikutnya membuat draft baru.
+// Abaikan satu barang dari dokumen draft. Dokumen yang jadi tak punya baris
+// draft ditutup otomatis. Kekurangan stoknya tetap terbaca: Generate
+// berikutnya membuat usulan baru.
 export async function dismissSuggestion(id: string, reviewedBy?: string): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
-  const rows = await sql`
-    SELECT fs.status, ar.status AS approval_status
-    FROM forecast_suggestion fs LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
-    WHERE fs.id = ${id}
-  `;
-  if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
-  const st = String(rows[0].status);
-  const apprMati = rows[0].approval_status === "rejected" || rows[0].approval_status === "canceled";
-  if (!(st === "draft" || (st === "submitted" && apprMati))) return { ok: false, error: `usulan sudah ${st}` };
+  const [r] = await sql`SELECT status, dokumen_id FROM forecast_suggestion WHERE id = ${id}`;
+  if (!r) return { ok: false, error: "usulan tidak ditemukan" };
+  if (r.status !== "draft") return { ok: false, error: `usulan sudah ${r.status} — tutup dokumennya bila approval ditolak` };
   const done = await sql`
     UPDATE forecast_suggestion SET status = 'dismissed', reviewed_by = ${reviewedBy ?? null}, reviewed_at = now()
-    WHERE id = ${id} AND status = ${st}
+    WHERE id = ${id} AND status = 'draft'
     RETURNING id
   `;
   if (!done.length) return { ok: false, error: "usulan berubah sementara — muat ulang halaman" };
+  if (r.dokumen_id) await rapikanDokumen(sql, String(r.dokumen_id), reviewedBy);
+  return { ok: true };
+}
+
+// Tutup dokumen: draft yang batal diajukan, atau dokumen yang approval-nya
+// ditolak/dibatalkan (dulu barisnya tertahan 'submitted' selamanya).
+export async function tutupDokumen(id: string, oleh?: string | null): Promise<{ ok: boolean; error?: string }> {
+  const sql = db();
+  const [d] = await sql`
+    SELECT d.status, ar.status AS approval_status
+    FROM forecast_dokumen d LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
+    WHERE d.id = ${id}
+  `;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  const apprMati = d.approval_status === "rejected" || d.approval_status === "canceled";
+  if (!(d.status === "draft" || (d.status === "submitted" && apprMati))) {
+    return { ok: false, error: d.status === "submitted" ? "dokumen masih dalam approval / sudah disetujui" : `dokumen sudah ${d.status}` };
+  }
+  const [claim] = await sql`
+    UPDATE forecast_dokumen SET status = 'closed', closed_by = ${oleh ?? null}, closed_at = now()
+    WHERE id = ${id} AND status = ${String(d.status)}
+    RETURNING id
+  `;
+  if (!claim) return { ok: false, error: "dokumen berubah sementara — muat ulang halaman" };
+  await sql`
+    UPDATE forecast_suggestion SET status = 'dismissed', reviewed_by = ${oleh ?? null}, reviewed_at = now()
+    WHERE dokumen_id = ${id} AND status IN ('draft', 'submitted')
+  `;
   return { ok: true };
 }
 
@@ -367,85 +587,126 @@ export interface SubmitResult {
   error?: string;
   approvalId?: string;
   approvalKode?: string;
-  // Hasil notifikasi tahap 1 — dikirim balik supaya UI bisa bilang kalau
-  // approver pertama TIDAK menerima apa-apa (dulu diabaikan: layar "sukses",
-  // usulan tertahan diam-diam).
+  // Hasil notifikasi tahap 1 — UI wajib bilang kalau approver pertama tak
+  // menerima apa-apa (dulu diabaikan: layar "sukses", usulan tertahan diam).
   notify?: NotifyResult;
 }
 
-// "Ajukan" — Supply Chain kirim usulan yg sudah di-review ke approval
-// berjenjang F11. Reuse createApprovalRequest() APA ADANYA, tak ada logika
-// approval yg diduplikasi di sini.
-// Wilayah & kategori WAJIB: tahap 1 & 2 F11 diarahkan per atribut ini
-// (migrasi 190). Usulan dari GUDANG tak punya wilayah pengaju bawaan, jadi
-// Supply Chain memilihnya saat mengajukan (keputusan 11 Okt 2026). Tanpa ini
-// request dibuat tanpa atribut dan tahap 1 tak pernah dinotifikasi.
-export async function submitSuggestion(
-  id: string,
-  submittedBy: string,
-  atribut: { wilayah?: unknown; kategori?: unknown } = {},
-): Promise<SubmitResult> {
-  if (!isWilayah(atribut.wilayah)) return { ok: false, error: `wilayah wajib dipilih (${WILAYAH.join("/")}) — menentukan HoD Sales tahap 1` };
-  if (!isKategori(atribut.kategori)) return { ok: false, error: `kategori wajib dipilih (${KATEGORI.join("/")}) — menentukan HoD Bisnis tahap 2` };
+const BARIS_DESKRIPSI_MAKS = 30;
+
+const namaBulan = (periode: string): string =>
+  new Date(`${periode.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("id-ID", { month: "long", year: "numeric", timeZone: "UTC" });
+
+/** Deskripsi approval satu dokumen — ringkas, karena ikut terkirim ke WA approver. */
+export function deskripsiDokumen(
+  d: { kode: string; warehouseNama: string; kategori: string; periode: string; pipelineHot: number },
+  lines: { itemName: string; qty: number; currentQty: number; bufferQty: number | null; edLewat: boolean; nearEd: boolean; notes: string | null }[],
+): string {
+  const total = lines.reduce((a, l) => a + l.qty, 0);
+  const rincian = lines.slice(0, BARIS_DESKRIPSI_MAKS).map((l, i) => {
+    const tanda = l.edLewat ? " · ada batch lewat ED" : l.nearEd ? " · ada batch mendekati ED" : "";
+    const buf = l.bufferQty != null ? `, buffer ${l.bufferQty}` : "";
+    return `${i + 1}. ${l.itemName} — ${l.qty} (stok ${l.currentQty}${buf}${tanda})${l.notes ? ` — ${l.notes}` : ""}`;
+  });
+  const sisa = lines.length - BARIS_DESKRIPSI_MAKS;
+  return (
+    `Dokumen: ${d.kode}\nCabang: ${d.warehouseNama} · Kategori: ${d.kategori} · Periode: ${namaBulan(d.periode)}\n` +
+    `Jumlah barang: ${lines.length} · Total qty: ${total}\n\nRincian:\n${rincian.join("\n")}` +
+    (sisa > 0 ? `\n(+${sisa} barang lainnya — lihat dokumen di WRG-OS)` : "") +
+    `\n\nDeal HOT aktif (konteks, bukan pemicu): ${d.pipelineHot}`
+  );
+}
+
+// "Ajukan" — satu dokumen cabang ke approval berjenjang F11.
+// Wilayah dari pemetaan cabang, kategori dari dokumen; createApprovalRequest
+// dipakai apa adanya.
+export async function submitDokumen(id: string, submittedBy: string): Promise<SubmitResult> {
   const sql = db();
-  const rows = await sql`
-    SELECT fs.*, ai.name AS item_name, w.nama AS warehouse_nama,
-           (fs.nearest_ed_date < (now() AT TIME ZONE 'Asia/Jakarta')::date) AS ed_lewat
-    FROM forecast_suggestion fs
-    JOIN accurate_item ai ON ai.id = fs.item_id
-    JOIN warehouse w ON w.kode = fs.warehouse_kode
-    WHERE fs.id = ${id}
+  const [d] = await sql`
+    SELECT d.*, w.nama AS warehouse_nama, w.wilayah
+    FROM forecast_dokumen d JOIN warehouse w ON w.kode = d.warehouse_kode
+    WHERE d.id = ${id}
   `;
-  if (rows.length === 0) return { ok: false, error: "usulan tidak ditemukan" };
-  const r = rows[0];
-  if (r.status !== "draft") return { ok: false, error: `usulan sudah ${r.status}` };
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
+  if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}` };
+  if (!isKategori(d.kategori)) {
+    return { ok: false, error: "barang di dokumen ini belum punya kategori — pilih IVD/Medical per barang dulu" };
+  }
+  if (!isWilayah(d.wilayah)) {
+    return { ok: false, error: `wilayah ${d.warehouse_nama} belum dipetakan (East/West) — atur di Setup` };
+  }
 
-  const qty = r.final_qty != null ? Number(r.final_qty) : Number(r.suggested_qty);
-  if (!(qty > 0)) return { ok: false, error: "qty final harus > 0 sebelum diajukan (isi final_qty dulu kalau usulan sistem 0)" };
+  const lines = await sql`
+    SELECT fs.*, ai.name AS item_name,
+           (fs.nearest_ed_date < (now() AT TIME ZONE 'Asia/Jakarta')::date) AS ed_lewat
+    FROM forecast_suggestion fs JOIN accurate_item ai ON ai.id = fs.item_id
+    WHERE fs.dokumen_id = ${id} AND fs.status = 'draft'
+    ORDER BY ai.name
+  `;
+  if (lines.length === 0) return { ok: false, error: "dokumen tidak punya barang untuk diajukan" };
+  const nol = lines.filter((l) => !((l.final_qty != null ? Number(l.final_qty) : Number(l.suggested_qty)) > 0));
+  if (nol.length) {
+    return { ok: false, error: `qty final harus > 0 (atau abaikan barangnya): ${nol.map((l) => l.item_name).join(", ")}` };
+  }
 
-  // Batch ED terdekat yang SUDAH lewat ≠ "mendekati ED" (findEdNear tak
-  // punya batas bawah, jadi batch kedaluwarsa ikut terjaring).
-  const edLewat = r.ed_lewat === true;
-  const reasons = (Array.isArray(r.reasons) ? (r.reasons as string[]) : [])
-    .map((x) =>
-      x === "near_buffer" ? "mendekati/di bawah buffer" : x === "near_ed" ? (edLewat ? "ada batch sudah lewat ED" : "ada batch mendekati ED") : x,
-    )
-    .join(", ");
-  const description =
-    `Item: ${r.item_name}\nGudang: ${r.warehouse_nama}\nQty diusulkan: ${qty}\n` +
-    `Stok saat ini: ${r.current_qty}${r.buffer_qty != null ? ` (buffer: ${r.buffer_qty})` : ""}\n` +
-    `${r.nearest_ed_date ? `Batch ED terdekat: ${toIdDate(r.nearest_ed_date)}\n` : ""}` +
-    `Rata-rata terjual/bulan (6bln): ${r.avg_monthly_qty_6m ?? "-"}\n` +
-    `Alasan sistem: ${reasons || "-"}\n` +
-    `Deal HOT aktif (konteks, bukan pemicu langsung): ${r.pipeline_hot_count}\n` +
-    `${r.notes ? `Catatan Supply Chain: ${r.notes}\n` : ""}`;
+  const description = deskripsiDokumen(
+    {
+      kode: String(d.kode),
+      warehouseNama: String(d.warehouse_nama),
+      kategori: String(d.kategori),
+      periode: toIsoDate(d.periode),
+      pipelineHot: Math.max(...lines.map((l) => Number(l.pipeline_hot_count))),
+    },
+    lines.map((l) => {
+      const reasons = Array.isArray(l.reasons) ? (l.reasons as string[]) : [];
+      return {
+        itemName: String(l.item_name),
+        qty: l.final_qty != null ? Number(l.final_qty) : Number(l.suggested_qty),
+        currentQty: Number(l.current_qty),
+        bufferQty: l.buffer_qty != null ? Number(l.buffer_qty) : null,
+        edLewat: reasons.includes("near_ed") && l.ed_lewat === true,
+        nearEd: reasons.includes("near_ed"),
+        notes: l.notes ? String(l.notes) : null,
+      };
+    }),
+  );
 
-  // Klaim atomik SEBELUM membuat approval: cek status di atas cuma baca, jadi
-  // dua klik "Ajukan" bersamaan sama-sama lolos dan masing-masing membuat
-  // approval_request (uji dev 12 Okt 2026: 3 klik → 3 APR, dua yatim yang
-  // tetap menotifikasi HoD Sales). Pola sama dengan draftPurchaseOrder.
+  // Klaim atomik SEBELUM membuat approval (dua klik "Ajukan" bersamaan dulu
+  // membuat dua approval_request — uji dev 12 Okt 2026).
   const [claim] = await sql`
-    UPDATE forecast_suggestion SET status = 'submitted', reviewed_by = ${submittedBy}, reviewed_at = now()
+    UPDATE forecast_dokumen SET status = 'submitted', submitted_by = ${submittedBy}, submitted_at = now()
     WHERE id = ${id} AND status = 'draft'
     RETURNING id
   `;
-  if (!claim) return { ok: false, error: "usulan ini sudah diajukan (atau sedang diajukan) — muat ulang halaman" };
+  if (!claim) return { ok: false, error: "dokumen ini sudah diajukan (atau sedang diajukan) — muat ulang halaman" };
+  const ikut = (
+    await sql`
+      UPDATE forecast_suggestion SET status = 'submitted', reviewed_by = ${submittedBy}, reviewed_at = now()
+      WHERE dokumen_id = ${id} AND status = 'draft'
+      RETURNING id
+    `
+  ).map((r) => String(r.id));
 
-  const lepasKlaim = () => sql`
-    UPDATE forecast_suggestion SET status = 'draft', reviewed_by = NULL, reviewed_at = NULL
-    WHERE id = ${id} AND status = 'submitted' AND approval_request_id IS NULL
-  `;
+  const lepasKlaim = async () => {
+    await sql`
+      UPDATE forecast_suggestion SET status = 'draft', reviewed_by = NULL, reviewed_at = NULL
+      WHERE id = ANY(${ikut}::uuid[]) AND status = 'submitted' AND approval_request_id IS NULL
+    `;
+    await sql`
+      UPDATE forecast_dokumen SET status = 'draft', submitted_by = NULL, submitted_at = NULL
+      WHERE id = ${id} AND status = 'submitted' AND approval_request_id IS NULL
+    `;
+  };
   let res: Awaited<ReturnType<typeof createApprovalRequest>>;
   try {
     res = await createApprovalRequest({
-      title: `Forecast: ${r.item_name} — ${r.warehouse_nama}`,
+      title: `Forecast ${d.warehouse_nama} — ${d.kategori} — ${namaBulan(toIsoDate(d.periode))}`,
       description,
       requestedBy: submittedBy,
-      wilayah: atribut.wilayah,
-      kategori: atribut.kategori,
-      // Tautan induk: index unik approval_request_ref_pending_uq menjadi
-      // pagar kedua terhadap submit kembar, di samping klaim atomik di atas.
-      refTabel: "forecast_suggestion",
+      wilayah: d.wilayah,
+      kategori: d.kategori,
+      // index unik approval_request_ref_pending_uq = pagar kedua submit kembar.
+      refTabel: "forecast_dokumen",
       refId: id,
     });
   } catch (e) {
@@ -457,8 +718,29 @@ export async function submitSuggestion(
     return { ok: false, error: res.error ?? "gagal membuat approval request" };
   }
 
-  await sql`UPDATE forecast_suggestion SET approval_request_id = ${res.id} WHERE id = ${id}`;
+  await sql`UPDATE forecast_dokumen SET approval_request_id = ${res.id} WHERE id = ${id}`;
+  await sql`UPDATE forecast_suggestion SET approval_request_id = ${res.id} WHERE id = ANY(${ikut}::uuid[])`;
   return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
+}
+
+export interface WilayahCabangRow {
+  kode: string;
+  nama: string;
+  wilayah: string | null;
+}
+
+export async function listWilayahCabang(): Promise<WilayahCabangRow[]> {
+  const sql = db();
+  const rows = await sql`SELECT kode, nama, wilayah FROM warehouse WHERE jenis = 'cabang' AND aktif ORDER BY urutan, nama`;
+  return rows.map((r) => ({ kode: String(r.kode), nama: String(r.nama), wilayah: r.wilayah ? String(r.wilayah) : null }));
+}
+
+export async function setWilayahCabang(kode: string, wilayah: unknown): Promise<{ ok: boolean; error?: string }> {
+  if (wilayah !== null && !isWilayah(wilayah)) return { ok: false, error: `wilayah harus ${WILAYAH.join("/")} atau kosong` };
+  const sql = db();
+  const done = await sql`UPDATE warehouse SET wilayah = ${wilayah as string | null} WHERE kode = ${kode} AND jenis = 'cabang' RETURNING kode`;
+  if (!done.length) return { ok: false, error: `gudang cabang "${kode}" tidak ditemukan` };
+  return { ok: true };
 }
 
 export interface LinkPoInput {
@@ -542,4 +824,208 @@ export async function linkPurchaseOrder(id: string, input: LinkPoInput): Promise
       ? `barang usulan (${r.item_no}) tidak ada di baris PO ${poNumber} — cek lagi nomornya`
       : undefined;
   return { ok: true, purchaseOrderId: String(po.id), poNumber: String(po.po_number), ...(warning ? { warning } : {}) };
+}
+
+// ── Rekap Purchasing (semua cabang, per barang, per bulan) ─────────────────
+// Hanya dokumen yang approval-nya sudah DISETUJUI. Purchasing membuat PO di
+// Accurate dari rekap ini, lalu menautkan nomornya per barang — satu nomor
+// PO berlaku untuk semua cabang yang memesan barang itu.
+
+export interface RekapCabang {
+  suggestionId: string;
+  warehouseKode: string;
+  warehouseNama: string;
+  dokumenKode: string;
+  qty: number;
+  status: string;
+  poNumber: string | null;
+  poMati: boolean;
+  notes: string | null;
+}
+
+export interface RekapBarang {
+  itemId: number;
+  itemNo: string | null;
+  itemName: string;
+  kategori: string | null;
+  totalQty: number;
+  cabang: RekapCabang[];
+  /** Baris yang masih bisa ditautkan ke PO (belum tertaut, atau PO-nya mati). */
+  belumPo: number;
+}
+
+export interface RekapResult {
+  bulan: string;
+  barang: RekapBarang[];
+  /** Dokumen bulan itu yang masih menunggu approval — belum masuk rekap. */
+  menungguApproval: number;
+}
+
+/** Baris bisa (ulang) ditautkan ke PO: disetujui & belum tertaut, atau PO-nya mati. */
+export function bisaTautPo(c: { status: string; poNumber: string | null; poMati: boolean }): boolean {
+  return (c.status === "submitted" && !c.poNumber) || (c.status === "ordered" && c.poMati);
+}
+
+/** Kelompokkan baris approved per barang; urut kategori lalu nama. */
+export function kelompokkanRekap(
+  rows: (RekapCabang & { itemId: number; itemNo: string | null; itemName: string; kategori: string | null })[],
+): RekapBarang[] {
+  const map = new Map<number, RekapBarang>();
+  for (const r of rows) {
+    let b = map.get(r.itemId);
+    if (!b) {
+      b = { itemId: r.itemId, itemNo: r.itemNo, itemName: r.itemName, kategori: r.kategori, totalQty: 0, cabang: [], belumPo: 0 };
+      map.set(r.itemId, b);
+    }
+    b.cabang.push({
+      suggestionId: r.suggestionId, warehouseKode: r.warehouseKode, warehouseNama: r.warehouseNama, dokumenKode: r.dokumenKode,
+      qty: r.qty, status: r.status, poNumber: r.poNumber, poMati: r.poMati, notes: r.notes,
+    });
+    b.totalQty += r.qty;
+    if (bisaTautPo(r)) b.belumPo++;
+  }
+  return [...map.values()].sort(
+    (a, b) => (a.kategori ?? "~").localeCompare(b.kategori ?? "~") || a.itemName.localeCompare(b.itemName),
+  );
+}
+
+export async function rekapPurchasing(bulan: string): Promise<RekapResult | { error: string }> {
+  const periode = periodeDariBulan(bulan);
+  if (!periode) return { error: "bulan harus berformat YYYY-MM" };
+  const sql = db();
+  const rows = await sql`
+    SELECT fs.id, fs.item_id, ai.no AS item_no, ai.name AS item_name, fs.kategori, fs.warehouse_kode, w.nama AS warehouse_nama,
+           d.kode AS dokumen_kode, COALESCE(fs.final_qty, fs.suggested_qty) AS qty, fs.status, fs.notes,
+           po.po_number, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
+    FROM forecast_suggestion fs
+    JOIN forecast_dokumen d ON d.id = fs.dokumen_id
+    JOIN approval_request ar ON ar.id = d.approval_request_id
+    JOIN accurate_item ai ON ai.id = fs.item_id
+    JOIN warehouse w ON w.kode = fs.warehouse_kode
+    LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
+    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND ar.status = 'approved'
+      AND fs.status IN ('submitted', 'ordered')
+    ORDER BY w.urutan, w.nama
+  `;
+  const [{ n }] = await sql`
+    SELECT count(*)::int AS n FROM forecast_dokumen d LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
+    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND COALESCE(ar.status, 'pending') = 'pending'
+  `;
+  const barang = kelompokkanRekap(
+    rows.map((r) => ({
+      suggestionId: String(r.id),
+      itemId: Number(r.item_id),
+      itemNo: r.item_no ? String(r.item_no) : null,
+      itemName: String(r.item_name),
+      kategori: r.kategori ? String(r.kategori) : null,
+      warehouseKode: String(r.warehouse_kode),
+      warehouseNama: String(r.warehouse_nama),
+      dokumenKode: String(r.dokumen_kode),
+      qty: Number(r.qty),
+      status: String(r.status),
+      poNumber: r.po_number ? String(r.po_number) : null,
+      poMati: r.po_mati === true,
+      notes: r.notes ? String(r.notes) : null,
+    })),
+  );
+  return { bulan: periode.slice(0, 7), barang, menungguApproval: Number(n) };
+}
+
+export interface LinkPoRekapResult {
+  ok: boolean;
+  error?: string;
+  /** Jumlah baris cabang yang tertaut. */
+  linked?: number;
+  poNumber?: string;
+  warning?: string;
+  /** Baris yang gagal ditautkan (cabang: alasan). */
+  gagal?: string[];
+}
+
+// Tautkan satu nomor PO Accurate ke SEMUA cabang yang memesan barang itu di
+// bulan itu. Per baris memakai linkPurchaseOrder apa adanya (cek approval,
+// PO tersinkron & hidup, klaim atomik).
+export async function linkPoRekap(input: { bulan: string; itemId: number; poNumber: string }): Promise<LinkPoRekapResult> {
+  const poNumber = String(input.poNumber ?? "").trim();
+  if (!poNumber) return { ok: false, error: "nomor PO Accurate wajib diisi" };
+  const rekap = await rekapPurchasing(input.bulan);
+  if ("error" in rekap) return { ok: false, error: rekap.error };
+  const barang = rekap.barang.find((b) => b.itemId === Number(input.itemId));
+  if (!barang) return { ok: false, error: "barang ini tidak ada di rekap bulan itu (belum disetujui?)" };
+  const target = barang.cabang.filter(bisaTautPo);
+  if (target.length === 0) return { ok: false, error: "semua cabang untuk barang ini sudah tertaut ke PO" };
+
+  let linked = 0;
+  let warning: string | undefined;
+  const gagal: string[] = [];
+  for (const c of target) {
+    const r = await linkPurchaseOrder(c.suggestionId, { poNumber });
+    if (r.ok) {
+      linked++;
+      warning ??= r.warning;
+    } else {
+      gagal.push(`${c.warehouseNama}: ${r.error}`);
+    }
+  }
+  if (linked === 0) return { ok: false, error: gagal[0]?.replace(/^[^:]+: /, "") ?? "gagal menautkan PO", gagal };
+  return { ok: true, linked, poNumber, ...(warning ? { warning } : {}), ...(gagal.length ? { gagal } : {}) };
+}
+
+const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F1B2D" } } as const;
+
+function gayaHeader(ws: ExcelJS.Worksheet) {
+  ws.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  ws.getRow(1).fill = HEADER_FILL;
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+}
+
+/** Excel rekap: sheet Rekap (barang × cabang + total) dan Rincian (per baris dokumen). */
+export async function rekapXlsx(bulan: string): Promise<Buffer | { error: string }> {
+  const rekap = await rekapPurchasing(bulan);
+  if ("error" in rekap) return rekap;
+  const cabang = [...new Map(rekap.barang.flatMap((b) => b.cabang.map((c) => [c.warehouseKode, c.warehouseNama] as const))).entries()];
+  const wb = new ExcelJS.Workbook();
+
+  const ws = wb.addWorksheet("Rekap");
+  ws.columns = [
+    { header: "No", key: "no", width: 6 },
+    { header: "Kode Barang", key: "item_no", width: 16 },
+    { header: "Nama Barang", key: "item_name", width: 44 },
+    { header: "Kategori", key: "kategori", width: 10 },
+    ...cabang.map(([kode, nama]) => ({ header: nama.replace(/^Gudang /, ""), key: `c_${kode}`, width: 12, style: { numFmt: "#,##0" } })),
+    { header: "Total", key: "total", width: 12, style: { numFmt: "#,##0" } },
+    { header: "No. PO", key: "po", width: 24 },
+  ];
+  rekap.barang.forEach((b, i) => {
+    const row: Record<string, unknown> = {
+      no: i + 1, item_no: b.itemNo ?? "", item_name: b.itemName, kategori: b.kategori ?? "", total: b.totalQty,
+      po: [...new Set(b.cabang.map((c) => c.poNumber).filter(Boolean))].join(", "),
+    };
+    for (const c of b.cabang) row[`c_${c.warehouseKode}`] = (Number(row[`c_${c.warehouseKode}`] ?? 0) + c.qty);
+    ws.addRow(row);
+  });
+  gayaHeader(ws);
+
+  const rinci = wb.addWorksheet("Rincian");
+  rinci.columns = [
+    { header: "Dokumen", key: "dok", width: 24 },
+    { header: "Cabang", key: "cabang", width: 20 },
+    { header: "Kategori", key: "kategori", width: 10 },
+    { header: "Kode Barang", key: "item_no", width: 16 },
+    { header: "Nama Barang", key: "item_name", width: 44 },
+    { header: "Qty", key: "qty", width: 10, style: { numFmt: "#,##0" } },
+    { header: "Status", key: "status", width: 12 },
+    { header: "No. PO", key: "po", width: 24 },
+    { header: "Catatan", key: "notes", width: 36 },
+  ];
+  for (const b of rekap.barang) {
+    for (const c of b.cabang) {
+      rinci.addRow({
+        dok: c.dokumenKode, cabang: c.warehouseNama, kategori: b.kategori ?? "", item_no: b.itemNo ?? "", item_name: b.itemName,
+        qty: c.qty, status: c.status === "ordered" ? "PO tertaut" : "Disetujui", po: c.poNumber ?? "", notes: c.notes ?? "",
+      });
+    }
+  }
+  gayaHeader(rinci);
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }

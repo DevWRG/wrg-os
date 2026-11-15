@@ -688,7 +688,14 @@ import {
   listSuggestions,
   updateSuggestion,
   dismissSuggestion,
-  submitSuggestion,
+  listDokumen,
+  submitDokumen,
+  tutupDokumen,
+  listWilayahCabang,
+  setWilayahCabang,
+  rekapPurchasing,
+  linkPoRekap,
+  rekapXlsx,
   listBufferConfig,
   upsertBufferConfig,
   linkPurchaseOrder,
@@ -2418,7 +2425,7 @@ app.get("/forecast/suggestions", async (c) => {
 
 app.patch("/forecast/suggestions/:id", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { finalQty?: number | null; notes?: string | null } = {};
+  let body: { finalQty?: number | null; notes?: string | null; kategori?: string | null } = {};
   try {
     body = await c.req.json();
   } catch {
@@ -2440,16 +2447,84 @@ app.post("/forecast/suggestions/:id/dismiss", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-app.post("/forecast/suggestions/:id/submit", async (c) => {
+// Dokumen cabang × kategori × bulan (migrasi 317) — satu dokumen = satu approval.
+app.get("/forecast/dokumen", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { submittedBy?: string; wilayah?: unknown; kategori?: unknown } = {};
+  const rows = await listDokumen({ status: c.req.query("status") || undefined, bulan: c.req.query("bulan") || undefined });
+  return c.json({ count: rows.length, dokumen: rows });
+});
+
+app.post("/forecast/dokumen/:id/submit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { submittedBy?: string } = {};
   try {
     body = await c.req.json();
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
-  const r = await submitSuggestion(c.req.param("id"), body.submittedBy, { wilayah: body.wilayah, kategori: body.kategori });
+  const r = await submitDokumen(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/dokumen/:id/tutup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { closedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await tutupDokumen(c.req.param("id"), body.closedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Rekap Purchasing: barang × cabang dari dokumen yang sudah disetujui.
+app.get("/forecast/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await rekapPurchasing(c.req.query("bulan") ?? "");
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.get("/forecast/rekap.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const bulan = c.req.query("bulan") ?? "";
+  const r = await rekapXlsx(bulan);
+  if (!Buffer.isBuffer(r)) return c.json(r, 400);
+  return c.body(new Uint8Array(r), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="Rekap_Forecast_${bulan}.xlsx"`,
+    "cache-control": "private, no-store",
+  });
+});
+
+app.post("/forecast/rekap/link-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bulan?: string; itemId?: number; poNumber?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await linkPoRekap({ bulan: String(body.bulan ?? ""), itemId: Number(body.itemId), poNumber: String(body.poNumber ?? "") });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/wilayah-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listWilayahCabang() });
+});
+
+app.post("/forecast/wilayah-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { kode?: string; wilayah?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kode) return c.json({ error: "kode wajib" }, 400);
+  const r = await setWilayahCabang(body.kode, body.wilayah ?? null);
   return c.json(r, r.ok ? 200 : 400);
 });
 
