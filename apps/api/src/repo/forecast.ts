@@ -158,8 +158,28 @@ async function muatPeta(sql: Sql): Promise<{ manual: Map<string, string>; gudang
   };
 }
 
+// Jenis penjualan dasar rata-rata (migrasi 321, keputusan user 16 Nov 2026):
+// KSO = baris faktur berjenis pengadaan KSO; Regular = semua selain KSO
+// (REGULAR, RUTIN, e-katalog, PL, tanpa kategori); semua = keduanya.
+export const JENIS_PENJUALAN = ["semua", "kso", "regular"] as const;
+export type JenisPenjualan = (typeof JENIS_PENJUALAN)[number];
+
+export function validasiJenis(x: unknown): JenisPenjualan | null {
+  const v = String(x ?? "").trim().toLowerCase();
+  if (!v) return "semua";
+  return (JENIS_PENJUALAN as readonly string[]).includes(v) ? (v as JenisPenjualan) : null;
+}
+
+export const LABEL_JENIS: Record<JenisPenjualan, string> = { semua: "KSO & Regular", kso: "KSO", regular: "Regular" };
+
+function syaratJenis(sql: Sql, jenis: JenisPenjualan) {
+  if (jenis === "kso") return sql`upper(btrim(COALESCE(ii.kategori_pengadaan, ''))) = 'KSO'`;
+  if (jenis === "regular") return sql`upper(btrim(COALESCE(ii.kategori_pengadaan, ''))) <> 'KSO'`;
+  return sql`true`;
+}
+
 // Penjualan per item × cabang penjualan dalam rentang (itemIds null = semua item).
-async function penjualanPerCabang(sql: Sql, itemIds: number[] | null, r: Rentang) {
+async function penjualanPerCabang(sql: Sql, itemIds: number[] | null, r: Rentang, jenis: JenisPenjualan = "semua") {
   return sql`
     SELECT ii.item_id, ${cabangEffSql(sql)} AS cabang, count(*)::int AS faktur, COALESCE(SUM(ii.qty), 0) AS qty
     FROM accurate_invoice_item ii
@@ -168,6 +188,7 @@ async function penjualanPerCabang(sql: Sql, itemIds: number[] | null, r: Rentang
     ${joinAmFromSalesman(sql)}
     WHERE ${itemIds ? sql`ii.item_id = ANY(${itemIds}::bigint[])` : sql`true`}
       AND ai.tanggal >= ${r.dari}::date AND ai.tanggal <= ${r.sampai}::date
+      AND ${syaratJenis(sql, jenis)}
     GROUP BY 1, 2
   `;
 }
@@ -175,11 +196,15 @@ async function penjualanPerCabang(sql: Sql, itemIds: number[] | null, r: Rentang
 const kunciAvg = (itemId: number, warehouseKode: string) => `${itemId}:${warehouseKode}`;
 
 // Rata-rata qty terjual/bulan per item × gudang dalam rentang.
-async function avgBulanan(itemIds: number[], r: Rentang): Promise<(itemId: number, warehouseKode: string) => number> {
+async function avgBulanan(
+  itemIds: number[],
+  r: Rentang,
+  jenis: JenisPenjualan = "semua",
+): Promise<(itemId: number, warehouseKode: string) => number> {
   const out = new Map<string, number>();
   if (itemIds.length > 0) {
     const sql = db();
-    const [rows, peta] = await Promise.all([penjualanPerCabang(sql, itemIds, r), muatPeta(sql)]);
+    const [rows, peta] = await Promise.all([penjualanPerCabang(sql, itemIds, r, jenis), muatPeta(sql)]);
     const bulan = jumlahBulan(r);
     for (const row of rows) {
       const wh = gudangUntukCabang(row.cabang ? String(row.cabang) : null, peta.manual, peta.gudang);
@@ -463,11 +488,16 @@ export interface GenerateResult {
 // kategori × bulan berjalan. Skip kalau item+gudang masih punya usulan yang
 // berjalan. Dipanggil manual (tombol "Generate Usulan"), bukan cron.
 // Rata-rata penjualan dari rentang pilihan pemakai (kosong = 6 bulan terakhir).
-export async function generateSuggestions(input?: { dari?: unknown; sampai?: unknown }): Promise<GenerateResult> {
+export async function generateSuggestions(
+  input?: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown },
+): Promise<GenerateResult> {
   if (!isDbEnabled()) return { created: 0, skippedExisting: 0, dokumen: 0 };
   const sql = db();
   const rentang = validasiRentang(input, await hariIniJakarta(sql));
   if ("error" in rentang) return { created: 0, skippedExisting: 0, dokumen: 0, error: rentang.error };
+  const jenis = validasiJenis(input?.jenis);
+  if (!jenis) return { created: 0, skippedExisting: 0, dokumen: 0, error: "jenis penjualan harus semua/kso/regular" };
+  const brand = String(input?.brand ?? "").trim();
   const periode = await periodeSekarang(sql);
   const dokumenTersentuh = new Set<string>();
 
@@ -486,6 +516,7 @@ export async function generateSuggestions(input?: { dari?: unknown; sampai?: unk
   const avg = await avgBulanan(
     [...new Set([...bufferItems.map((r) => Number(r.item_id)), ...edNear.map((e) => e.itemId)])],
     rentang,
+    jenis,
   );
   const breaches = await findBufferBreaches(avg);
 
@@ -509,6 +540,15 @@ export async function generateSuggestions(input?: { dari?: unknown; sampai?: unk
     } else {
       combined.set(key, { itemId: e.itemId, warehouseKode: e.warehouseKode, nearestEd: e.nearestEd, reasons: ["near_ed"] });
     }
+  }
+
+  // Filter brand (opsional): hanya barang brand itu yang dibuatkan usulan.
+  if (brand) {
+    const ids = [...new Set([...combined.values()].map((c) => c.itemId))];
+    const cocok = new Set(
+      (await sql`SELECT id FROM unnest(${ids}::bigint[]) AS id WHERE upper(item_brand(id)) = upper(${brand})`).map((r) => Number(r.id)),
+    );
+    for (const [k, c] of combined) if (!cocok.has(c.itemId)) combined.delete(k);
   }
 
   let created = 0;
@@ -543,11 +583,11 @@ export async function generateSuggestions(input?: { dari?: unknown; sampai?: unk
     await sql`
       INSERT INTO forecast_suggestion
         (item_id, warehouse_kode, reasons, current_qty, buffer_qty, buffer_persen, nearest_ed_date, avg_monthly_qty_6m, avg_dari, avg_sampai,
-         pipeline_hot_count, suggested_qty, dokumen_id, kategori)
+         avg_jenis, pipeline_hot_count, suggested_qty, dokumen_id, kategori)
       VALUES
         (${c.itemId}, ${c.warehouseKode}, ${sql.json(c.reasons as unknown as Parameters<typeof sql.json>[0])}, ${currentQty},
          ${c.bufferQty ?? null}, ${c.bufferPersen ?? null}, ${c.nearestEd ?? null}, ${avgQty}, ${rentang.dari}::date, ${rentang.sampai}::date,
-         ${hotCount}, ${suggestedQty}, ${dokumenId}, ${kategori})
+         ${jenis}, ${hotCount}, ${suggestedQty}, ${dokumenId}, ${kategori})
     `;
     dokumenTersentuh.add(dokumenId);
     created++;
@@ -572,6 +612,9 @@ export interface ForecastSuggestionRow {
   avgMonthlyQty6m: number | null;
   avgDari: string | null;
   avgSampai: string | null;
+  /** Jenis penjualan dasar rata-rata (semua/kso/regular); null = baris lama (semua). */
+  avgJenis: string | null;
+  brand: string | null;
   bufferPersen: number | null;
   pipelineHotCount: number;
   suggestedQty: number;
@@ -609,6 +652,8 @@ function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
     avgMonthlyQty6m: r.avg_monthly_qty_6m != null ? Number(r.avg_monthly_qty_6m) : null,
     avgDari: r.avg_dari ? toIsoDate(r.avg_dari) : null,
     avgSampai: r.avg_sampai ? toIsoDate(r.avg_sampai) : null,
+    avgJenis: r.avg_jenis ? String(r.avg_jenis) : null,
+    brand: r.brand ? String(r.brand) : null,
     bufferPersen: r.buffer_persen != null ? Number(r.buffer_persen) : null,
     pipelineHotCount: Number(r.pipeline_hot_count),
     suggestedQty: Number(r.suggested_qty),
@@ -626,7 +671,7 @@ function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
 }
 
 const SUGGESTION_SELECT = `
-  fs.*, ai.no AS item_no, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
+  fs.*, item_brand(fs.item_id) AS brand, ai.no AS item_no, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
   po.po_number AS po_number, ${PO_MATI_SQL} AS po_mati`;
 const SUGGESTION_FROM = `
   FROM forecast_suggestion fs
@@ -664,6 +709,7 @@ export interface ForecastDokumenRow {
   jumlahBarang: number;
   totalQty: number;
   lines: ForecastSuggestionRow[];
+  tersaring: boolean;
 }
 
 /** "2026-11" → "2026-11-01"; null kalau formatnya salah. */
@@ -675,7 +721,10 @@ export function periodeDariBulan(bulan: string | null | undefined): string | nul
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function listDokumen(filter: { status?: string; bulan?: string; id?: string } = {}): Promise<ForecastDokumenRow[]> {
+export async function listDokumen(
+  filter: { status?: string; bulan?: string; id?: string; brand?: string } = {},
+): Promise<ForecastDokumenRow[]> {
+  const brand = String(filter.brand ?? "").trim().toUpperCase();
   const sql = db();
   const periode = periodeDariBulan(filter.bulan);
   if (filter.id && !UUID.test(filter.id)) return [];
@@ -700,8 +749,8 @@ export async function listDokumen(filter: { status?: string; bulan?: string; id?
       ORDER BY ai.name
     `
   ).map(mapSuggestion);
-  return docs.map((d) => {
-    const own = lines.filter((l) => l.dokumenId === String(d.id));
+  const hasil = docs.map((d) => {
+    const own = lines.filter((l) => l.dokumenId === String(d.id) && (!brand || (l.brand ?? "").toUpperCase() === brand));
     const aktif = own.filter((l) => l.status !== "dismissed");
     return {
       id: String(d.id),
@@ -721,8 +770,12 @@ export async function listDokumen(filter: { status?: string; bulan?: string; id?
       jumlahBarang: aktif.length,
       totalQty: aktif.reduce((a, l) => a + qtyEfektif(l), 0),
       lines: own,
+      /** Baris disaring brand — Ajukan/Hitung ulang berlaku ke SELURUH dokumen, jadi UI menahannya. */
+      tersaring: !!brand,
     };
   });
+  // Dengan filter brand, dokumen tanpa barang brand itu disembunyikan.
+  return brand ? hasil.filter((d) => d.lines.length > 0) : hasil;
 }
 
 export async function updateSuggestion(
@@ -784,11 +837,13 @@ export async function dismissSuggestion(id: string, reviewedBy?: string): Promis
 // snapshot saat Generate.
 export async function hitungUlangDokumen(
   id: string,
-  input: { dari?: unknown; sampai?: unknown },
+  input: { dari?: unknown; sampai?: unknown; jenis?: unknown },
 ): Promise<{ ok: boolean; error?: string; baris?: number; rentang?: Rentang }> {
   const sql = db();
   const rentang = validasiRentang(input, await hariIniJakarta(sql));
   if ("error" in rentang) return { ok: false, error: rentang.error };
+  const jenis = validasiJenis(input?.jenis);
+  if (!jenis) return { ok: false, error: "jenis penjualan harus semua/kso/regular" };
   const [d] = await sql`SELECT status FROM forecast_dokumen WHERE id = ${id}`;
   if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
   if (d.status !== "draft") return { ok: false, error: `dokumen sudah ${d.status}, tak bisa dihitung ulang` };
@@ -796,14 +851,14 @@ export async function hitungUlangDokumen(
     SELECT id, item_id, warehouse_kode, current_qty, buffer_qty, buffer_persen FROM forecast_suggestion
     WHERE dokumen_id = ${id} AND status = 'draft'
   `;
-  const avg = await avgBulanan([...new Set(lines.map((l) => Number(l.item_id)))], rentang);
+  const avg = await avgBulanan([...new Set(lines.map((l) => Number(l.item_id)))], rentang, jenis);
   for (const l of lines) {
     const a = avg(Number(l.item_id), String(l.warehouse_kode));
     const persen = l.buffer_persen != null ? Number(l.buffer_persen) : null;
     const buf = persen != null ? bufferEfektif({ bufferPersen: persen, bufferQty: null }, a) : l.buffer_qty != null ? Number(l.buffer_qty) : null;
     await sql`
       UPDATE forecast_suggestion SET
-        avg_monthly_qty_6m = ${a}, avg_dari = ${rentang.dari}::date, avg_sampai = ${rentang.sampai}::date,
+        avg_monthly_qty_6m = ${a}, avg_dari = ${rentang.dari}::date, avg_sampai = ${rentang.sampai}::date, avg_jenis = ${jenis},
         buffer_qty = ${buf}, suggested_qty = ${hitungUsulan(Number(l.current_qty), buf, a)}
       WHERE id = ${l.id} AND status = 'draft'
     `;
@@ -888,6 +943,27 @@ export function labelRentang(rentang: (Rentang | null)[]): string | null {
   return `${tglId(dari)} – ${tglId(sampai)}`;
 }
 
+/** Label jenis penjualan dasar rata-rata satu dokumen; campur → "jenis beragam". */
+export function labelJenis(jenis: (string | null)[]): string | null {
+  const unik = [...new Set(jenis.map((j) => j ?? "semua"))];
+  if (unik.length === 0) return null;
+  if (unik.length > 1) return "jenis penjualan beragam";
+  return `penjualan ${LABEL_JENIS[unik[0] as JenisPenjualan] ?? unik[0]}`;
+}
+
+/** Brand barang yang relevan untuk filter: ber-buffer, punya batch ED, atau pernah diusulkan. */
+export async function listBrand(): Promise<string[]> {
+  const sql = db();
+  const rows = await sql`
+    SELECT DISTINCT item_brand(id) AS brand FROM (
+      SELECT item_id AS id FROM item_stock_buffer
+      UNION SELECT item_id FROM forecast_suggestion
+      UNION SELECT item_id FROM item_stock_batch WHERE ed_date IS NOT NULL AND quantity > 0
+    ) x
+  `;
+  return rows.map((r) => (r.brand ? String(r.brand) : "")).filter(Boolean).sort((a, b) => a.localeCompare(b, "id"));
+}
+
 // "Ajukan" — satu dokumen cabang ke approval berjenjang F11.
 // Wilayah dari pemetaan cabang, kategori dari dokumen; createApprovalRequest
 // dipakai apa adanya.
@@ -928,7 +1004,10 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
       kategori: String(d.kategori),
       periode: toIsoDate(d.periode),
       pipelineHot: Math.max(...lines.map((l) => Number(l.pipeline_hot_count))),
-      rentangRata: labelRentang(lines.map((l) => (l.avg_dari && l.avg_sampai ? { dari: toIsoDate(l.avg_dari), sampai: toIsoDate(l.avg_sampai) } : null))),
+      rentangRata: [
+        labelRentang(lines.map((l) => (l.avg_dari && l.avg_sampai ? { dari: toIsoDate(l.avg_dari), sampai: toIsoDate(l.avg_sampai) } : null))),
+        labelJenis(lines.map((l) => (l.avg_jenis ? String(l.avg_jenis) : null))),
+      ].filter(Boolean).join(" · "),
     },
     lines.map((l) => {
       const reasons = Array.isArray(l.reasons) ? (l.reasons as string[]) : [];
@@ -1247,7 +1326,8 @@ export function kelompokkanRekap(
   );
 }
 
-export async function rekapPurchasing(bulan: string): Promise<RekapResult | { error: string }> {
+export async function rekapPurchasing(bulan: string, brandFilter?: string): Promise<RekapResult | { error: string }> {
+  const brand = String(brandFilter ?? "").trim();
   const periode = periodeDariBulan(bulan);
   if (!periode) return { error: "bulan harus berformat YYYY-MM" };
   const sql = db();
@@ -1263,6 +1343,7 @@ export async function rekapPurchasing(bulan: string): Promise<RekapResult | { er
     LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND ar.status = 'approved'
       AND fs.status IN ('submitted', 'ordered')
+      AND ${brand ? sql`upper(item_brand(fs.item_id)) = upper(${brand})` : sql`true`}
     ORDER BY w.urutan, w.nama
   `;
   const [{ n }] = await sql`
@@ -1338,8 +1419,8 @@ function gayaHeader(ws: ExcelJS.Worksheet) {
 }
 
 /** Excel rekap: sheet Rekap (barang × cabang + total) dan Rincian (per baris dokumen). */
-export async function rekapXlsx(bulan: string): Promise<Buffer | { error: string }> {
-  const rekap = await rekapPurchasing(bulan);
+export async function rekapXlsx(bulan: string, brand?: string): Promise<Buffer | { error: string }> {
+  const rekap = await rekapPurchasing(bulan, brand);
   if ("error" in rekap) return rekap;
   const cabang = [...new Map(rekap.barang.flatMap((b) => b.cabang.map((c) => [c.warehouseKode, c.warehouseNama] as const))).entries()];
   const wb = new ExcelJS.Workbook();
@@ -1393,7 +1474,9 @@ const STATUS_APPROVAL: Record<string, string> = { pending: "Menunggu approval", 
 const STATUS_BARIS: Record<string, string> = { draft: "Draft", submitted: "Diajukan", ordered: "PO tertaut", dismissed: "Diabaikan" };
 
 /** Excel dokumen cabang: sheet Dokumen (ringkasan) + Barang (semua baris, termasuk yang diabaikan). */
-export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?: string }): Promise<{ buf: Buffer; nama: string } | { error: string }> {
+export async function dokumenXlsx(
+  filter: { status?: string; bulan?: string; id?: string; brand?: string },
+): Promise<{ buf: Buffer; nama: string } | { error: string }> {
   if (filter.bulan && !periodeDariBulan(filter.bulan)) return { error: "bulan harus berformat YYYY-MM" };
   const docs = await listDokumen(filter);
   if (filter.id && docs.length === 0) return { error: "dokumen tidak ditemukan" };
@@ -1429,6 +1512,7 @@ export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?
     { header: "Kategori", key: "kategori", width: 10 },
     { header: "Kode Barang", key: "item_no", width: 16 },
     { header: "Nama Barang", key: "item_name", width: 44 },
+    { header: "Brand", key: "brand", width: 16 },
     { header: "Alasan", key: "alasan", width: 26 },
     { header: "Stok", key: "stok", width: 9, style: { numFmt: "#,##0.##" } },
     { header: "Buffer %", key: "persen", width: 9, style: { numFmt: "#,##0.##" } },
@@ -1436,6 +1520,7 @@ export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?
     { header: "ED Terdekat", key: "ed", width: 12 },
     { header: "Rata²/bln", key: "avg", width: 10, style: { numFmt: "#,##0.##" } },
     { header: "Rentang Rata²", key: "rentang", width: 24 },
+    { header: "Jenis Penjualan", key: "jenis", width: 15 },
     { header: "Usulan Sistem", key: "usulan", width: 12, style: { numFmt: "#,##0" } },
     { header: "Qty Final", key: "final", width: 10, style: { numFmt: "#,##0" } },
     { header: "Catatan", key: "notes", width: 32 },
@@ -1447,6 +1532,7 @@ export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?
     for (const l of d.lines) {
       wsb.addRow({
         dok: d.kode, cabang: d.warehouseNama, kategori: l.kategori ?? d.kategori ?? "", item_no: l.itemNo ?? "", item_name: l.itemName,
+        brand: l.brand ?? "", jenis: LABEL_JENIS[(l.avgJenis ?? "semua") as JenisPenjualan] ?? l.avgJenis,
         alasan: l.reasons.map((r) => alasan[r] ?? r).join(", "), stok: l.currentQty, persen: l.bufferPersen, buffer: l.bufferQty,
         ed: l.nearestEdDate ?? "", avg: l.avgMonthlyQty6m, rentang: labelRentang([l.avgDari && l.avgSampai ? { dari: l.avgDari, sampai: l.avgSampai } : null]) ?? "",
         usulan: l.suggestedQty, final: qtyEfektif(l), notes: l.notes ?? "", status: STATUS_BARIS[l.status] ?? l.status, po: l.purchaseOrderNumber ?? "",
@@ -1457,6 +1543,6 @@ export async function dokumenXlsx(filter: { status?: string; bulan?: string; id?
 
   const nama = filter.id && docs[0]
     ? `${docs[0].kode}.xlsx`
-    : `Dokumen_Forecast${filter.bulan ? `_${filter.bulan}` : ""}${filter.status ? `_${filter.status}` : ""}.xlsx`;
+    : `Dokumen_Forecast${filter.bulan ? `_${filter.bulan}` : ""}${filter.status ? `_${filter.status}` : ""}${filter.brand ? `_${filter.brand}` : ""}.xlsx`;
   return { buf: Buffer.from(await wb.xlsx.writeBuffer()), nama };
 }

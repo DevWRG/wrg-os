@@ -9,7 +9,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const guard = await requireFeature("/forecast-submission", "edit");
   if (!guard.ok) return guard.res;
   const { id } = await params;
-  let body: { dari?: unknown; sampai?: unknown } = {};
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -19,7 +19,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const res = await gatewayFetch(`/forecast/dokumen/${encodeURIComponent(id)}/hitung-ulang`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dari: body.dari, sampai: body.sampai }),
+      body: JSON.stringify({ dari: body.dari, sampai: body.sampai, jenis: body.jenis }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });

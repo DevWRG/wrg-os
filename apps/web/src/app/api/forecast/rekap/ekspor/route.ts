@@ -7,9 +7,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const guard = await requireFeature("/forecast-submission", "view");
   if (!guard.ok) return guard.res;
-  const bulan = new URL(req.url).searchParams.get("bulan") ?? "";
+  const sp = new URL(req.url).searchParams;
+  const bulan = sp.get("bulan") ?? "";
+  const brand = sp.get("brand") ?? "";
   try {
-    const res = await gatewayFetch(`/forecast/rekap.xlsx?bulan=${encodeURIComponent(bulan)}`);
+    const res = await gatewayFetch(`/forecast/rekap.xlsx?bulan=${encodeURIComponent(bulan)}${brand ? `&brand=${encodeURIComponent(brand)}` : ""}`);
     if (!res.ok) return Response.json(await res.json().catch(() => ({ error: "gagal ekspor" })), { status: res.status });
     return new Response(await res.arrayBuffer(), {
       status: 200,

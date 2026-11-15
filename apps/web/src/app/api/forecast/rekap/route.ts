@@ -7,9 +7,11 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const guard = await requireFeature("/forecast-submission", "view");
   if (!guard.ok) return guard.res;
-  const bulan = new URL(req.url).searchParams.get("bulan") ?? "";
+  const sp = new URL(req.url).searchParams;
+  const bulan = sp.get("bulan") ?? "";
+  const brand = sp.get("brand") ?? "";
   try {
-    const res = await gatewayFetch(`/forecast/rekap?bulan=${encodeURIComponent(bulan)}`);
+    const res = await gatewayFetch(`/forecast/rekap?bulan=${encodeURIComponent(bulan)}${brand ? `&brand=${encodeURIComponent(brand)}` : ""}`);
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
