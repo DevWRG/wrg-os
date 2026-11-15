@@ -3,6 +3,12 @@ import { test } from "node:test";
 
 import {
   bisaTautPo,
+  bufferEfektif,
+  hitungUsulan,
+  jumlahBulan,
+  labelRentang,
+  rentangBulanTerakhir,
+  validasiRentang,
   deskripsiDokumen,
   kategoriDariKlasifikasi,
   kelompokkanRekap,
@@ -83,4 +89,44 @@ test("kelompokkanRekap: jumlahkan qty semua cabang per barang", () => {
     ["Reagen B", 15, 2, 1],
     ["Alat A", 1, 1, 1],
   ]);
+});
+
+test("jumlahBulan: bulan kalender utuh dihitung bulat, rentang bebas pakai hari", () => {
+  assert.equal(jumlahBulan({ dari: "2026-08-01", sampai: "2026-10-31" }), 3);
+  assert.equal(jumlahBulan({ dari: "2026-05-01", sampai: "2026-10-31" }), 6);
+  assert.equal(jumlahBulan({ dari: "2025-12-01", sampai: "2026-02-28" }), 3);
+  assert.ok(Math.abs(jumlahBulan({ dari: "2026-08-15", sampai: "2026-09-14" }) - 31 / 30.4375) < 1e-9);
+});
+
+test("rentangBulanTerakhir: N bulan utuh sebelum bulan berjalan", () => {
+  assert.deepEqual(rentangBulanTerakhir("2026-11-15"), { dari: "2026-05-01", sampai: "2026-10-31" });
+  assert.deepEqual(rentangBulanTerakhir("2026-02-10", 3), { dari: "2025-11-01", sampai: "2026-01-31" });
+});
+
+test("validasiRentang: kosong = 6 bulan, tolak terbalik / masa depan / > 36 bulan", () => {
+  assert.deepEqual(validasiRentang({}, "2026-11-15"), { dari: "2026-05-01", sampai: "2026-10-31" });
+  assert.deepEqual(validasiRentang({ dari: "2026-08-01", sampai: "2026-10-31" }, "2026-11-15"), { dari: "2026-08-01", sampai: "2026-10-31" });
+  assert.ok("error" in validasiRentang({ dari: "2026-10-31", sampai: "2026-08-01" }, "2026-11-15"));
+  assert.ok("error" in validasiRentang({ dari: "2026-08-01", sampai: "2026-12-01" }, "2026-11-15"));
+  assert.ok("error" in validasiRentang({ dari: "2022-01-01", sampai: "2026-10-31" }, "2026-11-15"));
+  assert.ok("error" in validasiRentang({ dari: "2026-08-01" }, "2026-11-15"));
+});
+
+test("bufferEfektif: persen × rata-rata; tanpa persen pakai angka tetap lama", () => {
+  assert.equal(bufferEfektif({ bufferPersen: 20, bufferQty: null }, 70), 14);
+  assert.equal(bufferEfektif({ bufferPersen: 150, bufferQty: 3 }, 10), 15);
+  assert.equal(bufferEfektif({ bufferPersen: null, bufferQty: 4 }, 70), 4);
+  assert.equal(bufferEfektif({ bufferPersen: null, bufferQty: null }, 70), null);
+});
+
+test("hitungUsulan: tutup kekurangan ke buffer + 1 bulan rata-rata", () => {
+  assert.equal(hitungUsulan(0, 14, 70), 84);
+  assert.equal(hitungUsulan(20, 14, 70), 70);
+  assert.equal(hitungUsulan(0, null, 12.4), 12);
+});
+
+test("labelRentang: satu rentang, beragam, atau baris lama", () => {
+  assert.equal(labelRentang([{ dari: "2026-08-01", sampai: "2026-10-31" }, { dari: "2026-08-01", sampai: "2026-10-31" }]), "1 Agu 2026 – 31 Okt 2026");
+  assert.equal(labelRentang([{ dari: "2026-08-01", sampai: "2026-10-31" }, null]), "beragam per barang");
+  assert.equal(labelRentang([null]), "6 bulan terakhir");
 });
