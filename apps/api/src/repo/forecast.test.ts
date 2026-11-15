@@ -8,6 +8,7 @@ import {
   jumlahBulan,
   labelRentang,
   rentangBulanTerakhir,
+  tentukanWilayah,
   validasiRentang,
   deskripsiDokumen,
   gudangUntukCabang,
@@ -145,4 +146,13 @@ test("gudangUntukCabang: peta manual menang, lalu nama sama dengan kode/cabang/n
   assert.equal(gudangUntukCabang(" solo & yogyakarta ", manual, gudang), "SOLO");
   assert.equal(gudangUntukCabang("MALANG", manual, gudang), null);
   assert.equal(gudangUntukCabang(null, manual, gudang), null);
+});
+
+test("tentukanWilayah: ikut HoD cabang penjualan; kosong / tanpa HoD / campur → null", () => {
+  const hod = new Map([["rocky", "east"], ["yogi", "west"]]);
+  assert.deepEqual(tentukanWilayah([{ cabang: "JAKARTA", hod: "yogi" }, { cabang: "PALEMBANG", hod: "Yogi" }], hod), { wilayah: "west" });
+  assert.deepEqual(tentukanWilayah([{ cabang: "MALANG", hod: "rocky" }, { cabang: "X", hod: null }], hod), { wilayah: "east" });
+  assert.equal(tentukanWilayah([], hod).wilayah, null);
+  assert.equal(tentukanWilayah([{ cabang: "X", hod: null }], hod).wilayah, null);
+  assert.equal(tentukanWilayah([{ cabang: "A", hod: "rocky" }, { cabang: "B", hod: "yogi" }], hod).wilayah, null);
 });
