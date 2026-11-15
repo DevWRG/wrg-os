@@ -370,6 +370,7 @@ import {
 import { aiBaseUrl, callAi, statistikDegradasiAi } from "./ai.js";
 import { startScheduler, getScheduleStatus, jadwalTerdaftar } from "./scheduler.js";
 import { statusJob } from "./repo/job-run.js";
+import { petaLayanan } from "./repo/peta-layanan.js";
 import { signJwt, verifyJwt } from "./auth.js";
 import { gerbangAuth } from "./auth-gate.js";
 import { verifyCredentials, createUser, countUsers, listAppUsers, setUserPassword, updateAppUser, deleteAppUser, getAppUserById, createUserFromRoster, generatePassword, changeOwnPassword, normalizeLoginRole, LOGIN_ROLES } from "./repo/users.js";
@@ -6557,6 +6558,13 @@ app.get("/agents/schedule", (c) => c.json(getScheduleStatus()));
 app.get("/jobs/status", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json({ sekarang: new Date().toISOString(), jobs: await statusJob(jadwalTerdaftar()) });
+});
+
+// Peta layanan di /status-job: status proses server (pm2 + launchd) + ringkasan job per kelompok.
+// Hanya membaca; tanpa DB, bagian job dikosongkan tapi status proses tetap tampil.
+app.get("/ops/peta-layanan", async (c) => {
+  const jobs = isDbEnabled() ? await statusJob(jadwalTerdaftar()) : [];
+  return c.json(await petaLayanan(jobs));
 });
 
 // ── WhatsApp raw store (D1b): feeder pesan mentah → wa_message ──
