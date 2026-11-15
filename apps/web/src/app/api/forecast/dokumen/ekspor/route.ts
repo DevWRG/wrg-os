@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   if (!guard.ok) return guard.res;
   const sp = new URL(req.url).searchParams;
   const qs = new URLSearchParams();
-  for (const k of ["status", "bulan", "id"]) {
+  for (const k of ["status", "bulan", "id", "brand"]) {
     const v = sp.get(k);
     if (v) qs.set(k, v);
   }

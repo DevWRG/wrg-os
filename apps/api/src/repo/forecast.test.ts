@@ -15,9 +15,11 @@ import {
   kategoriDariKlasifikasi,
   kelompokkanRekap,
   kodeDokumen,
+  labelJenis,
   periodeDariBulan,
   qtyEfektif,
   usulanMasihBerjalan,
+  validasiJenis,
 } from "./forecast.js";
 
 const e = (status: string, poDiterima = false, poMati = false) => ({ status, poDiterima, poMati });
@@ -155,4 +157,17 @@ test("tentukanWilayah: ikut HoD cabang penjualan; kosong / tanpa HoD / campur â†
   assert.equal(tentukanWilayah([], hod).wilayah, null);
   assert.equal(tentukanWilayah([{ cabang: "X", hod: null }], hod).wilayah, null);
   assert.equal(tentukanWilayah([{ cabang: "A", hod: "rocky" }, { cabang: "B", hod: "yogi" }], hod).wilayah, null);
+});
+
+test("validasiJenis: kosong = semua, nilai lain ditolak", () => {
+  assert.equal(validasiJenis(undefined), "semua");
+  assert.equal(validasiJenis("KSO"), "kso");
+  assert.equal(validasiJenis("regular"), "regular");
+  assert.equal(validasiJenis("tender"), null);
+});
+
+test("labelJenis: satu jenis, baris lama = KSO & Regular, campur = beragam", () => {
+  assert.equal(labelJenis(["kso", "kso"]), "penjualan KSO");
+  assert.equal(labelJenis([null]), "penjualan KSO & Regular");
+  assert.equal(labelJenis(["kso", "regular"]), "jenis penjualan beragam");
 });

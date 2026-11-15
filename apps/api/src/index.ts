@@ -700,6 +700,7 @@ import {
   linkPoRekap,
   rekapXlsx,
   dokumenXlsx,
+  listBrand,
   listBufferConfig,
   upsertBufferConfig,
   linkPurchaseOrder,
@@ -2418,13 +2419,13 @@ app.get("/approval-requests/:id/attachments/:attachmentId", async (c) => {
 // Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
 app.post("/forecast/generate", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { dari?: unknown; sampai?: unknown } = {};
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown } = {};
   try {
     body = await c.req.json();
   } catch {
-    /* opsional — kosong = 6 bulan terakhir */
+    /* opsional — kosong = 6 bulan terakhir, KSO & Regular, semua brand */
   }
-  const r = await generateSuggestions({ dari: body.dari, sampai: body.sampai });
+  const r = await generateSuggestions({ dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand });
   return c.json(r, r.error ? 400 : 200);
 });
 
@@ -2461,7 +2462,11 @@ app.post("/forecast/suggestions/:id/dismiss", async (c) => {
 // Dokumen cabang × kategori × bulan (migrasi 317) — satu dokumen = satu approval.
 app.get("/forecast/dokumen", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const rows = await listDokumen({ status: c.req.query("status") || undefined, bulan: c.req.query("bulan") || undefined });
+  const rows = await listDokumen({
+    status: c.req.query("status") || undefined,
+    bulan: c.req.query("bulan") || undefined,
+    brand: c.req.query("brand") || undefined,
+  });
   return c.json({ count: rows.length, dokumen: rows });
 });
 
@@ -2471,6 +2476,7 @@ app.get("/forecast/dokumen.xlsx", async (c) => {
     status: c.req.query("status") || undefined,
     bulan: c.req.query("bulan") || undefined,
     id: c.req.query("id") || undefined,
+    brand: c.req.query("brand") || undefined,
   });
   if ("error" in r) return c.json(r, 400);
   return c.body(new Uint8Array(r.buf), 200, {
@@ -2495,7 +2501,7 @@ app.post("/forecast/dokumen/:id/submit", async (c) => {
 
 app.post("/forecast/dokumen/:id/hitung-ulang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { dari?: unknown; sampai?: unknown } = {};
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown } = {};
   try {
     body = await c.req.json();
   } catch {
@@ -2520,14 +2526,14 @@ app.post("/forecast/dokumen/:id/tutup", async (c) => {
 // Rekap Purchasing: barang × cabang dari dokumen yang sudah disetujui.
 app.get("/forecast/rekap", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  const r = await rekapPurchasing(c.req.query("bulan") ?? "");
+  const r = await rekapPurchasing(c.req.query("bulan") ?? "", c.req.query("brand") || undefined);
   return c.json(r, "error" in r ? 400 : 200);
 });
 
 app.get("/forecast/rekap.xlsx", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const bulan = c.req.query("bulan") ?? "";
-  const r = await rekapXlsx(bulan);
+  const r = await rekapXlsx(bulan, c.req.query("brand") || undefined);
   if (!Buffer.isBuffer(r)) return c.json(r, 400);
   return c.body(new Uint8Array(r), 200, {
     "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2564,6 +2570,11 @@ app.post("/forecast/cabang-gudang", async (c) => {
   }
   const r = await setCabangGudang(String(body.cabang ?? ""), body.warehouseKode ?? null, body.updatedBy ?? null);
   return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/brand", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ brand: await listBrand() });
 });
 
 app.get("/forecast/wilayah-cabang", async (c) => {

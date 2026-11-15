@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { FilterCombo, FilterSelect } from "@/components/ui/filter-select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,8 @@ interface Line {
   avgMonthlyQty6m: number | null;
   avgDari: string | null;
   avgSampai: string | null;
+  avgJenis: string | null;
+  brand: string | null;
   bufferPersen: number | null;
   suggestedQty: number;
   finalQty: number | null;
@@ -56,6 +59,8 @@ interface Dokumen {
   jumlahBarang: number;
   totalQty: number;
   lines: Line[];
+  /** Baris disaring brand — aksi dokumen ditahan. */
+  tersaring?: boolean;
 }
 
 interface RekapCabang {
@@ -129,6 +134,19 @@ function labelRentang(lines: Line[]): string | null {
 
 const PRESET = [3, 6, 12] as const;
 
+// Jenis penjualan dasar rata-rata (migrasi 321): "" = KSO & Regular.
+const JENIS_OPSI = [
+  { value: "kso", label: "KSO" },
+  { value: "regular", label: "Regular" },
+];
+const LABEL_JENIS: Record<string, string> = { semua: "KSO & Regular", kso: "KSO", regular: "Regular" };
+
+function labelJenisBaris(lines: Line[]): string | null {
+  const unik = [...new Set(lines.map((l) => l.avgJenis ?? "semua"))];
+  if (unik.length === 0) return null;
+  return unik.length > 1 ? "jenis beragam" : `penjualan ${LABEL_JENIS[unik[0]] ?? unik[0]}`;
+}
+
 function RentangPicker({ value, onChange }: { value: Rentang; onChange: (r: Rentang) => void }) {
   const hariIni = tanggalLokalIso();
   return (
@@ -176,6 +194,25 @@ export default function ForecastSubmissionPage() {
   const [generating, setGenerating] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [rentang, setRentang] = useState<Rentang>(() => bulanTerakhir(6));
+  const [jenis, setJenis] = useState("");
+  const [brand, setBrand] = useState("");
+  const [brandOpsi, setBrandOpsi] = useState<{ value: string; label: string }[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/forecast/brand", { cache: "no-store" });
+        const data = await res.json();
+        if (active && res.ok) setBrandOpsi((data.brand ?? []).map((b: string) => ({ value: b, label: b })));
+      } catch {
+        /* filter brand opsional — tanpa daftar, tetap jalan */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
 
   async function generate() {
     if (!rentang.dari || !rentang.sampai) {
@@ -186,7 +223,7 @@ export default function ForecastSubmissionPage() {
     setError(null);
     setNotice(null);
     try {
-      const data = await kirim("/api/forecast/generate", "POST", rentang);
+      const data = await kirim("/api/forecast/generate", "POST", { ...rentang, jenis: jenis || "semua", brand });
       setNotice(
         data.created > 0
           ? `${data.created} barang baru masuk ke ${data.dokumen} dokumen cabang` +
@@ -219,9 +256,13 @@ export default function ForecastSubmissionPage() {
 
       <Card>
         <CardContent className="flex flex-wrap items-end justify-between gap-3 pt-4">
-          <RentangPicker value={rentang} onChange={setRentang} />
+          <div className="flex flex-wrap items-end gap-3">
+            <RentangPicker value={rentang} onChange={setRentang} />
+            <FilterSelect label="Jenis penjualan" value={jenis} onChange={setJenis} options={JENIS_OPSI} semua="KSO & Regular" />
+            <FilterCombo label="Brand" value={brand} onChange={setBrand} options={brandOpsi} semua="Semua brand" />
+          </div>
           <Button size="sm" onClick={() => void generate()} disabled={generating}>
-            {generating ? "Men-generate…" : "Generate Usulan"}
+            {generating ? "Men-generate…" : brand ? `Generate Usulan (${brand})` : "Generate Usulan"}
           </Button>
         </CardContent>
       </Card>
@@ -237,9 +278,9 @@ export default function ForecastSubmissionPage() {
       {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
 
       {tab === "dokumen" ? (
-        <DokumenTab reloadKey={reloadKey} rentang={rentang} onError={setError} onNotice={setNotice} />
+        <DokumenTab reloadKey={reloadKey} rentang={rentang} jenis={jenis || "semua"} brand={brand} onError={setError} onNotice={setNotice} />
       ) : (
-        <RekapTab onError={setError} onNotice={setNotice} />
+        <RekapTab brand={brand} onError={setError} onNotice={setNotice} />
       )}
     </div>
   );
@@ -250,11 +291,15 @@ export default function ForecastSubmissionPage() {
 function DokumenTab({
   reloadKey,
   rentang,
+  jenis,
+  brand,
   onError,
   onNotice,
 }: {
   reloadKey: number;
   rentang: Rentang;
+  jenis: string;
+  brand: string;
   onError: (e: string | null) => void;
   onNotice: (n: string | null) => void;
 }) {
@@ -272,6 +317,7 @@ function DokumenTab({
       try {
         const qs = new URLSearchParams({ status });
         if (bulan) qs.set("bulan", bulan);
+        if (brand) qs.set("brand", brand);
         const res = await fetch(`/api/forecast/dokumen?${qs}`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "gagal memuat dokumen");
@@ -285,7 +331,7 @@ function DokumenTab({
     return () => {
       active = false;
     };
-  }, [status, bulan, tick, reloadKey, onError]);
+  }, [status, bulan, brand, tick, reloadKey, onError]);
 
   return (
     <div className="space-y-4">
@@ -311,7 +357,7 @@ function DokumenTab({
           variant="soft"
           className="ml-auto"
           disabled={docs.length === 0}
-          render={<a href={`/api/forecast/dokumen/ekspor?${new URLSearchParams({ status, ...(bulan ? { bulan } : {}) })}`} />}
+          render={<a href={`/api/forecast/dokumen/ekspor?${new URLSearchParams({ status, ...(bulan ? { bulan } : {}), ...(brand ? { brand } : {}) })}`} />}
           nativeButton={false}
         >
           Ekspor Excel
@@ -333,7 +379,8 @@ function DokumenTab({
               // Kunci ikut isi baris: data berubah (pindah kategori, simpan) → state edit dibangun ulang.
               key={`${d.id}:${d.lines.map((l) => `${l.id}${l.status}${l.finalQty ?? ""}${l.notes ?? ""}`).join("|")}`}
               dok={d}
-              rentang={rentang} onChanged={reload} onError={onError} onNotice={onNotice} />
+              rentang={rentang}
+              jenis={jenis} onChanged={reload} onError={onError} onNotice={onNotice} />
           ))}
         </div>
       )}
@@ -344,12 +391,14 @@ function DokumenTab({
 function DokumenCard({
   dok,
   rentang,
+  jenis,
   onChanged,
   onError,
   onNotice,
 }: {
   dok: Dokumen;
   rentang: Rentang;
+  jenis: string;
   onChanged: () => void;
   onError: (e: string | null) => void;
   onNotice: (n: string | null) => void;
@@ -459,8 +508,9 @@ function DokumenCard({
       onChanged();
     });
 
-  const labelRata = labelRentang(aktif);
-  const rentangBaru = `${tglPendek(rentang.dari)} – ${tglPendek(rentang.sampai)}`;
+  const labelRata = [labelRentang(aktif), labelJenisBaris(aktif)].filter(Boolean).join(" · ");
+  const rentangBaru = `${tglPendek(rentang.dari)} – ${tglPendek(rentang.sampai)}, ${LABEL_JENIS[jenis] ?? jenis}`;
+  const tersaring = !!dok.tersaring;
   const hitungUlang = () =>
     confirm(
       {
@@ -470,7 +520,7 @@ function DokumenCard({
       },
       () => void jalankan(async () => {
         if (!(await simpanSemua())) return;
-        await kirim(`/api/forecast/dokumen/${dok.id}/hitung-ulang`, "POST", rentang);
+        await kirim(`/api/forecast/dokumen/${dok.id}/hitung-ulang`, "POST", { ...rentang, jenis });
         onNotice(`${dok.kode}: dihitung ulang dari ${rentangBaru}.`);
         onChanged();
       }),
@@ -501,6 +551,7 @@ function DokumenCard({
           <div className="font-medium whitespace-normal">{l.itemName}</div>
           <div className="text-muted-foreground flex flex-wrap gap-x-2 text-xs">
             {l.itemNo && <span>{l.itemNo}</span>}
+            {l.brand && <span>{l.brand}</span>}
             {l.reasons.map((r) => {
               const key = r === "near_ed" && lewat ? "ed_lewat" : r;
               return (
@@ -623,7 +674,12 @@ function DokumenCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <PagedTable header={header} rows={rows} colSpan={kolom} empty="Tidak ada barang." label="barang" />
-        {draft && (
+        {draft && tersaring && (
+          <p className="text-muted-foreground border-t pt-3 text-right text-xs">
+            Menampilkan sebagian barang (filter brand). Hapus filter brand untuk menyimpan, menghitung ulang, atau mengajukan dokumen ini.
+          </p>
+        )}
+        {draft && !tersaring && (
           <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
             <Button size="sm" variant="ghost" disabled={busy} onClick={tutup}>
               Tutup dokumen
@@ -657,7 +713,15 @@ function DokumenCard({
 
 // ── Tab Rekap Purchasing ───────────────────────────────────────────────────
 
-function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; onNotice: (n: string | null) => void }) {
+function RekapTab({
+  brand,
+  onError,
+  onNotice,
+}: {
+  brand: string;
+  onError: (e: string | null) => void;
+  onNotice: (n: string | null) => void;
+}) {
   const [bulan, setBulan] = useState(bulanIni);
   const [barang, setBarang] = useState<RekapBarang[]>([]);
   const [menunggu, setMenunggu] = useState(0);
@@ -671,7 +735,7 @@ function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; 
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/forecast/rekap?bulan=${bulan}`, { cache: "no-store" });
+        const res = await fetch(`/api/forecast/rekap?${new URLSearchParams({ bulan, ...(brand ? { brand } : {}) })}`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "gagal memuat rekap");
         if (!active) return;
@@ -686,7 +750,7 @@ function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; 
     return () => {
       active = false;
     };
-  }, [bulan, tick, onError]);
+  }, [bulan, brand, tick, onError]);
 
   async function tautkan(b: RekapBarang) {
     const poNumber = (po[b.itemId] ?? "").trim();
@@ -787,7 +851,10 @@ function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; 
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <div>
-            <CardTitle className="text-base">Rekap Purchasing — {namaBulan(bulan)}</CardTitle>
+            <CardTitle className="text-base">
+              Rekap Purchasing — {namaBulan(bulan)}
+              {brand ? ` · ${brand}` : ""}
+            </CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
               Gabungan dokumen semua cabang yang sudah disetujui · {barang.length} barang · total qty {angka(totalQty)}.
               Buat PO di Accurate, lalu tautkan nomornya per barang (berlaku untuk semua cabang barang itu).
@@ -797,7 +864,7 @@ function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; 
             size="sm"
             variant="soft"
             disabled={barang.length === 0}
-            render={<a href={`/api/forecast/rekap/ekspor?bulan=${bulan}`} />}
+            render={<a href={`/api/forecast/rekap/ekspor?${new URLSearchParams({ bulan, ...(brand ? { brand } : {}) })}`} />}
             nativeButton={false}
           >
             Ekspor Excel
