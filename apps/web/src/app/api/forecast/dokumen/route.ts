@@ -1,0 +1,23 @@
+import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
+
+export const dynamic = "force-dynamic";
+
+// Gateway → apps/api GET /forecast/dokumen (F19, dokumen cabang × kategori × bulan).
+export async function GET(req: Request) {
+  const guard = await requireFeature("/forecast-submission", "view");
+  if (!guard.ok) return guard.res;
+  const sp = new URL(req.url).searchParams;
+  const qs = new URLSearchParams();
+  for (const k of ["status", "bulan"]) {
+    const v = sp.get(k);
+    if (v) qs.set(k, v);
+  }
+  try {
+    const res = await gatewayFetch(`/forecast/dokumen${qs.size ? `?${qs}` : ""}`);
+    const data = await res.json();
+    return Response.json(data, { status: res.status });
+  } catch {
+    return Response.json({ error: "backend unreachable" }, { status: 502 });
+  }
+}

@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonTable } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PagedTable } from "@/components/ui/paged-table";
+import { TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { WILAYAH_OPTIONS } from "@/lib/approval-routing";
 
 interface BufferRow {
   itemId: number;
@@ -147,7 +149,7 @@ export default function ForecastBufferConfigPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold">Setup Buffer Stok</h1>
+        <h1 className="text-2xl font-semibold">Setup Buffer & Wilayah</h1>
         <p className="text-muted-foreground">
           F19 — safety stock per item per gudang, dipakai sistem sbg salah satu pemicu usulan forecast. Item
           tanpa buffer tidak pernah kena alert (bukan error).
@@ -161,6 +163,8 @@ export default function ForecastBufferConfigPage() {
           </Link>
         </p>
       </div>
+
+      <WilayahCabangCard />
 
       <Card>
         <CardHeader>
@@ -234,31 +238,124 @@ export default function ForecastBufferConfigPage() {
           ) : rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">Belum ada buffer dikonfigurasi.</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Item</TableHead>
-                  <TableHead>Gudang</TableHead>
-                  <TableHead>Buffer</TableHead>
-                  <TableHead>Stok Saat Ini</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={`${r.itemId}-${r.warehouseKode}`}>
-                    <TableCell>{r.itemName}</TableCell>
-                    <TableCell>{r.warehouseNama}</TableCell>
-                    <TableCell>{r.bufferQty}</TableCell>
-                    <TableCell className={r.currentQty <= r.bufferQty ? "text-destructive font-medium" : ""}>
-                      {r.currentQty}
-                    </TableCell>
+            <PagedTable
+              label="buffer"
+              header={
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead>Gudang</TableHead>
+                    <TableHead>Buffer</TableHead>
+                    <TableHead>Stok Saat Ini</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+              }
+              rows={rows.map((r) => (
+                <TableRow key={`${r.itemId}-${r.warehouseKode}`}>
+                  <TableCell>{r.itemName}</TableCell>
+                  <TableCell>{r.warehouseNama}</TableCell>
+                  <TableCell>{r.bufferQty}</TableCell>
+                  <TableCell className={r.currentQty <= r.bufferQty ? "text-destructive font-medium" : ""}>
+                    {r.currentQty}
+                  </TableCell>
+                </TableRow>
+              ))}
+            />
           )}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+interface WilayahRow {
+  kode: string;
+  nama: string;
+  wilayah: string | null;
+}
+
+// Wilayah approval per cabang (migrasi 317): dokumen forecast cabang diajukan
+// ke HoD Sales wilayah ini di tahap 1 — dipetakan sekali di sini, bukan dipilih
+// tiap kali mengajukan. Cabang tanpa wilayah: dokumennya tak bisa diajukan.
+function WilayahCabangCard() {
+  const [rows, setRows] = useState<WilayahRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/forecast/wilayah-cabang", { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "gagal memuat wilayah cabang");
+        if (active) setRows(data.rows ?? []);
+      } catch (e) {
+        if (active) setError(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function ubah(kode: string, wilayah: string) {
+    setBusy(kode);
+    setError(null);
+    try {
+      const res = await fetch("/api/forecast/wilayah-cabang", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kode, wilayah: wilayah || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
+      setRows((prev) => prev.map((r) => (r.kode === kode ? { ...r, wilayah: wilayah || null } : r)));
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const belum = rows.filter((r) => !r.wilayah).length;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Wilayah Approval per Cabang</CardTitle>
+        <p className="text-muted-foreground text-xs">
+          Menentukan HoD Sales tahap 1 untuk dokumen forecast cabang itu.
+          {belum > 0 && <span className="text-destructive"> {belum} cabang belum dipetakan — dokumennya belum bisa diajukan.</span>}
+        </p>
+      </CardHeader>
+      <CardContent>
+        {error && <p className="text-destructive mb-2 text-sm">{error}</p>}
+        {loading ? (
+          <SkeletonTable rows={4} cols={2} />
+        ) : (
+          <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+            {rows.map((r) => (
+              <div key={r.kode} className="flex items-center justify-between gap-3 text-sm">
+                <span className={r.wilayah ? "" : "text-destructive"}>{r.nama}</span>
+                <select
+                  className="border-input bg-card h-8 w-32 rounded-lg border px-2 text-sm"
+                  value={r.wilayah ?? ""}
+                  disabled={busy === r.kode}
+                  onChange={(e) => void ubah(r.kode, e.target.value)}
+                >
+                  <option value="">Belum diatur</option>
+                  {WILAYAH_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label.split(" — ")[0]}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

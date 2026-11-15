@@ -8,7 +8,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const guard = await requireFeature("/forecast-submission", "edit");
   if (!guard.ok) return guard.res;
   const { id } = await params;
-  let body: unknown = {};
+  let body: Record<string, unknown> = {};
   try {
     body = await req.json();
   } catch {
@@ -18,7 +18,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const res = await gatewayFetch(`/forecast/suggestions/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      // Daftar putih: hanya field yang boleh diedit Supply Chain.
+      body: JSON.stringify(Object.fromEntries(["finalQty", "notes", "kategori"].filter((k) => k in body).map((k) => [k, body[k]]))),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });

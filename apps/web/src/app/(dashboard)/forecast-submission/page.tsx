@@ -9,221 +9,133 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SkeletonCardGrid } from "@/components/ui/loading";
-import { KATEGORI_OPTIONS, WILAYAH_OPTIONS } from "@/lib/approval-routing";
+import { PagedTable } from "@/components/ui/paged-table";
+import { TableHead, TableHeader, TableRow, TableCell } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useConfirm } from "@/components/ui/use-confirm";
+import { KATEGORI_OPTIONS, labelWilayah } from "@/lib/approval-routing";
 import { edSudahLewat, tanggalLokalIso } from "@/lib/forecast-ed";
 
-interface Suggestion {
+// F19 — usulan dikumpulkan per DOKUMEN cabang × kategori × bulan (migrasi 317,
+// keputusan user 15 Nov 2026): satu dokumen = satu approval. Purchasing
+// melihat rekap semua cabang per barang di tab Rekap Purchasing.
+
+interface Line {
   id: string;
+  itemNo: string | null;
   itemName: string;
-  warehouseNama: string;
+  kategori: string | null;
   reasons: string[];
   currentQty: number;
   bufferQty: number | null;
   nearestEdDate: string | null;
   avgMonthlyQty6m: number | null;
-  pipelineHotCount: number;
   suggestedQty: number;
   finalQty: number | null;
   notes: string | null;
   status: string;
-  approvalRequestId: string | null;
-  approvalStatus: string | null;
-  purchaseOrderId: string | null;
   purchaseOrderNumber: string | null;
   purchaseOrderMati?: boolean;
-  createdAt: string;
+}
+
+interface Dokumen {
+  id: string;
+  kode: string;
+  warehouseNama: string;
+  wilayah: string | null;
+  kategori: string | null;
+  periode: string;
+  status: string;
+  approvalRequestId: string | null;
+  approvalKode: string | null;
+  approvalStatus: string | null;
+  submittedBy: string | null;
+  jumlahBarang: number;
+  totalQty: number;
+  lines: Line[];
+}
+
+interface RekapCabang {
+  suggestionId: string;
+  warehouseKode: string;
+  warehouseNama: string;
+  qty: number;
+  status: string;
+  poNumber: string | null;
+  poMati: boolean;
+}
+
+interface RekapBarang {
+  itemId: number;
+  itemNo: string | null;
+  itemName: string;
+  kategori: string | null;
+  totalQty: number;
+  cabang: RekapCabang[];
+  belumPo: number;
 }
 
 const REASON_LABEL: Record<string, string> = {
-  near_buffer: "⚠️ Mendekati/di bawah buffer",
-  near_ed: "⏳ Ada batch mendekati ED",
-  // Bukan alasan tersimpan — near_ed yang ED terdekatnya sudah lewat hari ini.
-  ed_lewat: "⛔ Ada batch sudah lewat ED",
+  near_buffer: "Di bawah buffer",
+  near_ed: "Batch mendekati ED",
+  ed_lewat: "Batch sudah lewat ED",
 };
-const STATUS_BADGE: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
-  draft: "secondary",
-  submitted: "default",
-  dismissed: "outline",
-  ordered: "default",
+const DOK_STATUS = [
+  { value: "draft", label: "Draft" },
+  { value: "submitted", label: "Diajukan" },
+  { value: "closed", label: "Ditutup" },
+] as const;
+const APPROVAL_LABEL: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+  pending: { label: "Menunggu approval", variant: "secondary" },
+  approved: { label: "Disetujui", variant: "default" },
+  rejected: { label: "Ditolak", variant: "destructive" },
+  canceled: { label: "Dibatalkan", variant: "outline" },
 };
-const STATUSES = ["draft", "submitted", "ordered", "dismissed"] as const;
 const selectCls =
-  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+  "h-8 w-full rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
+const angka = (n: number) => n.toLocaleString("id-ID");
+const bulanIni = () => tanggalLokalIso().slice(0, 7);
+const namaBulan = (ym: string) =>
+  new Date(`${ym}-01T00:00:00`).toLocaleDateString("id-ID", { month: "long", year: "numeric" });
+
+async function kirim(url: string, method: string, body?: unknown) {
+  const res = await fetch(url, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error ?? `gagal (${res.status})`);
+  return data;
+}
 
 export default function ForecastSubmissionPage() {
-  const [filter, setFilter] = useState<(typeof STATUSES)[number]>("draft");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"dokumen" | "rekap">("dokumen");
   const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, { finalQty: string; notes: string }>>({});
-  // Atribut routing approval F11 (migrasi 190) — dipilih Supply Chain saat Ajukan.
-  const [atribut, setAtribut] = useState<Record<string, { wilayah: string; kategori: string }>>({});
   const [notice, setNotice] = useState<string | null>(null);
-  // F153 — nomor PO Accurate yang ditautkan ke usulan approved (PO Tracker =
-  // cermin Accurate sejak migrasi 205; PO tak lagi dibuat di WRG-OS).
-  const [poForm, setPoForm] = useState<Record<string, string>>({});
-
-  const load = useCallback(async (status: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/forecast/suggestions?status=${status}`, { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
-      const rows: Suggestion[] = data.suggestions ?? [];
-      setSuggestions(rows);
-      setDrafts(Object.fromEntries(rows.map((s) => [s.id, { finalQty: String(s.finalQty ?? s.suggestedQty), notes: s.notes ?? "" }])));
-      setPoForm((prev) => Object.fromEntries(rows.map((s) => [s.id, prev[s.id] ?? ""])));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Inline IIFE (bukan `void load()` langsung) — hindari lint react-hooks set-state-in-effect.
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch("/api/forecast/suggestions?status=draft", { cache: "no-store" });
-        const data = await res.json();
-        if (!active) return;
-        if (!res.ok) throw new Error(data.error ?? "gagal memuat data");
-        const rows: Suggestion[] = data.suggestions ?? [];
-        setSuggestions(rows);
-        setDrafts(Object.fromEntries(rows.map((s) => [s.id, { finalQty: String(s.finalQty ?? s.suggestedQty), notes: s.notes ?? "" }])));
-      } catch (e) {
-        if (active) setError(String(e));
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
+  const [generating, setGenerating] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   async function generate() {
     setGenerating(true);
     setError(null);
+    setNotice(null);
     try {
-      const res = await fetch("/api/forecast/generate", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "gagal generate");
-      await load(filter);
+      const data = await kirim("/api/forecast/generate", "POST");
+      setNotice(
+        data.created > 0
+          ? `${data.created} barang baru masuk ke ${data.dokumen} dokumen cabang` +
+              (data.skippedExisting ? ` · ${data.skippedExisting} dilewati (masih berjalan)` : "")
+          : `Tidak ada usulan baru${data.skippedExisting ? ` · ${data.skippedExisting} barang masih berjalan` : ""}`,
+      );
+      setTab("dokumen");
+      setReloadKey((k) => k + 1);
     } catch (e) {
-      setError(String(e));
+      setError(String(e instanceof Error ? e.message : e));
     } finally {
       setGenerating(false);
     }
   }
-
-  // Balikkan false kalau gagal (pesan error sudah di-set) — submit() wajib
-  // berhenti, kalau tidak approval terkirim dgn qty lama (uji 12 Nov: qty −1
-  // ditolak tapi usulan tetap diajukan dgn qty sistem, error tertimpa load()).
-  async function saveEdit(id: string, reload = true): Promise<boolean> {
-    setBusy(id);
-    setError(null);
-    try {
-      const d = drafts[id];
-      const res = await fetch(`/api/forecast/suggestions/${id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ finalQty: d.finalQty ? Number(d.finalQty) : null, notes: d.notes || null }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal simpan");
-      if (reload) await load(filter);
-      return true;
-    } catch (e) {
-      setError(String(e));
-      return false;
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function dismiss(id: string) {
-    setBusy(id);
-    try {
-      const res = await fetch(`/api/forecast/suggestions/${id}/dismiss`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal dismiss");
-      await load(filter);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function submit(id: string) {
-    const a = atribut[id];
-    if (!a?.wilayah || !a?.kategori) {
-      setError("pilih wilayah & kategori dulu — keduanya menentukan approver tahap 1 & 2");
-      return;
-    }
-    setNotice(null);
-    // Pastikan final_qty tersimpan dulu sebelum ajukan; gagal simpan = batal ajukan.
-    if (!(await saveEdit(id, false))) return;
-    setBusy(id);
-    try {
-      const res = await fetch(`/api/forecast/suggestions/${id}/submit`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ wilayah: a.wilayah, kategori: a.kategori }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal mengajukan");
-      // Usulan sah diajukan, tapi approver tahap 1 bisa saja tak menerima WA —
-      // itu harus terlihat sekarang, bukan ditebak dari usulan yang diam.
-      if (data.notify && data.notify.ok === false) {
-        setNotice(`${data.approvalKode} diajukan, TAPI notifikasi tahap 1 gagal: ${data.notify.error}`);
-      }
-      await load(filter);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function linkPo(id: string) {
-    const poNumber = (poForm[id] ?? "").trim();
-    if (!poNumber) {
-      setError("isi nomor PO Accurate dulu");
-      return;
-    }
-    setBusy(id);
-    setError(null);
-    setNotice(null);
-    try {
-      const res = await fetch(`/api/forecast/suggestions/${id}/link-po`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ poNumber }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error ?? "gagal menautkan PO");
-      if (data.warning) setNotice(`Tertaut ke ${data.poNumber}, tapi ${data.warning}`);
-      await load(filter);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  const today = tanggalLokalIso();
 
   return (
     <div className="space-y-6 p-6">
@@ -231,26 +143,13 @@ export default function ForecastSubmissionPage() {
         <div>
           <h1 className="text-2xl font-semibold">Forecast Submission</h1>
           <p className="text-muted-foreground">
-            F19 — usulan otomatis dari stok gudang (vs buffer & ED) + konteks pipeline HOT. Review/edit di sini,
-            lalu ajukan ke approval berjenjang.
+            F19 — usulan otomatis dari stok gudang (vs buffer & ED), dikumpulkan per dokumen cabang. Satu dokumen
+            diajukan sekali ke approval berjenjang; Purchasing memakai rekap semua cabang.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {STATUSES.map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={filter === s ? "default" : "outline"}
-              onClick={() => {
-                setFilter(s);
-                void load(s);
-              }}
-            >
-              {s}
-            </Button>
-          ))}
           <Button size="sm" variant="soft" render={<Link href="/forecast-submission/config" />} nativeButton={false}>
-            Setup Buffer
+            Setup Buffer & Wilayah
           </Button>
           <Button size="sm" onClick={() => void generate()} disabled={generating}>
             {generating ? "Men-generate…" : "Generate Usulan"}
@@ -258,180 +157,556 @@ export default function ForecastSubmissionPage() {
         </div>
       </div>
 
+      <Tabs value={tab} onValueChange={(v) => setTab(v as "dokumen" | "rekap")}>
+        <TabsList>
+          <TabsTrigger value="dokumen">Dokumen Cabang</TabsTrigger>
+          <TabsTrigger value="rekap">Rekap Purchasing</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
       {error && <p className="text-destructive text-sm">{error}</p>}
       {notice && <p className="text-sm text-amber-700 dark:text-amber-400">{notice}</p>}
-      {loading ? (
-        <SkeletonCardGrid count={4} />
-      ) : suggestions.length === 0 ? (
-        <p className="text-muted-foreground">Tidak ada usulan status &quot;{filter}&quot;.</p>
+
+      {tab === "dokumen" ? (
+        <DokumenTab reloadKey={reloadKey} onError={setError} onNotice={setNotice} />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
-          {suggestions.map((s) => (
-            <Card key={s.id}>
-              <CardHeader className="flex flex-row items-start justify-between space-y-0">
-                <div className="min-w-0">
-                  <CardTitle className="text-base">
-                    {s.itemName} — {s.warehouseNama}
-                  </CardTitle>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {s.reasons.map((r) => {
-                      const lewat = r === "near_ed" && edSudahLewat(s.nearestEdDate, today);
-                      return (
-                        <span key={r} className={lewat ? "text-destructive text-xs" : "text-muted-foreground text-xs"}>
-                          {REASON_LABEL[lewat ? "ed_lewat" : r] ?? r}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-                <Badge variant={STATUS_BADGE[s.status] ?? "secondary"}>{s.status}</Badge>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <div className="text-muted-foreground grid grid-cols-2 gap-1 text-xs">
-                  <div>Stok saat ini: {s.currentQty}</div>
-                  <div>Buffer: {s.bufferQty ?? "-"}</div>
-                  <div>
-                    ED terdekat: {s.nearestEdDate ? new Date(s.nearestEdDate).toLocaleDateString("id-ID") : "-"}
-                    {edSudahLewat(s.nearestEdDate, today) && <span className="text-destructive"> (sudah lewat)</span>}
-                  </div>
-                  <div>Rata² terjual/bln (6bln): {s.avgMonthlyQty6m ?? "-"}</div>
-                  <div className="col-span-2">
-                    Deal HOT aktif (konteks): {s.pipelineHotCount} · Usulan sistem: {s.suggestedQty}
-                  </div>
-                </div>
+        <RekapTab onError={setError} onNotice={setNotice} />
+      )}
+    </div>
+  );
+}
 
-                {s.status === "draft" ? (
-                  <>
-                    <div className="flex items-end gap-2">
-                      <div className="w-28">
-                        <Label className="mb-1 block text-xs">Qty Final</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={drafts[s.id]?.finalQty ?? ""}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], finalQty: e.target.value } }))}
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <Label className="mb-1 block text-xs">Catatan Supply Chain</Label>
-                        <Input
-                          value={drafts[s.id]?.notes ?? ""}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [s.id]: { ...prev[s.id], notes: e.target.value } }))}
-                          placeholder="opsional"
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="grid gap-1">
-                        <Label className="text-xs">Wilayah (HoD Sales, tahap 1)</Label>
-                        <select
-                          className={selectCls}
-                          value={atribut[s.id]?.wilayah ?? ""}
-                          onChange={(e) => setAtribut((prev) => ({ ...prev, [s.id]: { kategori: prev[s.id]?.kategori ?? "", wilayah: e.target.value } }))}
-                        >
-                          <option value="">Pilih wilayah…</option>
-                          {WILAYAH_OPTIONS.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="grid gap-1">
-                        <Label className="text-xs">Kategori (HoD Bisnis, tahap 2)</Label>
-                        <select
-                          className={selectCls}
-                          value={atribut[s.id]?.kategori ?? ""}
-                          onChange={(e) => setAtribut((prev) => ({ ...prev, [s.id]: { wilayah: prev[s.id]?.wilayah ?? "", kategori: e.target.value } }))}
-                        >
-                          <option value="">Pilih kategori…</option>
-                          {KATEGORI_OPTIONS.map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" disabled={busy === s.id} onClick={() => void saveEdit(s.id)}>
-                        Simpan
-                      </Button>
-                      <Button size="sm" className="flex-1" disabled={busy === s.id} onClick={() => void submit(s.id)}>
-                        Ajukan ke Approval
-                      </Button>
-                      <Button size="sm" variant="destructive" disabled={busy === s.id} onClick={() => void dismiss(s.id)}>
-                        Abaikan
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="text-muted-foreground text-xs">
-                      Qty final: {s.finalQty ?? s.suggestedQty}
-                      {s.notes ? ` · ${s.notes}` : ""}
-                      {s.approvalRequestId && (
-                        <>
-                          {" "}
-                          ·{" "}
-                          <Link href={`/approval-requests/${s.approvalRequestId}`} className="text-primary underline">
-                            Lihat status approval
-                          </Link>
-                        </>
-                      )}
-                    </div>
+// ── Tab Dokumen Cabang ─────────────────────────────────────────────────────
 
-                    {s.status === "ordered" && s.purchaseOrderId && (
-                      <div className="text-muted-foreground text-xs">
-                        {/* Tidak ada route detail per-ID di PO Tracker (dialog di tabel list,
-                            lihat purchase-order-table.tsx) — jadi arahkan ke tabel dgn
-                            filter ?q= nomor PO, bukan link langsung ke ID yang 404. */}
-                        {s.purchaseOrderMati ? "⚠️ PO" : "✅ Tertaut ke PO"} {s.purchaseOrderNumber ?? ""}
-                        {s.purchaseOrderMati ? " dibatalkan/ditutup — tautkan ke PO lain di bawah" : ""} —{" "}
-                        <Link
-                          href={`/purchase-orders?q=${encodeURIComponent(s.purchaseOrderNumber ?? "")}`}
-                          className="text-primary underline"
-                        >
-                          Lihat di PO Tracker
-                        </Link>
-                      </div>
-                    )}
+function DokumenTab({
+  reloadKey,
+  onError,
+  onNotice,
+}: {
+  reloadKey: number;
+  onError: (e: string | null) => void;
+  onNotice: (n: string | null) => void;
+}) {
+  const [status, setStatus] = useState<string>("draft");
+  const [bulan, setBulan] = useState<string>("");
+  const [docs, setDocs] = useState<Dokumen[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
+  const reload = useCallback(() => setTick((t) => t + 1), []);
 
-                    {s.status === "submitted" && (s.approvalStatus === "rejected" || s.approvalStatus === "canceled") && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="text-muted-foreground">Approval {s.approvalStatus === "rejected" ? "ditolak" : "dibatalkan"} — usulan ini tidak bisa dilanjutkan.</span>
-                        <Button size="sm" variant="outline" disabled={busy === s.id} onClick={() => void dismiss(s.id)}>
-                          Tutup usulan
-                        </Button>
-                      </div>
-                    )}
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const qs = new URLSearchParams({ status });
+        if (bulan) qs.set("bulan", bulan);
+        const res = await fetch(`/api/forecast/dokumen?${qs}`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "gagal memuat dokumen");
+        if (active) setDocs(data.dokumen ?? []);
+      } catch (e) {
+        if (active) onError(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [status, bulan, tick, reloadKey, onError]);
 
-                    {((s.status === "submitted" && s.approvalStatus === "approved" && !s.purchaseOrderId) ||
-                      (s.status === "ordered" && s.purchaseOrderMati)) && (
-                      <div className="space-y-2 border-t pt-2">
-                        <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-                          Tautkan PO Accurate (F153)
-                        </div>
-                        <p className="text-muted-foreground text-xs">
-                          Buat PO-nya di Accurate, lalu isi nomornya di sini. PO harus sudah tersalin ke PO Tracker
-                          (sinkron berkala, atau tombol Sinkron di PO Tracker).
-                        </p>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">No. PO Accurate</Label>
-                          <Input
-                            placeholder="mis. 1098/WRG/1026"
-                            value={poForm[s.id] ?? ""}
-                            onChange={(e) => setPoForm((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                          />
-                        </div>
-                        <Button size="sm" className="w-full" disabled={busy === s.id} onClick={() => void linkPo(s.id)}>
-                          {busy === s.id ? "Menautkan…" : "Tautkan PO"}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <Tabs value={status} onValueChange={(v) => setStatus(String(v))}>
+          <TabsList>
+            {DOK_STATUS.map((s) => (
+              <TabsTrigger key={s.value} value={s.value}>{s.label}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="flex items-end gap-2">
+          <div className="grid gap-1">
+            <Label className="text-xs">Bulan</Label>
+            <Input type="month" className="bg-card w-40" value={bulan} onChange={(e) => setBulan(e.target.value)} />
+          </div>
+          {bulan && (
+            <Button size="sm" variant="ghost" onClick={() => setBulan("")}>Semua bulan</Button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <SkeletonCardGrid count={2} />
+      ) : docs.length === 0 ? (
+        <p className="text-muted-foreground">
+          Tidak ada dokumen {DOK_STATUS.find((s) => s.value === status)?.label.toLowerCase()}
+          {bulan ? ` untuk ${namaBulan(bulan)}` : ""}.
+          {status === "draft" ? " Klik Generate Usulan untuk memindai stok gudang." : ""}
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {docs.map((d) => (
+            <DokumenCard
+              // Kunci ikut isi baris: data berubah (pindah kategori, simpan) → state edit dibangun ulang.
+              key={`${d.id}:${d.lines.map((l) => `${l.id}${l.status}${l.finalQty ?? ""}${l.notes ?? ""}`).join("|")}`}
+              dok={d} onChanged={reload} onError={onError} onNotice={onNotice} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function DokumenCard({
+  dok,
+  onChanged,
+  onError,
+  onNotice,
+}: {
+  dok: Dokumen;
+  onChanged: () => void;
+  onError: (e: string | null) => void;
+  onNotice: (n: string | null) => void;
+}) {
+  const { confirm, dialog } = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const [edit, setEdit] = useState<Record<string, { finalQty: string; notes: string }>>(() =>
+    Object.fromEntries(dok.lines.map((l) => [l.id, { finalQty: String(l.finalQty ?? l.suggestedQty), notes: l.notes ?? "" }])),
+  );
+  const today = tanggalLokalIso();
+  const draft = dok.status === "draft";
+  const aktif = dok.lines.filter((l) => l.status !== "dismissed");
+  const diabaikan = dok.lines.length - aktif.length;
+  const appr = dok.approvalStatus ? APPROVAL_LABEL[dok.approvalStatus] : null;
+  const apprMati = dok.approvalStatus === "rejected" || dok.approvalStatus === "canceled";
+  const totalEdit = aktif.reduce((a, l) => a + (draft ? Number(edit[l.id]?.finalQty || 0) : (l.finalQty ?? l.suggestedQty)), 0);
+
+  const berubah = (l: Line) => {
+    const e = edit[l.id];
+    if (!e) return false;
+    return Number(e.finalQty) !== (l.finalQty ?? l.suggestedQty) || e.notes !== (l.notes ?? "");
+  };
+
+  // Simpan baris yang berubah; false = ada yang gagal (pesan sudah di-set).
+  async function simpanSemua(): Promise<boolean> {
+    for (const l of aktif.filter((x) => x.status === "draft" && berubah(x))) {
+      const e = edit[l.id];
+      const qty = e.finalQty.trim() === "" ? null : Number(e.finalQty);
+      if (qty != null && !(qty >= 0)) {
+        onError(`qty final ${l.itemName} tidak valid`);
+        return false;
+      }
+      try {
+        await kirim(`/api/forecast/suggestions/${l.id}`, "PATCH", { finalQty: qty, notes: e.notes || null });
+      } catch (err) {
+        onError(`${l.itemName}: ${err instanceof Error ? err.message : err}`);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  async function jalankan(fn: () => Promise<void>) {
+    setBusy(true);
+    onError(null);
+    onNotice(null);
+    try {
+      await fn();
+    } catch (e) {
+      onError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const simpan = () => jalankan(async () => {
+    if (await simpanSemua()) onChanged();
+  });
+
+  const ajukan = () =>
+    confirm(
+      {
+        title: `Ajukan ${dok.kode}?`,
+        description: `${aktif.length} barang · total qty ${angka(totalEdit)} — ${dok.warehouseNama}, ${dok.kategori}. Approver: HoD Sales ${labelWilayah(dok.wilayah)} lalu HoD Bisnis ${dok.kategori}.`,
+        confirmLabel: "Ajukan",
+      },
+      () =>
+        void jalankan(async () => {
+          if (!(await simpanSemua())) return;
+          const data = await kirim(`/api/forecast/dokumen/${dok.id}/submit`, "POST");
+          if (data.notify && data.notify.ok === false) {
+            onNotice(`${data.approvalKode} diajukan, TAPI notifikasi tahap 1 gagal: ${data.notify.error}`);
+          } else {
+            onNotice(`${dok.kode} diajukan (${data.approvalKode}).`);
+          }
+          onChanged();
+        }),
+    );
+
+  const tutup = () =>
+    confirm(
+      {
+        title: `Tutup ${dok.kode}?`,
+        description: "Semua barang di dokumen ini diabaikan. Kekurangan stoknya akan muncul lagi saat Generate berikutnya.",
+        confirmLabel: "Tutup dokumen",
+        destructive: true,
+      },
+      () => void jalankan(async () => {
+        await kirim(`/api/forecast/dokumen/${dok.id}/tutup`, "POST");
+        onChanged();
+      }),
+    );
+
+  const abaikan = (l: Line) =>
+    confirm(
+      { title: `Abaikan ${l.itemName}?`, description: "Barang ini dikeluarkan dari dokumen.", confirmLabel: "Abaikan", destructive: true },
+      () => void jalankan(async () => {
+        await kirim(`/api/forecast/suggestions/${l.id}/dismiss`, "POST", {});
+        onChanged();
+      }),
+    );
+
+  const pindahKategori = (l: Line, kategori: string) =>
+    void jalankan(async () => {
+      if (!(await simpanSemua())) return;
+      await kirim(`/api/forecast/suggestions/${l.id}`, "PATCH", { kategori });
+      onChanged();
+    });
+
+  const kolom = draft ? (dok.kategori ? 8 : 9) : 6;
+  const header = (
+    <TableHeader>
+      <TableRow>
+        <TableHead>Barang</TableHead>
+        <TableHead className="text-right">Stok</TableHead>
+        <TableHead className="text-right">Buffer</TableHead>
+        {draft && <TableHead className="text-right">Rata² 6 bln</TableHead>}
+        {draft && <TableHead className="text-right">Usulan</TableHead>}
+        <TableHead className="w-28">{draft ? "Qty Final" : "Qty"}</TableHead>
+        <TableHead>Catatan</TableHead>
+        {draft && !dok.kategori && <TableHead className="w-36">Kategori</TableHead>}
+        {draft ? <TableHead /> : <TableHead>PO</TableHead>}
+      </TableRow>
+    </TableHeader>
+  );
+
+  const rows = aktif.map((l) => {
+    const lewat = edSudahLewat(l.nearestEdDate, today);
+    return (
+      <TableRow key={l.id}>
+        <TableCell className="max-w-80">
+          <div className="font-medium whitespace-normal">{l.itemName}</div>
+          <div className="text-muted-foreground flex flex-wrap gap-x-2 text-xs">
+            {l.itemNo && <span>{l.itemNo}</span>}
+            {l.reasons.map((r) => {
+              const key = r === "near_ed" && lewat ? "ed_lewat" : r;
+              return (
+                <span key={r} className={key === "ed_lewat" ? "text-destructive" : undefined}>
+                  {REASON_LABEL[key] ?? r}
+                  {r === "near_ed" && l.nearestEdDate ? ` (${new Date(l.nearestEdDate).toLocaleDateString("id-ID")})` : ""}
+                </span>
+              );
+            })}
+          </div>
+        </TableCell>
+        <TableCell className="text-right tabular-nums">{angka(l.currentQty)}</TableCell>
+        <TableCell className="text-right tabular-nums">{l.bufferQty == null ? "–" : angka(l.bufferQty)}</TableCell>
+        {draft && <TableCell className="text-right tabular-nums">{l.avgMonthlyQty6m == null ? "–" : angka(l.avgMonthlyQty6m)}</TableCell>}
+        {draft && <TableCell className="text-right tabular-nums">{angka(l.suggestedQty)}</TableCell>}
+        <TableCell>
+          {draft ? (
+            <Input
+              type="number"
+              min={0}
+              className="bg-card h-8 w-24"
+              value={edit[l.id]?.finalQty ?? ""}
+              onChange={(e) => setEdit((p) => ({ ...p, [l.id]: { ...p[l.id], finalQty: e.target.value } }))}
+            />
+          ) : (
+            <span className="tabular-nums">{angka(l.finalQty ?? l.suggestedQty)}</span>
+          )}
+        </TableCell>
+        <TableCell className="min-w-40">
+          {draft ? (
+            <Input
+              className="bg-card h-8"
+              placeholder="opsional"
+              value={edit[l.id]?.notes ?? ""}
+              onChange={(e) => setEdit((p) => ({ ...p, [l.id]: { ...p[l.id], notes: e.target.value } }))}
+            />
+          ) : (
+            <span className="text-muted-foreground text-xs whitespace-normal">{l.notes ?? "–"}</span>
+          )}
+        </TableCell>
+        {draft && !dok.kategori && (
+          <TableCell>
+            <select className={selectCls} value="" disabled={busy} onChange={(e) => e.target.value && pindahKategori(l, e.target.value)}>
+              <option value="">Pilih…</option>
+              {KATEGORI_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.value}</option>
+              ))}
+            </select>
+          </TableCell>
+        )}
+        {draft ? (
+          <TableCell className="text-right">
+            <Button size="sm" variant="ghost" className="text-destructive" disabled={busy} onClick={() => abaikan(l)}>
+              Abaikan
+            </Button>
+          </TableCell>
+        ) : (
+          <TableCell className="text-xs">
+            {l.purchaseOrderNumber ? (
+              <Link href={`/purchase-orders?q=${encodeURIComponent(l.purchaseOrderNumber)}`} className="text-primary underline">
+                {l.purchaseOrderMati ? "⚠️ " : ""}
+                {l.purchaseOrderNumber}
+              </Link>
+            ) : (
+              <span className="text-muted-foreground">–</span>
+            )}
+          </TableCell>
+        )}
+      </TableRow>
+    );
+  });
+
+  return (
+    <Card>
+      <CardHeader className="space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <CardTitle className="text-base">
+              {dok.warehouseNama} · {dok.kategori ?? "Belum ada kategori"} · {namaBulan(dok.periode)}
+            </CardTitle>
+            <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 text-xs">
+              <span>{dok.kode}</span>
+              <span>{aktif.length} barang · total qty {angka(totalEdit)}</span>
+              {diabaikan > 0 && <span>{diabaikan} diabaikan</span>}
+              <span>
+                Wilayah:{" "}
+                {dok.wilayah ? (
+                  labelWilayah(dok.wilayah)
+                ) : (
+                  <Link href="/forecast-submission/config" className="text-destructive underline">
+                    belum dipetakan — atur di Setup
+                  </Link>
+                )}
+              </span>
+              {dok.submittedBy && <span>Diajukan oleh {dok.submittedBy}</span>}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {appr && <Badge variant={appr.variant}>{appr.label}</Badge>}
+            {dok.approvalRequestId && (
+              <Link href={`/approval-requests/${dok.approvalRequestId}`} className="text-primary text-xs underline">
+                {dok.approvalKode ?? "Lihat approval"}
+              </Link>
+            )}
+          </div>
+        </div>
+        {draft && !dok.kategori && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            Barang di sini belum terklasifikasi IVD/Medical. Pilih kategori per barang — barangnya pindah ke dokumen
+            {` ${dok.warehouseNama}`} kategori itu.
+          </p>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <PagedTable header={header} rows={rows} colSpan={kolom} empty="Tidak ada barang." label="barang" />
+        {draft && (
+          <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+            <Button size="sm" variant="ghost" disabled={busy} onClick={tutup}>
+              Tutup dokumen
+            </Button>
+            <Button size="sm" variant="soft" disabled={busy || !aktif.some(berubah)} onClick={() => void simpan()}>
+              Simpan perubahan
+            </Button>
+            <Button size="sm" disabled={busy || !dok.kategori || !dok.wilayah || aktif.length === 0} onClick={ajukan}>
+              {busy ? "Memproses…" : "Ajukan dokumen"}
+            </Button>
+          </div>
+        )}
+        {dok.status === "submitted" && apprMati && (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3 text-xs">
+            <span className="text-muted-foreground">
+              Approval {dok.approvalStatus === "rejected" ? "ditolak" : "dibatalkan"} — dokumen tidak bisa dilanjutkan.
+            </span>
+            <Button size="sm" variant="soft" disabled={busy} onClick={tutup}>
+              Tutup dokumen
+            </Button>
+          </div>
+        )}
+      </CardContent>
+      {dialog}
+    </Card>
+  );
+}
+
+// ── Tab Rekap Purchasing ───────────────────────────────────────────────────
+
+function RekapTab({ onError, onNotice }: { onError: (e: string | null) => void; onNotice: (n: string | null) => void }) {
+  const [bulan, setBulan] = useState(bulanIni);
+  const [barang, setBarang] = useState<RekapBarang[]>([]);
+  const [menunggu, setMenunggu] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
+  const [po, setPo] = useState<Record<number, string>>({});
+  const [busy, setBusy] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/forecast/rekap?bulan=${bulan}`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "gagal memuat rekap");
+        if (!active) return;
+        setBarang(data.barang ?? []);
+        setMenunggu(Number(data.menungguApproval ?? 0));
+      } catch (e) {
+        if (active) onError(String(e instanceof Error ? e.message : e));
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [bulan, tick, onError]);
+
+  async function tautkan(b: RekapBarang) {
+    const poNumber = (po[b.itemId] ?? "").trim();
+    if (!poNumber) {
+      onError("isi nomor PO Accurate dulu");
+      return;
+    }
+    setBusy(b.itemId);
+    onError(null);
+    onNotice(null);
+    try {
+      const data = await kirim("/api/forecast/rekap/link-po", "POST", { bulan, itemId: b.itemId, poNumber });
+      const catatan = [data.warning, ...(data.gagal ?? [])].filter(Boolean).join(" · ");
+      onNotice(`${b.itemName}: ${data.linked} cabang tertaut ke ${data.poNumber}${catatan ? ` — ${catatan}` : ""}`);
+      setPo((p) => ({ ...p, [b.itemId]: "" }));
+      setTick((t) => t + 1);
+    } catch (e) {
+      onError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const totalQty = barang.reduce((a, b) => a + b.totalQty, 0);
+  const header = (
+    <TableHeader>
+      <TableRow>
+        <TableHead>Barang</TableHead>
+        <TableHead>Kategori</TableHead>
+        <TableHead>Rincian cabang</TableHead>
+        <TableHead className="text-right">Total</TableHead>
+        <TableHead className="w-72">PO Accurate</TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+  const rows = barang.map((b) => {
+    const poAda = [...new Set(b.cabang.map((c) => c.poNumber).filter((x): x is string => !!x))];
+    return (
+      <TableRow key={b.itemId}>
+        <TableCell className="max-w-80">
+          <div className="font-medium whitespace-normal">{b.itemName}</div>
+          {b.itemNo && <div className="text-muted-foreground text-xs">{b.itemNo}</div>}
+        </TableCell>
+        <TableCell>{b.kategori ?? "–"}</TableCell>
+        <TableCell>
+          <div className="flex max-w-96 flex-wrap gap-1">
+            {b.cabang.map((c) => (
+              <Badge key={c.suggestionId} variant={c.poNumber && !c.poMati ? "default" : "outline"}>
+                {c.warehouseNama.replace(/^Gudang /, "")} {angka(c.qty)}
+              </Badge>
+            ))}
+          </div>
+        </TableCell>
+        <TableCell className="text-right font-semibold tabular-nums">{angka(b.totalQty)}</TableCell>
+        <TableCell>
+          {poAda.length > 0 && (
+            <div className="mb-1 flex flex-wrap gap-x-2 text-xs">
+              {poAda.map((n) => (
+                <Link key={n} href={`/purchase-orders?q=${encodeURIComponent(n)}`} className="text-primary underline">
+                  {n}
+                </Link>
+              ))}
+            </div>
+          )}
+          {b.belumPo > 0 ? (
+            <div className="flex gap-2">
+              <Input
+                className="bg-card h-8"
+                placeholder="No. PO, mis. 1098/WRG/1126"
+                value={po[b.itemId] ?? ""}
+                onChange={(e) => setPo((p) => ({ ...p, [b.itemId]: e.target.value }))}
+              />
+              <Button size="sm" disabled={busy === b.itemId} onClick={() => void tautkan(b)}>
+                {busy === b.itemId ? "…" : "Tautkan"}
+              </Button>
+            </div>
+          ) : (
+            <span className="text-muted-foreground text-xs">Semua cabang sudah tertaut</span>
+          )}
+        </TableCell>
+      </TableRow>
+    );
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="grid gap-1">
+          <Label className="text-xs">Bulan</Label>
+          <Input type="month" className="bg-card w-40" value={bulan} onChange={(e) => e.target.value && setBulan(e.target.value)} />
+        </div>
+        {menunggu > 0 && (
+          <p className="text-muted-foreground text-sm">
+            {menunggu} dokumen bulan ini masih menunggu approval — belum masuk rekap.
+          </p>
+        )}
+      </div>
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
+          <div>
+            <CardTitle className="text-base">Rekap Purchasing — {namaBulan(bulan)}</CardTitle>
+            <p className="text-muted-foreground mt-1 text-xs">
+              Gabungan dokumen semua cabang yang sudah disetujui · {barang.length} barang · total qty {angka(totalQty)}.
+              Buat PO di Accurate, lalu tautkan nomornya per barang (berlaku untuk semua cabang barang itu).
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="soft"
+            disabled={barang.length === 0}
+            render={<a href={`/api/forecast/rekap/ekspor?bulan=${bulan}`} />}
+            nativeButton={false}
+          >
+            Ekspor Excel
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <SkeletonCardGrid count={1} />
+          ) : (
+            <PagedTable
+              header={header}
+              rows={rows}
+              colSpan={5}
+              empty={`Belum ada dokumen yang disetujui untuk ${namaBulan(bulan)}.`}
+              label="barang"
+              resetKey={bulan}
+            />
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -3,22 +3,16 @@ import { actorName, requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api POST /forecast/suggestions/:id/submit (F19 → F11).
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+// Gateway → apps/api POST /forecast/dokumen/:id/tutup (F19) — batal ajukan / approval ditolak.
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireFeature("/forecast-submission", "edit");
   if (!guard.ok) return guard.res;
   const { id } = await params;
-  let body: unknown = {};
   try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
-  }
-  try {
-    const res = await gatewayFetch(`/forecast/suggestions/${encodeURIComponent(id)}/submit`, {
+    const res = await gatewayFetch(`/forecast/dokumen/${encodeURIComponent(id)}/tutup`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...(body as Record<string, unknown>), submittedBy: actorName(guard.me) }),
+      body: JSON.stringify({ closedBy: actorName(guard.me) }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });
