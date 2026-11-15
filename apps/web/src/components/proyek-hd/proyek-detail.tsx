@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 import { OpsPanel } from "./ops-panel";
 import { CariFaskes, type Faskes } from "./tambah-proyek-dialog";
-import { bulan, kirim, RAG_KELAS, rp, STATUS_RAG, tgl, type Catatan, type Detail } from "./types";
+import { bulan, kirim, RAG_KELAS, rp, STATUS_RAG, tgl, type AlatHd, type Catatan, type Detail, type Referensi } from "./types";
 
 const TAHAP_NAMA: Record<string, string> = {
   "1": "Deal", "2": "Asistensi PERNEFRI", "3": "DED", "4": "CIP — konstruksi", "5": "Izin OSS",
@@ -333,18 +333,20 @@ type Karyawan = { id: string; nama: string };
 function StatusUnit({ d, bolehUbah, onSaved }: { d: Detail; bolehUbah: boolean; onSaved: (p: Detail["proyek"]) => void }) {
   const p = d.proyek;
   const [f, setF] = useState({ unit_terinstal: String(p.unit_terinstal), unit_running: String(p.unit_running), status_rag: p.status_rag,
-    next_action: p.next_action ?? "", pic_employee_id: p.pic_employee_id ?? "" });
+    next_action: p.next_action ?? "", pic_employee_id: p.pic_employee_id ?? "", produk_kode: p.produk_kode ?? "" });
   const [karyawan, setKaryawan] = useState<Karyawan[]>([]);
+  const [alat, setAlat] = useState<AlatHd[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; teks: string } | null>(null);
 
   useEffect(() => {
-    if (bolehUbah) kirim<{ karyawan: Karyawan[] }>("/api/proyek-hd/ref").then((r) => setKaryawan(r.karyawan)).catch(() => undefined);
+    if (bolehUbah) kirim<Referensi>("/api/proyek-hd/ref").then((r) => { setKaryawan(r.karyawan); setAlat(r.alat); }).catch(() => undefined);
   }, [bolehUbah]);
   const opsiPic = useMemo(() => karyawan.map((k) => ({ value: k.id, label: k.nama })), [karyawan]);
+  const opsiAlat = useMemo(() => alat.map((a) => ({ value: a.kode, label: a.nama })), [alat]);
 
   const kotor = Number(f.unit_terinstal) !== p.unit_terinstal || Number(f.unit_running) !== p.unit_running || f.status_rag !== p.status_rag
-    || f.next_action.trim() !== (p.next_action ?? "") || f.pic_employee_id !== (p.pic_employee_id ?? "");
+    || f.next_action.trim() !== (p.next_action ?? "") || f.pic_employee_id !== (p.pic_employee_id ?? "") || f.produk_kode !== (p.produk_kode ?? "");
 
   async function simpan() {
     if (Number(f.unit_running) > Number(f.unit_terinstal)) { setMsg({ ok: false, teks: "Unit running tidak boleh melebihi unit terinstal." }); return; }
@@ -354,7 +356,7 @@ function StatusUnit({ d, bolehUbah, onSaved }: { d: Detail; bolehUbah: boolean; 
       const np = await kirim<Detail["proyek"]>(`/api/proyek-hd/${p.id}`, {
         method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ diubah_at: p.diubah_at, unit_terinstal: Number(f.unit_terinstal), unit_running: Number(f.unit_running),
-          status_rag: f.status_rag, next_action: f.next_action, pic_employee_id: f.pic_employee_id || null }),
+          status_rag: f.status_rag, next_action: f.next_action, pic_employee_id: f.pic_employee_id || null, produk_kode: f.produk_kode || null }),
       });
       onSaved(np);
       setMsg({ ok: true, teks: "Tersimpan." });
@@ -386,6 +388,11 @@ function StatusUnit({ d, bolehUbah, onSaved }: { d: Detail; bolehUbah: boolean; 
               </button>
             ))}
           </div>
+        </div>
+        <div className="space-y-1"><Label className="text-xs">Alat (mesin HD)</Label>
+          {bolehUbah ? <Combobox value={f.produk_kode} onChange={(v) => setF({ ...f, produk_kode: v })} options={opsiAlat} emptyOption="— belum ditentukan —" searchPlaceholder="Cari mesin hemodialisa…" />
+            : <p className="text-sm">{p.nama_alat ?? "—"}</p>}
+          {bolehUbah && !p.produk_kode && p.nama_alat && <p className="text-xs text-amber-700 dark:text-amber-400">Tertulis &ldquo;{p.nama_alat}&rdquo; tapi belum tertaut ke produk — pilih dari daftar.</p>}
         </div>
         <div className="space-y-1"><Label className="text-xs">PIC</Label>
           {bolehUbah ? <Combobox value={f.pic_employee_id} onChange={(v) => setF({ ...f, pic_employee_id: v })} options={opsiPic} emptyOption="—" searchPlaceholder="Cari karyawan…" />

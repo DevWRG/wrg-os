@@ -7,7 +7,7 @@ export const STATUS_RAG = ["Hijau", "Kuning", "Merah"] as const;
 
 export interface Proyek {
   id: number; kode: string; account_id: number | null; faskes_nama: string | null; nama_rs: string; kota: string | null;
-  segmen: string | null; tipe_proyek: (typeof TIPE_PROYEK)[number]; prioritas: string; nama_alat: string | null;
+  segmen: string | null; tipe_proyek: (typeof TIPE_PROYEK)[number]; prioritas: string; produk_kode: string | null; nama_alat: string | null;
   unit_kso: number; unit_terinstal: number; unit_running: number; harga_unit: number | null;
   nomor_kontrak: string | null; target_tindakan_bln: number | null; target_golive: string | null;
   tahap_kode: string; tahap_nama: string; progres_pct: number; status_rag: string;
@@ -32,6 +32,10 @@ export interface Riwayat { id: number; dari_tahap: string | null; ke_tahap: stri
 export interface Detail { proyek: Proyek; alur: KartuAlur[]; opsi_maju: OpsiMaju[]; catatan: Catatan[]; riwayat: Riwayat[] }
 
 export interface Param { kunci: string; nilai: number | null; keterangan: string; urut: number; diubah_oleh: string | null; diubah_at: string | null }
+
+/** Mesin HD dari klasifikasi produk (product line Hemodialysa, class Machine). */
+export interface AlatHd { kode: string; nama: string; brand: string | null }
+export interface Referensi { karyawan: { id: string; nama: string }[]; alat: AlatHd[] }
 
 export async function kirim<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
