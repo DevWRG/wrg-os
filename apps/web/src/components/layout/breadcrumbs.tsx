@@ -30,6 +30,7 @@ const LABELS: Record<string, string> = {
   "kso-kontrak": "Kontrak KSO",
   "kso-komite": "Komite KSO",
   "proyek-hd": "Proyek HD",
+  "hd-simulator": "Simulator HD",
   coaching: "Coaching Notes",
   reports: "Reports",
   digests: "Digest History",

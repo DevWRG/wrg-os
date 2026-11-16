@@ -22,7 +22,7 @@ export default async function ProyekHdDetailPage({ params }: { params: Promise<{
   return (
     <>
       <PageHeader title="Detail Proyek HD" action={<Link href="/proyek-hd" className="text-primary text-sm font-semibold">← Semua proyek</Link>} />
-      <ProyekDetail id={id} bolehUbah={featureAllowed(me, "/proyek-hd", "edit")} />
+      <ProyekDetail id={id} bolehUbah={featureAllowed(me, "/proyek-hd", "edit")} bolehSimulator={featureAllowed(me, "/hd-simulator", "view")} />
     </>
   );
 }

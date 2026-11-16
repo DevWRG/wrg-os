@@ -24,7 +24,7 @@ const TAHAP_NAMA: Record<string, string> = {
 };
 const MAKS_BERKAS = 5;
 
-export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean }) {
+export function ProyekDetail({ id, bolehUbah, bolehSimulator }: { id: string; bolehUbah: boolean; bolehSimulator: boolean }) {
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [maju, setMaju] = useState(false);
@@ -69,7 +69,7 @@ export function ProyekDetail({ id, bolehUbah }: { id: string; bolehUbah: boolean
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={RAG_KELAS[p.status_rag]}>{p.status_rag}</Badge>
-            <Link href={`/proyek-hd/simulator?proyek=${p.id}`} className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>
+            {bolehSimulator && <Link href={`/hd-simulator?proyek=${p.id}`} className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>}
           </div>
         </CardContent>
       </Card>
