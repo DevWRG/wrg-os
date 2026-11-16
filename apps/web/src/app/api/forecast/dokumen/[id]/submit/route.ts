@@ -3,7 +3,7 @@ import { actorName, requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api POST /forecast/dokumen/:id/submit (F19 → F11). Pengaju dari sesi, bukan body.
+// Gateway → apps/api POST /forecast/dokumen/:id/submit (F19 → review HoD Sales wilayah). Pengaju dari sesi, bukan body.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireFeature("/forecast-submission", "edit");
   if (!guard.ok) return guard.res;

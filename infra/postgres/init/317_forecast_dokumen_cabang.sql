@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS forecast_dokumen (
   kategori            text CHECK (kategori IS NULL OR kategori IN ('IVD', 'Medical')),
   periode             date NOT NULL CHECK (periode = date_trunc('month', periode)::date),
   status              text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'closed')),
-  approval_request_id uuid REFERENCES approval_request (id),
+  -- Tanpa FK ke approval_request (diubah 16 Nov 2026, migrasi 326): main
+  -- tidak punya tabel itu. Kolom tetap sebagai jejak dokumen lama.
+  approval_request_id uuid,
   submitted_by        text,
   submitted_at        timestamptz,
   closed_by           text,

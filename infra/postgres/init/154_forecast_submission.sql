@@ -66,7 +66,10 @@ CREATE TABLE IF NOT EXISTS forecast_suggestion (
 
   status              text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'submitted', 'dismissed')),
   -- Link ke F11 (approval_request, migrasi 106) SETELAH Supply Chain "ajukan".
-  approval_request_id uuid REFERENCES approval_request (id),
+  -- Tanpa FK (diubah 16 Nov 2026, migrasi 326): main tidak punya tabel
+  -- approval_request, jadi berkas ini harus bisa jalan tanpanya. Kolom tetap
+  -- sebagai jejak dokumen lama; review sekarang di forecast_dokumen.
+  approval_request_id uuid,
 
   created_at          timestamptz NOT NULL DEFAULT now(),
   reviewed_by         text,

@@ -14,7 +14,8 @@ export async function GET(req: Request) {
     if (v) qs.set(k, v);
   }
   try {
-    const res = await gatewayFetch(`/forecast/dokumen${qs.size ? `?${qs}` : ""}`);
+    // x-user-id → API menghitung bolehReview per dokumen untuk pemakai ini.
+    const res = await gatewayFetch(`/forecast/dokumen${qs.size ? `?${qs}` : ""}`, { headers: { "x-user-id": guard.me.id } });
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
