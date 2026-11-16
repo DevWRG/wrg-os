@@ -392,6 +392,11 @@ export const NAV: NavGroup[] = [
       // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
       // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
       { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+      // F19 — scan buffer (Stok Gudang) + ED (F38) → usulan forecast per
+      // dokumen cabang × kategori × bulan, Supply Chain review/edit, ajukan
+      // ke review HoD Sales wilayah. Ditaruh Purchasing krn pemakainya
+      // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
+      { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
     ],
   },
   {

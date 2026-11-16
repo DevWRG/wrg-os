@@ -38,6 +38,7 @@ const LABELS: Record<string, string> = {
   shipments: "Shipments",
   suppliers: "Suppliers",
   hitl: "HITL Review",
+  "forecast-submission": "Forecast Submission",
   users: "Users",
   settings: "Settings",
   showcase: "UI Showcase",
@@ -46,6 +47,8 @@ const LABELS: Record<string, string> = {
 // Label per PATH PENUH (bukan per segmen) — segmen generik bisa bermakna beda
 // per parent, jadi dikunci ke path lengkapnya.
 const PATH_LABELS: Record<string, string> = {
+  // F19 — "config" generik, dikunci per path penuh.
+  "/forecast-submission/config": "Setup Buffer Stok",
   // F15 — tanpa ini tampil "Sph" / "New".
   "/sph": "SPH",
   "/sph/new": "Buat SPH",

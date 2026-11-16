@@ -622,6 +622,30 @@ import {
   updateHarian as updateKasHarian,
   updateTransaksi as updateKasTransaksi,
 } from "./repo/kas-station.js";
+import {
+  generateSuggestions,
+  listSuggestions,
+  updateSuggestion,
+  dismissSuggestion,
+  listDokumen,
+  submitDokumen,
+  reviewDokumen,
+  aktorDariUser,
+  hitungUlangDokumen,
+  tutupDokumen,
+  listWilayahCabang,
+  setWilayahCabang,
+  listCabangGudang,
+  setCabangGudang,
+  rekapPurchasing,
+  linkPoRekap,
+  rekapXlsx,
+  dokumenXlsx,
+  listBrand,
+  listBufferConfig,
+  upsertBufferConfig,
+  linkPurchaseOrder,
+} from "./repo/forecast.js";
 
 const app = new Hono();
 
@@ -9558,6 +9582,245 @@ app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
     if (e instanceof PurchaseOrderError) return c.json({ error: e.message }, e.status as 400 | 404 | 409);
     throw e;
   }
+});
+
+// F19 Forecast Submission Engine — scan gudang (F37 stok + F38 ED) → usulan.
+// Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
+app.post("/forecast/generate", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional — kosong = 6 bulan terakhir, KSO & Regular, semua brand */
+  }
+  const r = await generateSuggestions({ dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand });
+  return c.json(r, r.error ? 400 : 200);
+});
+
+app.get("/forecast/suggestions", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await listSuggestions(c.req.query("status") || undefined);
+  return c.json({ count: rows.length, suggestions: rows });
+});
+
+app.patch("/forecast/suggestions/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { finalQty?: number | null; notes?: string | null; kategori?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await updateSuggestion(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/suggestions/:id/dismiss", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { reviewedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await dismissSuggestion(c.req.param("id"), body.reviewedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Dokumen cabang × kategori × bulan (migrasi 317) — satu dokumen = satu
+// review HoD Sales wilayah (migrasi 326). bolehReview per dokumen dihitung
+// untuk pemakai sesi (x-user-id dari BFF).
+app.get("/forecast/dokumen", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const aktor = await aktorDariUser(c.req.header("x-user-id"));
+  const rows = await listDokumen({
+    status: c.req.query("status") || undefined,
+    bulan: c.req.query("bulan") || undefined,
+    brand: c.req.query("brand") || undefined,
+  }, aktor);
+  return c.json({ count: rows.length, dokumen: rows });
+});
+
+app.get("/forecast/dokumen.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await dokumenXlsx({
+    status: c.req.query("status") || undefined,
+    bulan: c.req.query("bulan") || undefined,
+    id: c.req.query("id") || undefined,
+    brand: c.req.query("brand") || undefined,
+  });
+  if ("error" in r) return c.json(r, 400);
+  return c.body(new Uint8Array(r.buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="${r.nama.replace(/[^\w.-]/g, "_")}"`,
+    "cache-control": "private, no-store",
+  });
+});
+
+app.post("/forecast/dokumen/:id/submit", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { submittedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.submittedBy) return c.json({ error: "submittedBy wajib" }, 400);
+  const r = await submitDokumen(c.req.param("id"), body.submittedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Review HoD Sales wilayah (migrasi 326): body {keputusan: disetujui|ditolak,
+// catatan}. Pemutus dari sesi (x-user-id dari BFF), bukan body; izin
+// sebenarnya ditegakkan bolehReview (forecast.ts). Tanpa notifikasi WA.
+app.post("/forecast/dokumen/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { keputusan?: unknown; catatan?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const aktor = await aktorDariUser(c.req.header("x-user-id"));
+  const r = await reviewDokumen(c.req.param("id"), body, aktor);
+  return c.json(r, r.ok ? 200 : (r.code ?? 400));
+});
+
+app.post("/forecast/dokumen/:id/hitung-ulang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await hitungUlangDokumen(c.req.param("id"), body);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.post("/forecast/dokumen/:id/tutup", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { closedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    /* opsional */
+  }
+  const r = await tutupDokumen(c.req.param("id"), body.closedBy);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Rekap Purchasing: barang × cabang dari dokumen yang sudah disetujui HoD Sales.
+app.get("/forecast/rekap", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await rekapPurchasing(c.req.query("bulan") ?? "", c.req.query("brand") || undefined);
+  return c.json(r, "error" in r ? 400 : 200);
+});
+
+app.get("/forecast/rekap.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const bulan = c.req.query("bulan") ?? "";
+  const r = await rekapXlsx(bulan, c.req.query("brand") || undefined);
+  if (!Buffer.isBuffer(r)) return c.json(r, 400);
+  return c.body(new Uint8Array(r), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="Rekap_Forecast_${bulan}.xlsx"`,
+    "cache-control": "private, no-store",
+  });
+});
+
+app.post("/forecast/rekap/link-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { bulan?: string; itemId?: number; poNumber?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await linkPoRekap({ bulan: String(body.bulan ?? ""), itemId: Number(body.itemId), poNumber: String(body.poNumber ?? "") });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// Peta cabang penjualan (cabang AM saat faktur) → gudang, untuk rata-rata per gudang (migrasi 319).
+app.get("/forecast/cabang-gudang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await listCabangGudang());
+});
+
+app.post("/forecast/cabang-gudang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { cabang?: string; warehouseKode?: string | null; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await setCabangGudang(String(body.cabang ?? ""), body.warehouseKode ?? null, body.updatedBy ?? null);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/brand", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ brand: await listBrand() });
+});
+
+app.get("/forecast/wilayah-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listWilayahCabang() });
+});
+
+app.post("/forecast/wilayah-cabang", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { kode?: string; wilayah?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.kode) return c.json({ error: "kode wajib" }, 400);
+  const r = await setWilayahCabang(body.kode, body.wilayah ?? null);
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+// F153 — tautkan usulan yang dokumennya sudah disetujui HoD Sales ke PO Accurate yang dibuat
+// Purchasing (PO Tracker = cermin Accurate sejak migrasi 205). Lihat komentar
+// linkPurchaseOrder (forecast.ts).
+app.post("/forecast/suggestions/:id/link-po", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { poNumber?: string } | undefined;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const r = await linkPurchaseOrder(c.req.param("id"), { poNumber: String(body?.poNumber ?? "") });
+  return c.json(r, r.ok ? 200 : 400);
+});
+
+app.get("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json({ rows: await listBufferConfig() });
+});
+
+app.post("/forecast/buffer-config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { itemId?: number; warehouseKode?: string; bufferPersen?: number; updatedBy?: string } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body.itemId || !body.warehouseKode || body.bufferPersen == null) {
+    return c.json({ error: "itemId, warehouseKode, bufferPersen wajib" }, 400);
+  }
+  const r = await upsertBufferConfig({
+    itemId: body.itemId,
+    warehouseKode: body.warehouseKode,
+    bufferPersen: Number(body.bufferPersen),
+    updatedBy: body.updatedBy ?? null,
+  });
+  return c.json(r, r.ok ? 200 : 400);
 });
 
 const port = Number(process.env.PORT ?? 4000);
