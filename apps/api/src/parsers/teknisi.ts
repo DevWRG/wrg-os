@@ -380,6 +380,96 @@ export function parseTeknisiReport(
 }
 
 // ---------------------------------------------------------------------------
+// #START — jam mulai per pekerjaan (waktu servis = jam #REPORT − jam #START)
+// ---------------------------------------------------------------------------
+
+export interface TeknisiStartParse {
+  /** Nomor item plan hari ini: `#START 1` / `#START 1, 2`. */
+  nomor: number[];
+  /** Kerja di luar plan: `#START RS A | SN 0832 | Service` → item plan baru. */
+  baru: Omit<TeknisiPlanItem, "urut"> | null;
+  errors: string[];
+}
+
+const START_LINE = /^\s*#\s*start\b/i;
+const LABEL_FASKES = /^\s*(rs|faskes|customer|cust)\s*:\s*/i;
+
+export function parseTeknisiStart(body: string): TeknisiStartParse {
+  const lines = barisPesan(body);
+  const h = lines.findIndex((l) => START_LINE.test(l));
+  const out: TeknisiStartParse = { nomor: [], baru: null, errors: [] };
+  if (h < 0) return out;
+  // Isi = sisa baris hashtag; kalau kosong, baris berisi pertama sesudahnya.
+  let isi = lines[h].replace(START_LINE, "").trim();
+  if (!isi) isi = lines.slice(h + 1).map((l) => l.trim()).find(Boolean) ?? "";
+  if (!isi) {
+    out.errors.push("Tulis nomor plan, mis. `#START 1`, atau pekerjaan baru `#START RS | SN/alat | jenis`.");
+    return out;
+  }
+  if (isi.includes("|")) {
+    const seg = isi.replace(LABEL_FASKES, "").split(/\s*\|\s*/).map((x) => x.trim());
+    if (seg.length < 3 || !seg[0] || !seg[1] || !seg[2]) {
+      out.errors.push("Pekerjaan di luar plan perlu 3 bagian: `#START RS | SN/alat | jenis`.");
+      return out;
+    }
+    const { jenis, tiket } = pisahJenisTiket(seg.slice(2).join(" "));
+    if (!jenis) {
+      out.errors.push(`Jenis "${seg[2]}" tak dikenal. Pilih: ${JENIS_TEKNISI.join(" · ")}.`);
+      return out;
+    }
+    const { sn, alat } = pisahSnAlat(seg[1]);
+    out.baru = { faskes: seg[0], sn, alat, jenis, tiket };
+    return out;
+  }
+  // Hanya nomor (pemisah koma/spasi/"dan"); kata lain = format salah, bukan ditebak.
+  const sisa = isi.replace(/\b(no|nomor|dan)\b\.?/gi, " ").replace(/[#,;&+]/g, " ").trim();
+  if (!/^\d{1,2}(\s+\d{1,2})*$/.test(sisa)) {
+    out.errors.push("Tulis nomor plan, mis. `#START 1` atau `#START 1, 2`. Pekerjaan di luar plan: `#START RS | SN/alat | jenis`.");
+    return out;
+  }
+  out.nomor = [...new Set(sisa.split(/\s+/).map(Number))];
+  return out;
+}
+
+/** 95 → "1 j 35 m"; 45 → "45 m"; null → null. */
+export function fmtDurasi(menit: number | null | undefined): string | null {
+  if (menit == null || !Number.isFinite(menit) || menit < 0) return null;
+  const j = Math.floor(menit / 60);
+  const m = Math.round(menit % 60);
+  return j > 0 ? `${j} j ${m} m` : `${m} m`;
+}
+
+export const CONTOH_START_TEKNISI = [
+  "#START 1",
+  "(kirim sebagai caption foto GPS Map Camera di lokasi)",
+  "",
+  "beberapa pekerjaan sekaligus: #START 1, 2",
+  "pekerjaan di luar plan: #START RS Al Irsyad | DxH 560 | Service",
+].join("\n");
+
+export function balasanStartTeknisi(input: {
+  nama: string;
+  jam: string;
+  mulai: { urut: number; diLuarPlan: boolean; berlokasi: boolean }[];
+  ditolak: { urut: number; alasan: string }[];
+}): string {
+  const baris: string[] = [];
+  if (input.mulai.length) {
+    baris.push(`▶️ Mulai tercatat ${input.jam}, ${input.nama}`);
+    for (const m of input.mulai) {
+      baris.push(`No. ${m.urut}${m.diLuarPlan ? " (di luar plan)" : ""} · ${m.berlokasi ? "📍 lokasi tercatat" : "⚠️ tanpa lokasi"}`);
+    }
+  }
+  for (const d of input.ditolak) baris.push(`⚠️ No. ${d.urut}: ${d.alasan}`);
+  if (input.mulai.some((m) => !m.berlokasi)) {
+    baris.push("", "Supaya lokasi tercatat, kirim foto GPS Map Camera dengan caption #START nomornya.");
+  }
+  const lapor = input.mulai.map((m) => m.urut);
+  if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")}`);
+  return baris.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Contoh format untuk balasan bot saat pesan tak terbaca.
 // ---------------------------------------------------------------------------
 
@@ -438,7 +528,7 @@ export function balasanPlanTeknisi(input: {
     for (const it of bermasalah) baris.push(`⚠️ No. ${it.urut}: ${it.masalah}`);
   }
   if (input.dilewati.length) {
-    baris.push("", `ℹ️ No. ${input.dilewati.join(", ")} sudah dilaporkan — tak diganti.`);
+    baris.push("", `ℹ️ No. ${input.dilewati.join(", ")} sudah dimulai/dilaporkan — tak diganti.`);
   }
   if (bermasalah.length) {
     baris.push("", "Item bertanda ⚠️ tetap tersimpan; laporkan dengan SN supaya alatnya pasti.");
@@ -448,7 +538,14 @@ export function balasanPlanTeknisi(input: {
 
 export function balasanReportTeknisi(input: {
   faskes: string | null;
-  alat: { nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null; masalah: string | null; efek?: string | null }[];
+  alat: {
+    nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null;
+    masalah: string | null; efek?: string | null;
+    /** Menit #START → #REPORT; null = tak ada start. */
+    durasiMenit?: number | null;
+    /** true = pekerjaan ini tak pernah di-#START (ditandai, tetap diterima). */
+    tanpaStart?: boolean;
+  }[];
   foto?: number;
 }): string {
   const n = input.alat.length;
@@ -457,7 +554,9 @@ export function balasanReportTeknisi(input: {
     const sn = ekorSn(a.sn);
     const nama = [a.alatLabel ?? "alat ?", sn ? `(${sn})` : null].filter(Boolean).join(" ");
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
-    baris.push(`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}`);
+    const durasi = fmtDurasi(a.durasiMenit);
+    baris.push(`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`);
+    if (a.tanpaStart) baris.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
     if (a.masalah) baris.push(`   ⚠️ perlu cek: ${a.masalah}`);
     if (a.efek) baris.push(`   ↳ ${a.efek}`);
   }
@@ -465,10 +564,11 @@ export function balasanReportTeknisi(input: {
   return baris.join("\n");
 }
 
-export function balasanFormatSalah(kind: "plan" | "report", nama: string, errors: string[]): string {
-  const contoh = kind === "plan" ? CONTOH_PLAN_TEKNISI : CONTOH_REPORT_TEKNISI;
+export function balasanFormatSalah(kind: "plan" | "report" | "start", nama: string, errors: string[]): string {
+  const contoh = kind === "plan" ? CONTOH_PLAN_TEKNISI : kind === "start" ? CONTOH_START_TEKNISI : CONTOH_REPORT_TEKNISI;
+  const judul = kind === "plan" ? "Plan" : kind === "start" ? "Start" : "Report";
   return [
-    `⚠️ ${kind === "plan" ? "Plan" : "Report"} teknisi belum tersimpan, ${nama}:`,
+    `⚠️ ${judul} teknisi belum tersimpan, ${nama}:`,
     ...errors.slice(0, 6).map((e) => `• ${e}`),
     "",
     "Kirim ulang lengkap. Contoh:",

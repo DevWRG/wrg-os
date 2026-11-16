@@ -103,7 +103,10 @@ async function efekTiket(sql: Sql, b: BarisEfek): Promise<string | null> {
     UPDATE service_ticket SET status = 'resolved', resolved_at = now(), resolved_note = ${catatan}, updated_at = now()
     WHERE id = ${buka[0].id}::uuid AND status = 'open'
     RETURNING id`;
-  return u.length ? "tiket servis ditutup" : null;
+  if (!u.length) return null;
+  // Tautkan tiket ke laporan alat → SLA (tiket masuk → #START → #REPORT) di teknisi_kerja_v (323).
+  await sql`UPDATE teknisi_kunjungan_alat SET service_ticket_id = ${buka[0].id}::uuid WHERE id = ${b.id}`;
+  return "tiket servis ditutup";
 }
 
 /** Install selesai → jadwal install unit itu done. Langkah unit (training/BAST) TIDAK dilompati. */

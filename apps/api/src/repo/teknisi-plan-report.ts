@@ -133,7 +133,7 @@ export async function cariAlat(
 }
 
 /** jadwal_rutin aktif faskes itu di bulan `tanggal` (F154) — rujukan item plan. */
-async function jadwalRutinId(sql: Sql, accountId: number | null, tanggal: string): Promise<number | null> {
+export async function jadwalRutinId(sql: Sql, accountId: number | null, tanggal: string): Promise<number | null> {
   if (!accountId) return null;
   const [r] = await sql`
     SELECT id FROM jadwal_rutin
@@ -175,9 +175,11 @@ export async function simpanPlanTeknisi(input: {
   }
   const dilewati: number[] = [];
   await sql.begin(async (tx) => {
-    // Kirim ulang #PLAN di hari yang sama = ganti item yang BELUM dilaporkan.
+    // Kirim ulang #PLAN di hari yang sama = ganti item yang BELUM dilaporkan DAN belum
+    // di-#START (jam mulai tak boleh hilang); item di luar plan (dari #START) tetap.
     await tx`DELETE FROM teknisi_plan_item
-             WHERE teknisi_id = ${input.teknisiId} AND tanggal = ${input.tanggal} AND reported_at IS NULL`;
+             WHERE teknisi_id = ${input.teknisiId} AND tanggal = ${input.tanggal} AND reported_at IS NULL
+               AND started_at IS NULL AND NOT di_luar_plan`;
     for (const { it, acc, a, masalah, jr } of cocok) {
       const r = await tx`
         INSERT INTO teknisi_plan_item
@@ -214,6 +216,10 @@ export interface AlatTerlapor {
   alasan: string | null;
   masalah: string | null;
   efek: string | null;
+  /** Menit #START → #REPORT (null = tanpa start). */
+  durasiMenit: number | null;
+  /** Pekerjaan tak pernah di-#START — diterima, ditandai. */
+  tanpaStart: boolean;
 }
 
 /** Foto dari pengirim yang sama dalam jendela ini sebelum #REPORT ikut jadi foto kunjungan. */
@@ -233,7 +239,7 @@ export async function simpanReportTeknisi(input: {
   const { parse } = input;
   const plan = await sql`
     SELECT p.id, p.urut, p.account_id, p.faskes_teks, p.kso_asset_id, p.installation_unit_id::text, p.sn_teks,
-           p.alat_teks, p.jenis, p.catatan_cocok,
+           p.alat_teks, p.jenis, p.catatan_cocok, p.started_at,
            COALESCE(NULLIF(a.nama_alat, ''), a.type_alat) AS asset_nama, a.sn_raw AS asset_sn
     FROM teknisi_plan_item p LEFT JOIN kso_asset a ON a.id = p.kso_asset_id
     WHERE p.teknisi_id = ${input.teknisiId} AND p.tanggal = ${input.tanggal}`;
@@ -347,6 +353,15 @@ export async function simpanReportTeknisi(input: {
   });
 
   const efek = hasil.kunjunganId ? await terapkanEfek(hasil.kunjunganId) : new Map<number, string>();
+  // Waktu kerja = jam report − jam #START item plan yang ditaut (alat tanpa start ditandai).
+  const startPerPlan = new Map(plan.map((p) => [Number(p.id), p.started_at ? new Date(p.started_at as string) : null]));
+  const selesai = input.receivedAt ? new Date(input.receivedAt) : new Date();
+  const durasi = (planId: number | null): number | null => {
+    const mulai = planId ? startPerPlan.get(planId) : null;
+    if (!mulai) return null;
+    const m = Math.round((selesai.getTime() - mulai.getTime()) / 60000);
+    return m >= 0 ? m : null;
+  };
   return {
     duplikat: hasil.duplikat,
     faskes: faskesLabel,
@@ -354,6 +369,7 @@ export async function simpanReportTeknisi(input: {
     alat: baris.map((x) => ({
       nomor: x.b.nomor, alatLabel: x.label, sn: x.snTampil, jenis: x.jenis,
       status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah, efek: efek.get(x.b.nomor) ?? null,
+      durasiMenit: durasi(x.planId), tanpaStart: !(x.planId && startPerPlan.get(x.planId)),
     })),
   };
 }

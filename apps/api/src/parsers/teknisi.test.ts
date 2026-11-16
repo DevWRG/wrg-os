@@ -176,7 +176,7 @@ test("balasan plan & format salah", () => {
     items: [{ urut: 1, faskes: "RS A", alatLabel: "EXC200", jenis: "PM", masalah: "faskes \"RS A\" tak dikenali" }],
   });
   assert.match(t, /^✅ Plan tercatat, Budi\n📅 Sab, 7 Nov 2026 · 1 alat\n⚠️ telat/);
-  assert.match(t, /No\. 3 sudah dilaporkan/);
+  assert.match(t, /No\. 3 sudah dimulai\/dilaporkan/);
   assert.match(t, /⚠️ No\. 1: faskes "RS A" tak dikenali/);
   assert.doesNotMatch(t, /RS A · EXC200/); // daftar item tak diulang
   const bersih = balasanPlanTeknisi({
