@@ -9588,13 +9588,15 @@ app.patch("/purchase-orders/:id/approvals/:role", async (c) => {
 // Manual trigger (tombol "Generate Usulan"), bukan cron di versi ini.
 app.post("/forecast/generate", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
-  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown } = {};
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown; bufferPersen?: unknown } = {};
   try {
     body = await c.req.json();
   } catch {
     /* opsional — kosong = 6 bulan terakhir, KSO & Regular, semua brand */
   }
-  const r = await generateSuggestions({ dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand });
+  const r = await generateSuggestions({
+    dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand, bufferPersen: body.bufferPersen,
+  });
   return c.json(r, r.error ? 400 : 200);
 });
 
