@@ -68,6 +68,19 @@ class TestParse(unittest.TestCase):
         self.assertIsNone(r[0]["prioritas"])
         self.assertEqual(r[0]["yakin"], 0.0)
 
+    def test_json_lines_digabung(self):
+        # flash-lite kadang menulis satu {"aksi": [...]} per baris (uji dev 16 Nov 2026).
+        text = (
+            '{"aksi": [{"ref": "M1", "jenis": "abaikan"}]}\n'
+            '{"aksi": [{"ref": "M2", "jenis": "aduan_baru", "judul": "Wifi mati", "kategori": "IT", "yakin": 1.0}]}\n'
+            '{"aksi": [{"ref": "M3", "jenis": "progres", "tiket": "M2", "yakin": 1.0}]}'
+        )
+        r = parse_aduan(text, ["M1", "M2", "M3"], KAT)
+        self.assertEqual([a["jenis"] for a in r], ["abaikan", "aduan_baru", "progres"])
+
+    def test_json_lines_sebagian_rusak_none(self):
+        self.assertIsNone(parse_aduan('{"aksi": [{"ref": "M1", "jenis": "abaikan"}]}\n{"aksi": [', ["M1"], KAT))
+
     def test_array_polos_diterima(self):
         r = parse_aduan('[{"ref":"M1","jenis":"abaikan"}]', ["M1"], KAT)
         self.assertEqual(r[0]["jenis"], "abaikan")
