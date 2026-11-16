@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-// Simulasi margin_wrg (biaya & margin WRG) hanya dibaca/disimpan pemegang 'proyek-hd-margin'.
+// Simulasi tersimpan per proyek (menu Simulator HD). margin_wrg (biaya & margin WRG) hanya
+// dibaca/disimpan pemegang 'proyek-hd-margin'. Simpan = aksi "create" menu Simulator HD.
 export async function GET(_req: Request, ctx: Ctx) {
   const g = await gerbang("view");
   if (!g.ok) return g.res;
@@ -20,7 +21,7 @@ const angka = (o: Record<string, unknown>, kunci: readonly string[]) =>
   Object.fromEntries(kunci.map((k) => [k, Number(o[k])]));
 
 export async function POST(req: Request, ctx: Ctx) {
-  const g = await gerbang("edit");
+  const g = await gerbang("create");
   if (!g.ok) return g.res;
   const id = idAman((await ctx.params).id);
   if (!id) return Response.json({ error: "id tidak valid" }, { status: 400 });

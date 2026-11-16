@@ -17,7 +17,7 @@ import { bulan, kirim, RAG_KELAS, rpRingkas, type Proyek, type Ringkasan, type R
 
 // Dashboard Proyek HD: KPI (dihitung SQL atas semua proyek), posisi per tahap (klik =
 // saring tabel), dan daftar proyek. Data dimuat di klien lewat BFF berizin.
-export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bolehParam: boolean }) {
+export function ProyekView({ bolehBuat, bolehParam, bolehSimulator }: { bolehBuat: boolean; bolehParam: boolean; bolehSimulator: boolean }) {
   const router = useRouter();
   const [ring, setRing] = useState<Ringkasan | null>(null);
   const [ops, setOps] = useState<RingkasanOps | null>(null);
@@ -79,7 +79,7 @@ export function ProyekView({ bolehBuat, bolehParam }: { bolehBuat: boolean; bole
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2">
         {bolehBuat && <Button onClick={() => setTambah((n) => n + 1)}><Plus />Tambah proyek</Button>}
-        <Link href="/proyek-hd/simulator" className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>
+        {bolehSimulator && <Link href="/hd-simulator" className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>}
         {bolehParam && <Button variant="soft" onClick={() => setParam(true)}><SlidersHorizontal />Parameter</Button>}
         <Link href="/proyek-hd/data/konstruksi" className={buttonVariants({ variant: "soft" })}><Database />Data operasional</Link>
         {/* Unduhan tetap <a href> (pola produktivitas KSO): browser memakai nama berkas dari content-disposition. */}

@@ -44,7 +44,8 @@ export async function kirim<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export const rp = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "—" : `Rp ${Math.round(v).toLocaleString("id-ID")}`);
+export const rp = (v: number | null | undefined) =>
+  v == null || !Number.isFinite(v) ? "—" : `Rp ${(Math.round(v) || 0).toLocaleString("id-ID")}`; // || 0: hindari "Rp -0"
 
 /** Ringkas untuk kartu: Rp 28,9 M / Rp 450 jt. */
 export function rpRingkas(v: number | null | undefined): string {
