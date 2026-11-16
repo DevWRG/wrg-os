@@ -89,8 +89,7 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       id: "aksi",
       header: "Aksi",
       align: "right",
-      // Stepper 5 status + Batalkan: tanpa lebar minimum tombolnya menumpuk satu per baris.
-      className: "min-w-80 whitespace-normal",
+
       cell: (t) => (
         <div className="flex items-center justify-end gap-1">
           <GaTicketTransitionActions ticketId={t.id} status={t.status} />
