@@ -178,7 +178,7 @@ export const NAV: NavGroup[] = [
       // Price Book: itu harga JUAL barang, ini biaya operasional alat yang
       // dipakai sales menyusun skema KSO/CPRR di depan faskes. Master datanya
       // migrasi 074, rumusnya apps/web/src/lib/kso/formula.ts.
-      { title: "Simulator KSO", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso,
+      { title: "Simulator KSO IVD", url: "/kso-simulator", icon: Calculator, badge: "NEW", show: canViewKso,
         // F145 Fase B (migrasi 264): kelola harga beli reagen & HPP alat — Finance;
         // basis "Harga beli" (lihat saja) — Komite / Finance / HOD Business
         features: [FITUR_HARGA_BELI, FITUR_BASIS_BELI] },
