@@ -355,6 +355,7 @@ import {
   createTeknisiReport,
   listTeknisiReports,
 } from "./repo/readinessboard.js";
+import { KinerjaError, bacaRentang, cakupanKinerja, daftarTeknisi, hariIniWib, jadwalTeknisi, kerjaTeknisi, ringkasKerja } from "./repo/kinerja-teknisi.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { GalatKso, berkasLampiran, berkasSph, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
@@ -4927,6 +4928,38 @@ app.get("/teknisi-reports", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await listTeknisiReports(c.req.query("report_type") || undefined);
   return c.json({ count: rows.length, rows });
+});
+
+// ── Kinerja Teknisi (Aftersales, keputusan user 16 Nov 2026) — jadwal per teknisi + Plan & Report
+// (durasi, SLA tiket vs ETA, kepatuhan). Cakupan ditegakkan di repo dari x-user-id: admin/direktur/
+// superuser/izin `kinerja-teknisi-semua` → semua; selain itu hanya teknisi yang tertaut ke akunnya.
+// BFF (/api/kinerja-teknisi/*) menggerbang menu `kinerja-teknisi`. ──
+const kinerjaErr = (c: { json: (b: unknown, s?: number) => Response }, e: unknown) => {
+  if (e instanceof KinerjaError) return c.json({ error: e.message }, e.status);
+  throw e;
+};
+app.get("/kinerja-teknisi/teknisi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const cak = await cakupanKinerja(c.req.header("x-user-id"));
+  return c.json({ semua: cak.semua, rows: await daftarTeknisi(cak) });
+});
+app.get("/kinerja-teknisi/jadwal", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = bacaRentang(c.req.query("dari"), c.req.query("sampai"), hariIniWib());
+    const cak = await cakupanKinerja(c.req.header("x-user-id"));
+    const rows = await jadwalTeknisi(cak, { teknisi: c.req.query("teknisi"), ...r });
+    return c.json({ semua: cak.semua, ...r, rows });
+  } catch (e) { return kinerjaErr(c, e); }
+});
+app.get("/kinerja-teknisi/kerja", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const r = bacaRentang(c.req.query("dari"), c.req.query("sampai"), hariIniWib());
+    const cak = await cakupanKinerja(c.req.header("x-user-id"));
+    const rows = await kerjaTeknisi(cak, { teknisi: c.req.query("teknisi"), ...r });
+    return c.json({ semua: cak.semua, ...r, rows, ringkasan: ringkasKerja(rows) });
+  } catch (e) { return kinerjaErr(c, e); }
 });
 
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));

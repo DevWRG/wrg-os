@@ -39,6 +39,7 @@ import { canViewPmfScorecard } from "@/lib/pmf-access";
 import { canViewCn } from "@/lib/cn-access";
 import { canViewApThreeWay } from "@/lib/ap-three-way-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
+import { canViewKinerjaTeknisi } from "@/lib/kinerja-teknisi-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewKohort } from "@/lib/kohort-access";
 import { canViewRaportList } from "@/lib/raport-access";
@@ -328,6 +329,11 @@ export const NAV: NavGroup[] = [
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
       { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
+      // Kinerja Teknisi — jadwal per teknisi + Plan & Report (waktu kerja, SLA tiket vs ETA, kepatuhan).
+      // Kunci "kinerja-teknisi" (teknisi: hanya dirinya) + "kinerja-teknisi-semua" (HoD Aftersales: semua);
+      // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
+      { title: "Kinerja Teknisi", url: "/kinerja-teknisi", icon: Gauge, badge: "NEW", show: canViewKinerjaTeknisi,
+        features: [{ key: "kinerja-teknisi-semua", name: "Kinerja Teknisi — lihat semua teknisi" }] },
     ],
   },
   {
