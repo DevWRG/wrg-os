@@ -441,7 +441,7 @@ export function fmtDurasi(menit: number | null | undefined): string | null {
 
 export const CONTOH_START_TEKNISI = [
   "#START 1",
-  "(kirim sebagai caption foto GPS Map Camera di lokasi)",
+  "(kirim sebagai caption foto Geo-Tagging Camera di lokasi — sama seperti foto kunjungan AM)",
   "",
   "beberapa pekerjaan sekaligus: #START 1, 2",
   "pekerjaan di luar plan: #START RS Al Irsyad | DxH 560 | Service",
@@ -462,7 +462,7 @@ export function balasanStartTeknisi(input: {
   }
   for (const d of input.ditolak) baris.push(`⚠️ No. ${d.urut}: ${d.alasan}`);
   if (input.mulai.some((m) => !m.berlokasi)) {
-    baris.push("", "Supaya lokasi tercatat, kirim foto GPS Map Camera dengan caption #START nomornya.");
+    baris.push("", "Supaya lokasi tercatat, kirim foto Geo-Tagging Camera (seperti foto kunjungan AM) dengan caption #START nomornya.");
   }
   const lapor = input.mulai.map((m) => m.urut);
   if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")}`);

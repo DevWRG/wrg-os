@@ -1,6 +1,6 @@
 -- 323 — F175 #START Teknisi: jam mulai per pekerjaan → waktu servis & SLA + kepatuhan harian.
 --
--- Alur (keputusan user 16 Nov 2026): #PLAN → #START n (jam mulai, foto GPS Map Camera sebagai bukti lokasi)
+-- Alur (keputusan user 16 Nov 2026): #PLAN → #START n (jam mulai, foto geotag (Geo-Tagging Camera, pola foto kunjungan AM) sebagai bukti lokasi)
 -- → #REPORT n (jam selesai). Waktu servis = jam report − jam start. Report tanpa start tetap diterima,
 -- ditandai. Kerja di luar plan: `#START RS | SN | jenis` membuat item plan baru (di_luar_plan).
 --

@@ -201,12 +201,12 @@ Alur: `#PLAN` → `#START n` (jam mulai) → `#REPORT n` (jam selesai). **Waktu 
 Untuk Service bertiket: SLA respon = tiket masuk → #START, SLA selesai = tiket masuk → #REPORT (`teknisi_kerja_v`).
 
 ```
-#START 1                          ← kirim sebagai caption foto GPS Map Camera di lokasi
+#START 1                          ← kirim sebagai caption foto Geo-Tagging Camera di lokasi — sama seperti foto kunjungan AM
 #START 1, 2                       ← beberapa pekerjaan sekaligus
 #START RS Al Irsyad | DxH 560 | Service   ← kerja di luar plan → item baru No. 51, 52, …
 ```
 
-- **Bukti lokasi** = foto GPS Map Camera; koordinat dibaca dari OCR wa-bridge (`wa_message.geo_lat/geo_lon/geo_address`).
+- **Bukti lokasi** = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM); koordinat dibaca dari OCR wa-bridge (`wa_message.geo_lat/geo_lon/geo_address`).
   Foto boleh caption `#START n` atau dikirim terpisah ±10 menit sebelum/sesudah teks. Tanpa foto/cap lokasi → start
   tetap diterima, ditandai **tanpa lokasi**.
 - **Retensi:** foto start dihapus setelah `TEKNISI_FOTO_START_RETENSI_HARI` (default 30) oleh job

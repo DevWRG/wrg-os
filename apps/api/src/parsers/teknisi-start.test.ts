@@ -44,10 +44,10 @@ test("balasan #START: ringkas, tanda lokasi, ajakan foto bila tanpa lokasi", () 
   });
   assert.match(t, /^▶️ Mulai tercatat 09:05, Budi\nNo\. 1 · 📍 lokasi tercatat\nNo\. 51 \(di luar plan\) · ⚠️ tanpa lokasi/);
   assert.match(t, /⚠️ No\. 3: tak ada di #PLAN hari ini/);
-  assert.match(t, /foto GPS Map Camera/);
+  assert.match(t, /kirim foto Geo-Tagging Camera \(seperti foto kunjungan AM\) dengan caption #START/);
   assert.match(t, /Selesai → #REPORT 1 \/ 51$/);
   const semuaLokasi = balasanStartTeknisi({ nama: "Budi", jam: "09:05", mulai: [{ urut: 1, diLuarPlan: false, berlokasi: true }], ditolak: [] });
-  assert.doesNotMatch(semuaLokasi, /GPS Map Camera/);
+  assert.doesNotMatch(semuaLokasi, /Geo-Tagging Camera/);
 });
 
 test("balasan report: durasi & tanda tanpa #START", () => {

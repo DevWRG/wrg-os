@@ -3,7 +3,7 @@
 // Alur: #PLAN → #START n (jam mulai + bukti lokasi) → #REPORT n (jam selesai). Waktu servis =
 // jam report − jam start (dihitung di simpanReportTeknisi & view teknisi_kerja_v).
 //
-// Bukti lokasi = foto GPS Map Camera: wa-bridge sudah meng-OCR cap koordinatnya ke
+// Bukti lokasi = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM): wa-bridge sudah meng-OCR cap koordinatnya ke
 // wa_message.geo_lat/geo_lon/geo_address (pola foto kunjungan AM). Foto tanpa cap / tanpa
 // foto → start tetap diterima, ditandai "tanpa lokasi" (keputusan user 16 Nov 2026).
 // Koordinat disimpan permanen; FOTO start dihapus setelah masa simpan (job retensi).

@@ -1601,7 +1601,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   }
 
   // F175 #START — jam mulai pekerjaan teknisi (waktu servis = #REPORT − #START). Hanya role
-  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi = foto GPS Map Camera
+  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM)
   // (caption #START n, atau foto terpisah ±10 menit) → koordinat hasil OCR wa-bridge.
   if (kind === "start") {
     if (!teknisiPlanReportAktif()) return finish({ skipped: "teknisi-start-off" });
