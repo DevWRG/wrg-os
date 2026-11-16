@@ -237,11 +237,15 @@ export async function simpanReportTeknisi(input: {
 }): Promise<{ duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number }> {
   const sql = db();
   const { parse } = input;
+  // Nama/SN alat BELI (installation_unit) ikut tampil di balasan, bukan hanya alat KSO.
+  const unitAda = await punyaInstallationUnit(sql);
   const plan = await sql`
     SELECT p.id, p.urut, p.account_id, p.faskes_teks, p.kso_asset_id, p.installation_unit_id::text, p.sn_teks,
            p.alat_teks, p.jenis, p.catatan_cocok, p.started_at,
-           COALESCE(NULLIF(a.nama_alat, ''), a.type_alat) AS asset_nama, a.sn_raw AS asset_sn
+           COALESCE(NULLIF(a.nama_alat, ''), a.type_alat, ${unitAda ? sql`iu.alat_name` : sql`NULL`}) AS asset_nama,
+           COALESCE(a.sn_raw, ${unitAda ? sql`iu.serial_number` : sql`NULL`}) AS asset_sn
     FROM teknisi_plan_item p LEFT JOIN kso_asset a ON a.id = p.kso_asset_id
+    ${unitAda ? sql`LEFT JOIN installation_unit iu ON iu.id = p.installation_unit_id` : sql``}
     WHERE p.teknisi_id = ${input.teknisiId} AND p.tanggal = ${input.tanggal}`;
   const planPerUrut = new Map(plan.map((p) => [Number(p.urut), p]));
 
