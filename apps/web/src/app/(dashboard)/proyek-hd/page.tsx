@@ -22,7 +22,7 @@ export default async function ProyekHdPage() {
     <>
       <PageHeader
         title="Proyek HD"
-        description="Pantau tiap proyek hemodialisa (KSO) dari Deal sampai layanan berjalan: tahap, catatan & lampiran, unit terinstal/running, dan Simulator HD."
+        description="Pantau tiap proyek hemodialisa (KSO) dari Deal sampai layanan berjalan: tahap, catatan & lampiran, unit terinstal/running."
       />
       <ProyekView
         bolehBuat={featureAllowed(me, "/proyek-hd", "create")}

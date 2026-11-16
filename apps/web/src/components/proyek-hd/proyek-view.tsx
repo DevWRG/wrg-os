@@ -79,7 +79,7 @@ export function ProyekView({ bolehBuat, bolehParam, bolehSimulator }: { bolehBua
     <div className="space-y-6">
       <div className="flex flex-wrap gap-2">
         {bolehBuat && <Button onClick={() => setTambah((n) => n + 1)}><Plus />Tambah proyek</Button>}
-        {bolehSimulator && <Link href="/hd-simulator" className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>}
+        {bolehSimulator && <Link href="/hd-simulator" className={buttonVariants({ variant: "soft" })}><Calculator />Simulator KSO HD</Link>}
         {bolehParam && <Button variant="soft" onClick={() => setParam(true)}><SlidersHorizontal />Parameter</Button>}
         <Link href="/proyek-hd/data/konstruksi" className={buttonVariants({ variant: "soft" })}><Database />Data operasional</Link>
         {/* Unduhan tetap <a href> (pola produktivitas KSO): browser memakai nama berkas dari content-disposition. */}
