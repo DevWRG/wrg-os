@@ -37,7 +37,7 @@ export default async function KsoSimulatorPage() {
   return (
     <>
       <PageHeader
-        title="Simulator KSO"
+        title="Simulator KSO IVD"
         description="Hitung running cost alat lab per test untuk menyusun skema KSO/CPRR: CAPEX alat, reagen, consumable, dan overhead QC — sampai harga jual per test setelah markup."
       />
       <KsoView master={masterTampil} kelolaHargaBeli={kelolaHargaBeli} lihatHargaBeli={lihatHargaBeli} />
