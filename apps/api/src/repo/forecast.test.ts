@@ -10,7 +10,12 @@ import {
   rentangBulanTerakhir,
   tentukanWilayah,
   validasiRentang,
-  deskripsiDokumen,
+  bolehReview,
+  labelReview,
+  reviewHodKeyDokumen,
+  validasiReview,
+  isKategori,
+  isWilayah,
   gudangUntukCabang,
   kategoriDariKlasifikasi,
   kelompokkanRekap,
@@ -21,6 +26,7 @@ import {
   usulanMasihBerjalan,
   validasiJenis,
 } from "./forecast.js";
+import { hodSalesUntukRegion } from "./sales.js";
 
 const e = (status: string, poDiterima = false, poMati = false) => ({ status, poDiterima, poMati });
 
@@ -62,18 +68,6 @@ test("periodeDariBulan: YYYY-MM → tanggal 1, format salah → null", () => {
 test("qtyEfektif: qty final menang, kosong → usulan sistem", () => {
   assert.equal(qtyEfektif({ finalQty: 5, suggestedQty: 9 }), 5);
   assert.equal(qtyEfektif({ finalQty: null, suggestedQty: 9 }), 9);
-});
-
-test("deskripsiDokumen: ringkasan + rincian, dipotong 30 baris", () => {
-  const baris = Array.from({ length: 32 }, (_, i) => ({
-    itemName: `Barang ${i + 1}`, qty: 2, currentQty: 0, bufferQty: i === 0 ? 4 : null, edLewat: i === 1, nearEd: i === 1, notes: i === 0 ? "cek" : null,
-  }));
-  const d = deskripsiDokumen({ kode: "FC-SBY-202611-IVD", warehouseNama: "Gudang Surabaya", kategori: "IVD", periode: "2026-11-01", pipelineHot: 7 }, baris);
-  assert.match(d, /Jumlah barang: 32 · Total qty: 64/);
-  assert.match(d, /1\. Barang 1 — 2 \(stok 0, buffer 4\) — cek/);
-  assert.match(d, /2\. Barang 2 — 2 \(stok 0 · ada batch lewat ED\)/);
-  assert.match(d, /\(\+2 barang lainnya/);
-  assert.doesNotMatch(d, /Barang 31 —/);
 });
 
 test("bisaTautPo: disetujui tanpa PO, atau PO mati", () => {
@@ -170,4 +164,68 @@ test("labelJenis: satu jenis, baris lama = KSO & Regular, campur = beragam", () 
   assert.equal(labelJenis(["kso", "kso"]), "penjualan KSO");
   assert.equal(labelJenis([null]), "penjualan KSO & Regular");
   assert.equal(labelJenis(["kso", "regular"]), "jenis penjualan beragam");
+});
+
+// ── Review HoD Sales wilayah (migrasi 326) — nilai sintetis ────────────────
+const aktor = (x: Partial<{ role: string | null; hodKey: string | null; superuser: boolean }>) => ({
+  userId: "00000000-0000-0000-0000-000000000001", nama: "Penguji", role: "user", hodKey: null, superuser: false, ...x,
+});
+
+test("bolehReview: HoD Sales wilayah dokumen boleh, HoD lain tidak", () => {
+  assert.equal(bolehReview(aktor({ hodKey: "hod-a" }), "hod-a"), true);
+  assert.equal(bolehReview(aktor({ hodKey: "HOD-A" }), "hod-a"), true);
+  assert.equal(bolehReview(aktor({ hodKey: "hod-b" }), "hod-a"), false);
+  assert.equal(bolehReview(aktor({ hodKey: null }), "hod-a"), false);
+  assert.equal(bolehReview(aktor({ hodKey: "hod-a" }), null), false);
+  assert.equal(bolehReview(aktor({ hodKey: "" }), ""), false);
+});
+
+test("bolehReview: Direktur, admin, superuser jadi cadangan; viewer/user biasa tidak", () => {
+  assert.equal(bolehReview(aktor({ role: "direktur" }), "hod-a"), true);
+  assert.equal(bolehReview(aktor({ role: "Admin" }), "hod-a"), true);
+  assert.equal(bolehReview(aktor({ superuser: true }), "hod-a"), true);
+  assert.equal(bolehReview(aktor({ role: "direktur" }), null), true);
+  assert.equal(bolehReview(aktor({ role: "viewer" }), "hod-a"), false);
+  assert.equal(bolehReview(aktor({ role: "user" }), "hod-a"), false);
+  assert.equal(bolehReview(null, "hod-a"), false);
+});
+
+test("validasiReview: keputusan wajib valid; tolak wajib catatan (di-trim)", () => {
+  assert.deepEqual(validasiReview({ keputusan: "disetujui" }), { keputusan: "disetujui", catatan: null });
+  assert.deepEqual(validasiReview({ keputusan: "disetujui", catatan: "  ok  " }), { keputusan: "disetujui", catatan: "ok" });
+  assert.deepEqual(validasiReview({ keputusan: "ditolak", catatan: " qty terlalu besar " }), { keputusan: "ditolak", catatan: "qty terlalu besar" });
+  assert.ok("error" in validasiReview({ keputusan: "ditolak", catatan: "   " }));
+  assert.ok("error" in validasiReview({ keputusan: "ditolak" }));
+  assert.ok("error" in validasiReview({ keputusan: "approved" }));
+  assert.ok("error" in validasiReview(undefined));
+  assert.ok("error" in validasiReview({ keputusan: "ditolak", catatan: "x".repeat(1001) }));
+});
+
+test("reviewHodKeyDokumen: tersimpan menang; dokumen lama ikut wilayah gudang", () => {
+  assert.equal(reviewHodKeyDokumen("hod-a", "west"), "hod-a");
+  assert.equal(reviewHodKeyDokumen(null, "east"), hodSalesUntukRegion("East"));
+  assert.equal(reviewHodKeyDokumen(null, "utara"), null);
+  assert.equal(reviewHodKeyDokumen(null, null), null);
+});
+
+test("hodSalesUntukRegion: East/West punya HoD Sales berbeda, region lain null", () => {
+  const east = hodSalesUntukRegion("east");
+  const west = hodSalesUntukRegion("West");
+  assert.ok(east && west && east !== west);
+  assert.equal(hodSalesUntukRegion("OFFICE"), null);
+  assert.equal(hodSalesUntukRegion(null), null);
+});
+
+test("labelReview: menunggu / disetujui / ditolak + catatan; belum diajukan kosong", () => {
+  assert.equal(labelReview({ reviewStatus: "menunggu", reviewRegion: "East" }), "Menunggu review HoD Sales East");
+  assert.equal(labelReview({ reviewStatus: "disetujui", reviewedBy: "Penguji" }), "Disetujui oleh Penguji");
+  assert.equal(labelReview({ reviewStatus: "ditolak", reviewedBy: "Penguji", reviewNote: "kurangi qty" }), "Ditolak oleh Penguji: kurangi qty");
+  assert.equal(labelReview({ reviewStatus: null }), "");
+});
+
+test("isWilayah / isKategori: kosakata lokal F19", () => {
+  assert.equal(isWilayah("east"), true);
+  assert.equal(isWilayah("East"), false);
+  assert.equal(isKategori("Medical"), true);
+  assert.equal(isKategori("QC"), false);
 });

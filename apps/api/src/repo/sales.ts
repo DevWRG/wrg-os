@@ -871,13 +871,24 @@ export function targetTurunan(tahunan: number | null, period: keyof typeof PEMBA
   return tahunan == null ? null : Math.round(tahunan / PEMBAGI_TARGET[period]);
 }
 
+// HoD Sales → region (satu-satunya tempat peta ini; dipakai juga F19 untuk
+// menentukan reviewer forecast per wilayah gudang).
+export const HOD_SALES_REGION: Readonly<Record<string, Exclude<Region, "OFFICE">>> = { rocky: "East", yogi: "West" };
+
+/** hod_key HoD Sales untuk satu region (East/West, huruf besar/kecil bebas); null bila tak ada. */
+export function hodSalesUntukRegion(region: string | null | undefined): string | null {
+  const r = String(region ?? "").toLowerCase();
+  if (!r) return null;
+  return Object.entries(HOD_SALES_REGION).find(([, reg]) => reg.toLowerCase() === r)?.[0] ?? null;
+}
+
 // Peta cabang → region dari hod_territory (WatchPoint). Hanya HoD Sales yg jadi
-// region: rocky→East, yogi→West. Cabang lain / tak ter-map → OFFICE (default).
+// region (HOD_SALES_REGION). Cabang lain / tak ter-map → OFFICE (default).
 export async function cabangRegionMap(sql: ReturnType<typeof db>): Promise<Record<string, Region>> {
   const rows = await sql<{ hod_key: string; cabang: string }[]>`SELECT hod_key, cabang FROM hod_territory`;
   const map: Record<string, Region> = {};
   for (const r of rows) {
-    const region: Region | null = r.hod_key === "rocky" ? "East" : r.hod_key === "yogi" ? "West" : null;
+    const region: Region | null = Object.hasOwn(HOD_SALES_REGION, r.hod_key) ? HOD_SALES_REGION[r.hod_key] : null;
     if (region) map[r.cabang] = region;
   }
   return map;

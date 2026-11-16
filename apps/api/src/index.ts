@@ -692,6 +692,8 @@ import {
   dismissSuggestion,
   listDokumen,
   submitDokumen,
+  reviewDokumen,
+  aktorDariUser,
   hitungUlangDokumen,
   tutupDokumen,
   listWilayahCabang,
@@ -2461,14 +2463,17 @@ app.post("/forecast/suggestions/:id/dismiss", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// Dokumen cabang × kategori × bulan (migrasi 317) — satu dokumen = satu approval.
+// Dokumen cabang × kategori × bulan (migrasi 317) — satu dokumen = satu
+// review HoD Sales wilayah (migrasi 326). bolehReview per dokumen dihitung
+// untuk pemakai sesi (x-user-id dari BFF).
 app.get("/forecast/dokumen", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const aktor = await aktorDariUser(c.req.header("x-user-id"));
   const rows = await listDokumen({
     status: c.req.query("status") || undefined,
     bulan: c.req.query("bulan") || undefined,
     brand: c.req.query("brand") || undefined,
-  });
+  }, aktor);
   return c.json({ count: rows.length, dokumen: rows });
 });
 
@@ -2501,6 +2506,22 @@ app.post("/forecast/dokumen/:id/submit", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
+// Review HoD Sales wilayah (migrasi 326): body {keputusan: disetujui|ditolak,
+// catatan}. Pemutus dari sesi (x-user-id dari BFF), bukan body; izin
+// sebenarnya ditegakkan bolehReview (forecast.ts). Tanpa notifikasi WA.
+app.post("/forecast/dokumen/:id/review", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { keputusan?: unknown; catatan?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const aktor = await aktorDariUser(c.req.header("x-user-id"));
+  const r = await reviewDokumen(c.req.param("id"), body, aktor);
+  return c.json(r, r.ok ? 200 : (r.code ?? 400));
+});
+
 app.post("/forecast/dokumen/:id/hitung-ulang", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   let body: { dari?: unknown; sampai?: unknown; jenis?: unknown } = {};
@@ -2525,7 +2546,7 @@ app.post("/forecast/dokumen/:id/tutup", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// Rekap Purchasing: barang × cabang dari dokumen yang sudah disetujui.
+// Rekap Purchasing: barang × cabang dari dokumen yang sudah disetujui HoD Sales.
 app.get("/forecast/rekap", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await rekapPurchasing(c.req.query("bulan") ?? "", c.req.query("brand") || undefined);
@@ -2597,7 +2618,7 @@ app.post("/forecast/wilayah-cabang", async (c) => {
   return c.json(r, r.ok ? 200 : 400);
 });
 
-// F153 — tautkan usulan yang sudah approved (F11) ke PO Accurate yang dibuat
+// F153 — tautkan usulan yang dokumennya sudah disetujui HoD Sales ke PO Accurate yang dibuat
 // Purchasing (PO Tracker = cermin Accurate sejak migrasi 205). Lihat komentar
 // linkPurchaseOrder (forecast.ts).
 app.post("/forecast/suggestions/:id/link-po", async (c) => {

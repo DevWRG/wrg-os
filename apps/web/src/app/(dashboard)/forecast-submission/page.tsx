@@ -14,12 +14,15 @@ import { PagedTable } from "@/components/ui/paged-table";
 import { TableHead, TableHeader, TableRow, TableCell } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConfirm } from "@/components/ui/use-confirm";
-import { KATEGORI_OPTIONS, labelWilayah } from "@/lib/approval-routing";
+import { usePrompt } from "@/components/ui/use-prompt";
+import { KATEGORI_OPTIONS, labelReview, labelWilayah } from "@/lib/forecast-review";
 import { edSudahLewat, tanggalLokalIso } from "@/lib/forecast-ed";
 
 // F19 — usulan dikumpulkan per DOKUMEN cabang × kategori × bulan (migrasi 317,
-// keputusan user 15 Nov 2026): satu dokumen = satu approval. Purchasing
-// melihat rekap semua cabang per barang di tab Rekap Purchasing.
+// keputusan user 15 Nov 2026): satu dokumen = satu review HoD Sales wilayah
+// gudang (migrasi 326, keputusan product owner 16 Nov 2026 — menggantikan
+// approval F11). Purchasing melihat rekap semua cabang per barang di tab
+// Rekap Purchasing.
 
 interface Line {
   id: string;
@@ -52,9 +55,13 @@ interface Dokumen {
   kategori: string | null;
   periode: string;
   status: string;
-  approvalRequestId: string | null;
-  approvalKode: string | null;
-  approvalStatus: string | null;
+  reviewStatus: string | null;
+  reviewRegion: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  /** Pemakai ini boleh memutus review dokumen ini sekarang (dihitung API). */
+  bolehReview: boolean;
   submittedBy: string | null;
   jumlahBarang: number;
   totalQty: number;
@@ -93,12 +100,6 @@ const DOK_STATUS = [
   { value: "submitted", label: "Diajukan" },
   { value: "closed", label: "Ditutup" },
 ] as const;
-const APPROVAL_LABEL: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  pending: { label: "Menunggu approval", variant: "secondary" },
-  approved: { label: "Disetujui", variant: "default" },
-  rejected: { label: "Ditolak", variant: "destructive" },
-  canceled: { label: "Dibatalkan", variant: "outline" },
-};
 const selectCls =
   "h-8 w-full rounded-lg border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 const angka = (n: number) => n.toLocaleString("id-ID");
@@ -245,8 +246,8 @@ export default function ForecastSubmissionPage() {
         <div>
           <h1 className="text-2xl font-semibold">Forecast Submission</h1>
           <p className="text-muted-foreground">
-            F19 — usulan otomatis dari stok gudang (vs buffer & ED), dikumpulkan per dokumen cabang. Satu dokumen
-            diajukan sekali ke approval berjenjang; Purchasing memakai rekap semua cabang.
+            F19 — usulan otomatis dari stok gudang (vs buffer & ED), dikumpulkan per dokumen cabang. Dokumen yang
+            diajukan direview HoD Sales wilayahnya; Purchasing memakai rekap dokumen yang disetujui.
           </p>
         </div>
         <Button size="sm" variant="soft" render={<Link href="/forecast-submission/config" />} nativeButton={false}>
@@ -404,6 +405,7 @@ function DokumenCard({
   onNotice: (n: string | null) => void;
 }) {
   const { confirm, dialog } = useConfirm();
+  const { prompt, dialog: promptDialog } = usePrompt();
   const [busy, setBusy] = useState(false);
   const [edit, setEdit] = useState<Record<string, { finalQty: string; notes: string }>>(() =>
     Object.fromEntries(dok.lines.map((l) => [l.id, { finalQty: String(l.finalQty ?? l.suggestedQty), notes: l.notes ?? "" }])),
@@ -412,8 +414,10 @@ function DokumenCard({
   const draft = dok.status === "draft";
   const aktif = dok.lines.filter((l) => l.status !== "dismissed");
   const diabaikan = dok.lines.length - aktif.length;
-  const appr = dok.approvalStatus ? APPROVAL_LABEL[dok.approvalStatus] : null;
-  const apprMati = dok.approvalStatus === "rejected" || dok.approvalStatus === "canceled";
+  const review = labelReview(dok);
+  // Dokumen lama (backfill approval F11 ditolak/dibatalkan) masih 'submitted' — hanya bisa ditutup.
+  const ditolakLama = dok.status === "submitted" && dok.reviewStatus === "ditolak";
+  const bisaPutus = dok.bolehReview && dok.status === "submitted" && dok.reviewStatus === "menunggu";
   const totalEdit = aktif.reduce((a, l) => a + (draft ? Number(edit[l.id]?.finalQty || 0) : (l.finalQty ?? l.suggestedQty)), 0);
 
   const berubah = (l: Line) => {
@@ -462,18 +466,49 @@ function DokumenCard({
     confirm(
       {
         title: `Ajukan ${dok.kode}?`,
-        description: `${aktif.length} barang · total qty ${angka(totalEdit)} — ${dok.warehouseNama}, ${dok.kategori}. Approver: HoD Sales ${labelWilayah(dok.wilayah)} lalu HoD Bisnis ${dok.kategori}.`,
+        description: `${aktif.length} barang · total qty ${angka(totalEdit)} — ${dok.warehouseNama}, ${dok.kategori}. Direview HoD Sales ${labelWilayah(dok.wilayah)} di dashboard (tanpa notifikasi WA).`,
         confirmLabel: "Ajukan",
       },
       () =>
         void jalankan(async () => {
           if (!(await simpanSemua())) return;
           const data = await kirim(`/api/forecast/dokumen/${dok.id}/submit`, "POST");
-          if (data.notify && data.notify.ok === false) {
-            onNotice(`${data.approvalKode} diajukan, TAPI notifikasi tahap 1 gagal: ${data.notify.error}`);
-          } else {
-            onNotice(`${dok.kode} diajukan (${data.approvalKode}).`);
-          }
+          onNotice(`${dok.kode} diajukan — menunggu review HoD Sales${data.reviewRegion ? ` ${data.reviewRegion}` : ""}.`);
+          onChanged();
+        }),
+    );
+
+  const setujui = () =>
+    confirm(
+      {
+        title: `Setujui ${dok.kode}?`,
+        description: `${aktif.length} barang · total qty ${angka(totalEdit)} — ${dok.warehouseNama}, ${dok.kategori}. Dokumen masuk Rekap Purchasing.`,
+        confirmLabel: "Setujui",
+      },
+      () =>
+        void jalankan(async () => {
+          await kirim(`/api/forecast/dokumen/${dok.id}/review`, "POST", { keputusan: "disetujui" });
+          onNotice(`${dok.kode} disetujui.`);
+          onChanged();
+        }),
+    );
+
+  const tolak = () =>
+    prompt(
+      {
+        title: `Tolak ${dok.kode}?`,
+        description: "Dokumen kembali ke draft agar diperbaiki lalu diajukan ulang. Catatan wajib diisi.",
+        placeholder: "Alasan penolakan",
+        confirmLabel: "Tolak",
+        required: true,
+        multiline: true,
+        destructive: true,
+        maxLength: 1000,
+      },
+      (catatan) =>
+        void jalankan(async () => {
+          await kirim(`/api/forecast/dokumen/${dok.id}/review`, "POST", { keputusan: "ditolak", catatan });
+          onNotice(`${dok.kode} ditolak — dokumen kembali ke draft.`);
           onChanged();
         }),
     );
@@ -657,14 +692,14 @@ function DokumenCard({
             <Button size="sm" variant="soft" render={<a href={`/api/forecast/dokumen/ekspor?id=${dok.id}`} />} nativeButton={false}>
               Excel
             </Button>
-            {appr && <Badge variant={appr.variant}>{appr.label}</Badge>}
-            {dok.approvalRequestId && (
-              <Link href={`/approval-requests/${dok.approvalRequestId}`} className="text-primary text-xs underline">
-                {dok.approvalKode ?? "Lihat approval"}
-              </Link>
-            )}
+            {review && <Badge variant={review.variant}>{review.label}</Badge>}
           </div>
         </div>
+        {review?.catatan && (
+          <p className={`text-xs ${dok.reviewStatus === "ditolak" ? "text-destructive" : "text-muted-foreground"}`}>
+            {dok.reviewStatus === "ditolak" ? "Catatan penolakan" : "Catatan review"}: {review.catatan}
+          </p>
+        )}
         {draft && !dok.kategori && (
           <p className="text-xs text-amber-700 dark:text-amber-400">
             Barang di sini belum terklasifikasi IVD/Medical. Pilih kategori per barang — barangnya pindah ke dokumen
@@ -695,11 +730,20 @@ function DokumenCard({
             </Button>
           </div>
         )}
-        {dok.status === "submitted" && apprMati && (
+        {bisaPutus && (
           <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3 text-xs">
-            <span className="text-muted-foreground">
-              Approval {dok.approvalStatus === "rejected" ? "ditolak" : "dibatalkan"} — dokumen tidak bisa dilanjutkan.
-            </span>
+            <span className="text-muted-foreground">Anda dapat memutus review dokumen ini.</span>
+            <Button size="sm" variant="ghost" className="text-destructive" disabled={busy} onClick={tolak}>
+              Tolak
+            </Button>
+            <Button size="sm" disabled={busy} onClick={setujui}>
+              {busy ? "Memproses…" : "Setujui"}
+            </Button>
+          </div>
+        )}
+        {ditolakLama && (
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3 text-xs">
+            <span className="text-muted-foreground">Dokumen lama ditolak — tidak bisa dilanjutkan.</span>
             <Button size="sm" variant="soft" disabled={busy} onClick={tutup}>
               Tutup dokumen
             </Button>
@@ -707,6 +751,7 @@ function DokumenCard({
         )}
       </CardContent>
       {dialog}
+      {promptDialog}
     </Card>
   );
 }
@@ -740,7 +785,7 @@ function RekapTab({
         if (!res.ok) throw new Error(data.error ?? "gagal memuat rekap");
         if (!active) return;
         setBarang(data.barang ?? []);
-        setMenunggu(Number(data.menungguApproval ?? 0));
+        setMenunggu(Number(data.menungguReview ?? 0));
       } catch (e) {
         if (active) onError(String(e instanceof Error ? e.message : e));
       } finally {
@@ -844,7 +889,7 @@ function RekapTab({
         </div>
         {menunggu > 0 && (
           <p className="text-muted-foreground text-sm">
-            {menunggu} dokumen bulan ini masih menunggu approval — belum masuk rekap.
+            {menunggu} dokumen bulan ini masih menunggu review HoD Sales — belum masuk rekap.
           </p>
         )}
       </div>
@@ -856,7 +901,7 @@ function RekapTab({
               {brand ? ` · ${brand}` : ""}
             </CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
-              Gabungan dokumen semua cabang yang sudah disetujui · {barang.length} barang · total qty {angka(totalQty)}.
+              Gabungan dokumen semua cabang yang sudah disetujui HoD Sales · {barang.length} barang · total qty {angka(totalQty)}.
               Buat PO di Accurate, lalu tautkan nomornya per barang (berlaku untuk semua cabang barang itu).
             </p>
           </div>

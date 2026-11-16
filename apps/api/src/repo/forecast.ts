@@ -1,9 +1,10 @@
 // F19 — Forecast Submission Engine (SALES forecast; QC diabaikan dulu per
 // arahan Direktur). Sistem scan gudang (F37 item_stock_branch, F38
 // item_stock_batch) → usulan otomatis (draft) → Supply Chain edit/sortir →
-// "ajukan" masuk approval berjenjang F11 (repo/approval.ts). Sejak migrasi
-// 317 usulan dikumpulkan per DOKUMEN cabang × kategori × bulan, dan
-// Purchasing melihat rekap semua cabang.
+// "ajukan" menunggu SATU review oleh HoD Sales wilayah gudang di dashboard
+// (migrasi 326, keputusan product owner 16 Nov 2026 — dulu approval berjenjang
+// F11, yang tidak dibawa ke main). Sejak migrasi 317 usulan dikumpulkan per
+// DOKUMEN cabang × kategori × bulan, dan Purchasing melihat rekap semua cabang.
 //
 // TIDAK ADA hashtag WA di sini — beda dari blueprint lama, alur hasil
 // meeting 100% sistem→Supply Chain→approval (lihat komentar migrasi 107).
@@ -12,7 +13,20 @@ import ExcelJS from "exceljs";
 
 import { db, isDbEnabled } from "../db.js";
 import { cabangEffSql, joinAmFromSalesman } from "./salesman-am.js";
-import { createApprovalRequest, isKategori, isWilayah, KATEGORI, WILAYAH, type NotifyResult } from "./approval.js";
+import { effectivePermissions } from "./rbac.js";
+import { HOD_SALES_REGION, hodSalesUntukRegion } from "./sales.js";
+
+// Kosakata wilayah gudang & kategori dokumen. Dulu diimpor dari approval.ts
+// (F11); F11 hanya ada di dev, jadi F19 menyimpan salinannya sendiri supaya
+// bisa dibawa ke main. Nilai sama dengan approval.ts di dev.
+export const WILAYAH = ["east", "west"] as const;
+export const KATEGORI = ["IVD", "Medical"] as const;
+export function isWilayah(v: unknown): v is (typeof WILAYAH)[number] {
+  return typeof v === "string" && (WILAYAH as readonly string[]).includes(v);
+}
+export function isKategori(v: unknown): v is (typeof KATEGORI)[number] {
+  return typeof v === "string" && (KATEGORI as readonly string[]).includes(v);
+}
 
 // Ambang ED "dekat kedaluwarsa" — dipakai sbg SATU pemicu sederhana (bukan
 // 3-tier 90/60/30/0 spt F38 ed-watch, itu utk ALERT berulang; di sini cukup
@@ -396,12 +410,12 @@ async function pipelineHotCount(): Promise<number> {
 // ── Dokumen cabang (migrasi 317) ───────────────────────────────────────────
 // Keputusan user 15 Nov 2026: usulan TIDAK diajukan satu-satu per barang.
 // Generate mengumpulkan semua barang satu cabang ke satu dokumen per kategori
-// (IVD / Medical — approver tahap 2 ikut kategori) per bulan; satu dokumen =
-// satu approval_request. Wilayah tahap 1 ikut pemetaan cabang (warehouse.wilayah).
+// (IVD / Medical) per bulan; satu dokumen = satu review HoD Sales wilayah
+// gudang (migrasi 326). Wilayah ikut pemetaan cabang (lihat wilayahGudang).
 
 export const KATEGORI_KODE: Record<string, string> = { IVD: "IVD", Medical: "MED" };
 
-/** Kategori approval dari id kategori Klasifikasi Produk: 01 = IVD, selebihnya (NON IVD/OBAT/Utility) = Medical. */
+/** Kategori dokumen dari id kategori Klasifikasi Produk: 01 = IVD, selebihnya (NON IVD/OBAT/Utility) = Medical. */
 export function kategoriDariKlasifikasi(kategoriId: string | null | undefined): Kategori | null {
   if (!kategoriId) return null;
   return kategoriId === "01" ? "IVD" : "Medical";
@@ -621,8 +635,8 @@ export interface ForecastSuggestionRow {
   finalQty: number | null;
   notes: string | null;
   status: string;
-  approvalRequestId: string | null;
-  approvalStatus: string | null;
+  /** Status review dokumen tempat baris ini (menunggu/disetujui/ditolak); null = belum diajukan. */
+  reviewStatus: string | null;
   purchaseOrderId: string | null;
   purchaseOrderNumber: string | null;
   /** PO tautan dibatalkan / ditutup sebelum diterima → boleh ditautkan ulang. */
@@ -660,8 +674,7 @@ function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
     finalQty: r.final_qty != null ? Number(r.final_qty) : null,
     notes: r.notes ? String(r.notes) : null,
     status: String(r.status),
-    approvalRequestId: r.approval_request_id ? String(r.approval_request_id) : null,
-    approvalStatus: r.approval_status ? String(r.approval_status) : null,
+    reviewStatus: r.review_status ? String(r.review_status) : null,
     purchaseOrderId: r.purchase_order_id ? String(r.purchase_order_id) : null,
     purchaseOrderNumber: r.po_number ? String(r.po_number) : null,
     purchaseOrderMati: r.po_mati === true,
@@ -671,13 +684,13 @@ function mapSuggestion(r: Record<string, unknown>): ForecastSuggestionRow {
 }
 
 const SUGGESTION_SELECT = `
-  fs.*, item_brand(fs.item_id) AS brand, ai.no AS item_no, ai.name AS item_name, w.nama AS warehouse_nama, ar.status AS approval_status,
+  fs.*, item_brand(fs.item_id) AS brand, ai.no AS item_no, ai.name AS item_name, w.nama AS warehouse_nama, fd.review_status AS review_status,
   po.po_number AS po_number, ${PO_MATI_SQL} AS po_mati`;
 const SUGGESTION_FROM = `
   FROM forecast_suggestion fs
   JOIN accurate_item ai ON ai.id = fs.item_id
   JOIN warehouse w ON w.kode = fs.warehouse_kode
-  LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+  LEFT JOIN forecast_dokumen fd ON fd.id = fs.dokumen_id
   LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id`;
 
 export async function listSuggestions(status?: string): Promise<ForecastSuggestionRow[]> {
@@ -699,9 +712,15 @@ export interface ForecastDokumenRow {
   kategori: string | null;
   periode: string;
   status: string;
-  approvalRequestId: string | null;
-  approvalKode: string | null;
-  approvalStatus: string | null;
+  /** Review HoD Sales wilayah (migrasi 326): menunggu/disetujui/ditolak; null = belum pernah diajukan. */
+  reviewStatus: string | null;
+  /** Region reviewer (East/West) dari hod_key reviewer — tanpa nama orang. */
+  reviewRegion: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  /** Pemakai yang meminta daftar ini boleh memutus review dokumen ini sekarang. */
+  bolehReview: boolean;
   submittedBy: string | null;
   submittedAt: string | null;
   createdAt: string;
@@ -723,16 +742,16 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function listDokumen(
   filter: { status?: string; bulan?: string; id?: string; brand?: string } = {},
+  aktor: AktorReview | null = null,
 ): Promise<ForecastDokumenRow[]> {
   const brand = String(filter.brand ?? "").trim().toUpperCase();
   const sql = db();
   const periode = periodeDariBulan(filter.bulan);
   if (filter.id && !UUID.test(filter.id)) return [];
   const docs = await sql`
-    SELECT d.*, w.nama AS warehouse_nama, w.urutan, ar.kode AS approval_kode, ar.status AS approval_status
+    SELECT d.*, w.nama AS warehouse_nama, w.urutan
     FROM forecast_dokumen d
     JOIN warehouse w ON w.kode = d.warehouse_kode
-    LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
     WHERE ${filter.status ? sql`d.status = ${filter.status}` : sql`true`}
       AND ${filter.id ? sql`d.id = ${filter.id}::uuid` : sql`true`}
       AND ${periode ? sql`d.periode = ${periode}::date` : sql`true`}
@@ -752,18 +771,24 @@ export async function listDokumen(
   const hasil = docs.map((d) => {
     const own = lines.filter((l) => l.dokumenId === String(d.id) && (!brand || (l.brand ?? "").toUpperCase() === brand));
     const aktif = own.filter((l) => l.status !== "dismissed");
+    const wilayah = wil.get(String(d.warehouse_kode))?.wilayah ?? null;
+    const reviewStatus = d.review_status ? String(d.review_status) : null;
+    const hodKey = reviewHodKeyDokumen(d.review_hod_key ? String(d.review_hod_key) : null, wilayah);
     return {
       id: String(d.id),
       kode: String(d.kode),
       warehouseKode: String(d.warehouse_kode),
       warehouseNama: String(d.warehouse_nama),
-      wilayah: wil.get(String(d.warehouse_kode))?.wilayah ?? null,
+      wilayah,
       kategori: d.kategori ? String(d.kategori) : null,
       periode: toIsoDate(d.periode).slice(0, 7),
       status: String(d.status),
-      approvalRequestId: d.approval_request_id ? String(d.approval_request_id) : null,
-      approvalKode: d.approval_kode ? String(d.approval_kode) : null,
-      approvalStatus: d.approval_status ? String(d.approval_status) : null,
+      reviewStatus,
+      reviewRegion: hodKey && Object.hasOwn(HOD_SALES_REGION, hodKey) ? HOD_SALES_REGION[hodKey] : null,
+      reviewedBy: d.reviewed_by ? String(d.reviewed_by) : null,
+      reviewedAt: d.reviewed_at ? toIsoTs(d.reviewed_at) : null,
+      reviewNote: d.review_note ? String(d.review_note) : null,
+      bolehReview: reviewStatus === "menunggu" && d.status === "submitted" && bolehReview(aktor, hodKey),
       submittedBy: d.submitted_by ? String(d.submitted_by) : null,
       submittedAt: d.submitted_at ? toIsoTs(d.submitted_at) : null,
       createdAt: toIsoTs(d.created_at),
@@ -820,7 +845,7 @@ export async function dismissSuggestion(id: string, reviewedBy?: string): Promis
   const sql = db();
   const [r] = await sql`SELECT status, dokumen_id FROM forecast_suggestion WHERE id = ${id}`;
   if (!r) return { ok: false, error: "usulan tidak ditemukan" };
-  if (r.status !== "draft") return { ok: false, error: `usulan sudah ${r.status} — tutup dokumennya bila approval ditolak` };
+  if (r.status !== "draft") return { ok: false, error: `usulan sudah ${r.status}, tak bisa diabaikan` };
   const done = await sql`
     UPDATE forecast_suggestion SET status = 'dismissed', reviewed_by = ${reviewedBy ?? null}, reviewed_at = now()
     WHERE id = ${id} AND status = 'draft'
@@ -866,19 +891,16 @@ export async function hitungUlangDokumen(
   return { ok: true, baris: lines.length, rentang };
 }
 
-// Tutup dokumen: draft yang batal diajukan, atau dokumen yang approval-nya
-// ditolak/dibatalkan (dulu barisnya tertahan 'submitted' selamanya).
+// Tutup dokumen: draft yang batal diajukan. Dokumen yang ditolak HoD kembali
+// ke draft (reviewDokumen), jadi bisa ditutup dari sana. 'submitted' +
+// 'ditolak' hanya ada pada dokumen lama hasil backfill approval F11 yang
+// ditolak/dibatalkan (migrasi 326) — tetap boleh ditutup seperti dulu.
 export async function tutupDokumen(id: string, oleh?: string | null): Promise<{ ok: boolean; error?: string }> {
   const sql = db();
-  const [d] = await sql`
-    SELECT d.status, ar.status AS approval_status
-    FROM forecast_dokumen d LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
-    WHERE d.id = ${id}
-  `;
+  const [d] = await sql`SELECT status, review_status FROM forecast_dokumen WHERE id = ${id}`;
   if (!d) return { ok: false, error: "dokumen tidak ditemukan" };
-  const apprMati = d.approval_status === "rejected" || d.approval_status === "canceled";
-  if (!(d.status === "draft" || (d.status === "submitted" && apprMati))) {
-    return { ok: false, error: d.status === "submitted" ? "dokumen masih dalam approval / sudah disetujui" : `dokumen sudah ${d.status}` };
+  if (!(d.status === "draft" || (d.status === "submitted" && d.review_status === "ditolak"))) {
+    return { ok: false, error: d.status === "submitted" ? "dokumen masih menunggu review / sudah disetujui" : `dokumen sudah ${d.status}` };
   }
   const [claim] = await sql`
     UPDATE forecast_dokumen SET status = 'closed', closed_by = ${oleh ?? null}, closed_at = now()
@@ -896,39 +918,12 @@ export async function tutupDokumen(id: string, oleh?: string | null): Promise<{ 
 export interface SubmitResult {
   ok: boolean;
   error?: string;
-  approvalId?: string;
-  approvalKode?: string;
-  // Hasil notifikasi tahap 1 — UI wajib bilang kalau approver pertama tak
-  // menerima apa-apa (dulu diabaikan: layar "sukses", usulan tertahan diam).
-  notify?: NotifyResult;
+  /** Region HoD Sales yang menunggu memutus (East/West). */
+  reviewRegion?: string;
 }
-
-const BARIS_DESKRIPSI_MAKS = 30;
 
 const namaBulan = (periode: string): string =>
   new Date(`${periode.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("id-ID", { month: "long", year: "numeric", timeZone: "UTC" });
-
-/** Deskripsi approval satu dokumen — ringkas, karena ikut terkirim ke WA approver. */
-export function deskripsiDokumen(
-  d: { kode: string; warehouseNama: string; kategori: string; periode: string; pipelineHot: number; rentangRata?: string | null },
-  lines: { itemName: string; qty: number; currentQty: number; bufferQty: number | null; edLewat: boolean; nearEd: boolean; notes: string | null }[],
-): string {
-  const total = lines.reduce((a, l) => a + l.qty, 0);
-  const rincian = lines.slice(0, BARIS_DESKRIPSI_MAKS).map((l, i) => {
-    const tanda = l.edLewat ? " · ada batch lewat ED" : l.nearEd ? " · ada batch mendekati ED" : "";
-    const buf = l.bufferQty != null ? `, buffer ${l.bufferQty}` : "";
-    return `${i + 1}. ${l.itemName} — ${l.qty} (stok ${l.currentQty}${buf}${tanda})${l.notes ? ` — ${l.notes}` : ""}`;
-  });
-  const sisa = lines.length - BARIS_DESKRIPSI_MAKS;
-  return (
-    `Dokumen: ${d.kode}\nCabang: ${d.warehouseNama} · Kategori: ${d.kategori} · Periode: ${namaBulan(d.periode)}\n` +
-    `Jumlah barang: ${lines.length} · Total qty: ${total}\n` +
-    (d.rentangRata ? `Rata-rata penjualan dari: ${d.rentangRata}\n` : "") +
-    `\nRincian:\n${rincian.join("\n")}` +
-    (sisa > 0 ? `\n(+${sisa} barang lainnya — lihat dokumen di WRG-OS)` : "") +
-    `\n\nDeal HOT aktif (konteks, bukan pemicu): ${d.pipelineHot}`
-  );
-}
 
 const tglId = (iso: string) =>
   new Date(`${iso}T00:00:00Z`).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
@@ -964,9 +959,8 @@ export async function listBrand(): Promise<string[]> {
   return rows.map((r) => (r.brand ? String(r.brand) : "")).filter(Boolean).sort((a, b) => a.localeCompare(b, "id"));
 }
 
-// "Ajukan" — satu dokumen cabang ke approval berjenjang F11.
-// Wilayah dari pemetaan cabang, kategori dari dokumen; createApprovalRequest
-// dipakai apa adanya.
+// "Ajukan" — satu dokumen cabang menunggu review HoD Sales wilayah gudangnya
+// (migrasi 326). Tanpa notifikasi WA: reviewer melihatnya di dashboard.
 export async function submitDokumen(id: string, submittedBy: string): Promise<SubmitResult> {
   const sql = db();
   const [d] = await sql`
@@ -980,13 +974,13 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
   if (!isKategori(d.kategori)) {
     return { ok: false, error: "barang di dokumen ini belum punya kategori — pilih IVD/Medical per barang dulu" };
   }
-  if (!isWilayah(wilayah)) {
+  const hodKey = isWilayah(wilayah) ? hodSalesUntukRegion(wilayah) : null;
+  if (!isWilayah(wilayah) || !hodKey) {
     return { ok: false, error: `wilayah ${d.warehouse_nama} tak bisa diturunkan dari HoD dan belum diisi cadangan manual — atur di Setup` };
   }
 
   const lines = await sql`
-    SELECT fs.*, ai.name AS item_name,
-           (fs.nearest_ed_date < (now() AT TIME ZONE 'Asia/Jakarta')::date) AS ed_lewat
+    SELECT fs.final_qty, fs.suggested_qty, ai.name AS item_name
     FROM forecast_suggestion fs JOIN accurate_item ai ON ai.id = fs.item_id
     WHERE fs.dokumen_id = ${id} AND fs.status = 'draft'
     ORDER BY ai.name
@@ -997,90 +991,187 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
     return { ok: false, error: `qty final harus > 0 (atau abaikan barangnya): ${nol.map((l) => l.item_name).join(", ")}` };
   }
 
-  const description = deskripsiDokumen(
-    {
-      kode: String(d.kode),
-      warehouseNama: String(d.warehouse_nama),
-      kategori: String(d.kategori),
-      periode: toIsoDate(d.periode),
-      pipelineHot: Math.max(...lines.map((l) => Number(l.pipeline_hot_count))),
-      rentangRata: [
-        labelRentang(lines.map((l) => (l.avg_dari && l.avg_sampai ? { dari: toIsoDate(l.avg_dari), sampai: toIsoDate(l.avg_sampai) } : null))),
-        labelJenis(lines.map((l) => (l.avg_jenis ? String(l.avg_jenis) : null))),
-      ].filter(Boolean).join(" · "),
-    },
-    lines.map((l) => {
-      const reasons = Array.isArray(l.reasons) ? (l.reasons as string[]) : [];
-      return {
-        itemName: String(l.item_name),
-        qty: l.final_qty != null ? Number(l.final_qty) : Number(l.suggested_qty),
-        currentQty: Number(l.current_qty),
-        bufferQty: l.buffer_qty != null ? Number(l.buffer_qty) : null,
-        edLewat: reasons.includes("near_ed") && l.ed_lewat === true,
-        nearEd: reasons.includes("near_ed"),
-        notes: l.notes ? String(l.notes) : null,
-      };
-    }),
-  );
-
-  // Klaim atomik SEBELUM membuat approval (dua klik "Ajukan" bersamaan dulu
-  // membuat dua approval_request — uji dev 12 Okt 2026).
+  // Klaim atomik (dua klik "Ajukan" bersamaan — uji dev 12 Okt 2026). Review
+  // sebelumnya (dokumen yang pernah ditolak) dikosongkan kecuali catatannya,
+  // yang tetap terlihat sampai ada keputusan baru.
   const [claim] = await sql`
-    UPDATE forecast_dokumen SET status = 'submitted', submitted_by = ${submittedBy}, submitted_at = now()
+    UPDATE forecast_dokumen SET
+      status = 'submitted', submitted_by = ${submittedBy}, submitted_at = now(),
+      review_status = 'menunggu', review_hod_key = ${hodKey},
+      reviewed_by = NULL, reviewed_by_user_id = NULL, reviewed_at = NULL
     WHERE id = ${id} AND status = 'draft'
     RETURNING id
   `;
   if (!claim) return { ok: false, error: "dokumen ini sudah diajukan (atau sedang diajukan) — muat ulang halaman" };
-  const ikut = (
-    await sql`
-      UPDATE forecast_suggestion SET status = 'submitted', reviewed_by = ${submittedBy}, reviewed_at = now()
-      WHERE dokumen_id = ${id} AND status = 'draft'
-      RETURNING id
-    `
-  ).map((r) => String(r.id));
-
-  const lepasKlaim = async () => {
-    await sql`
-      UPDATE forecast_suggestion SET status = 'draft', reviewed_by = NULL, reviewed_at = NULL
-      WHERE id = ANY(${ikut}::uuid[]) AND status = 'submitted' AND approval_request_id IS NULL
-    `;
-    await sql`
-      UPDATE forecast_dokumen SET status = 'draft', submitted_by = NULL, submitted_at = NULL
-      WHERE id = ${id} AND status = 'submitted' AND approval_request_id IS NULL
-    `;
-  };
-  let res: Awaited<ReturnType<typeof createApprovalRequest>>;
-  try {
-    res = await createApprovalRequest({
-      title: `Forecast ${d.warehouse_nama} — ${d.kategori} — ${namaBulan(toIsoDate(d.periode))}`,
-      description,
-      requestedBy: submittedBy,
-      wilayah,
-      kategori: d.kategori,
-      // index unik approval_request_ref_pending_uq = pagar kedua submit kembar.
-      refTabel: "forecast_dokumen",
-      refId: id,
-    });
-  } catch (e) {
-    await lepasKlaim();
-    throw e;
-  }
-  if (!res.ok || !res.id) {
-    await lepasKlaim();
-    return { ok: false, error: res.error ?? "gagal membuat approval request" };
-  }
-
-  await sql`UPDATE forecast_dokumen SET approval_request_id = ${res.id} WHERE id = ${id}`;
-  await sql`UPDATE forecast_suggestion SET approval_request_id = ${res.id} WHERE id = ANY(${ikut}::uuid[])`;
-  return { ok: true, approvalId: res.id, approvalKode: res.kode, notify: res.notify };
+  await sql`
+    UPDATE forecast_suggestion SET status = 'submitted', reviewed_by = ${submittedBy}, reviewed_at = now()
+    WHERE dokumen_id = ${id} AND status = 'draft'
+  `;
+  return { ok: true, reviewRegion: HOD_SALES_REGION[hodKey] };
 }
 
-// ── Wilayah approval dinamis ───────────────────────────────────────────────
+// ── Review HoD Sales wilayah (migrasi 326) ────────────────────────────────
+// Keputusan product owner 16 Nov 2026: satu review oleh HoD Sales wilayah
+// gudang; Direktur, admin, dan superuser boleh memutus sebagai cadangan.
+// Tolak wajib bercatatan dan mengembalikan dokumen (dan barisnya) ke draft
+// supaya bisa diperbaiki lalu diajukan ulang.
+
+export interface AktorReview {
+  userId: string;
+  nama: string;
+  role: string | null;
+  hodKey: string | null;
+  superuser: boolean;
+}
+
+/** Boleh memutus review: HoD Sales wilayah dokumen, atau Direktur/admin/superuser sebagai cadangan. */
+export function bolehReview(aktor: AktorReview | null | undefined, reviewHodKey: string | null | undefined): boolean {
+  if (!aktor) return false;
+  if (aktor.superuser) return true;
+  const role = String(aktor.role ?? "").trim().toLowerCase();
+  if (role === "direktur" || role === "admin") return true;
+  const own = String(aktor.hodKey ?? "").trim().toLowerCase();
+  return !!own && own === String(reviewHodKey ?? "").trim().toLowerCase();
+}
+
+/** hod_key reviewer dokumen: yang tersimpan saat Ajukan, atau (dokumen lama) turunan wilayah gudang sekarang. */
+export function reviewHodKeyDokumen(tersimpan: string | null, wilayah: string | null): string | null {
+  return tersimpan || (isWilayah(wilayah) ? hodSalesUntukRegion(wilayah) : null);
+}
+
+export const KEPUTUSAN_REVIEW = ["disetujui", "ditolak"] as const;
+export type KeputusanReview = (typeof KEPUTUSAN_REVIEW)[number];
+
+/** Validasi isian review: keputusan disetujui/ditolak; tolak wajib catatan (di-trim). */
+export function validasiReview(
+  input: { keputusan?: unknown; catatan?: unknown } | null | undefined,
+): { keputusan: KeputusanReview; catatan: string | null } | { error: string } {
+  const keputusan = input?.keputusan;
+  if (keputusan !== "disetujui" && keputusan !== "ditolak") return { error: "keputusan harus disetujui/ditolak" };
+  const catatan = typeof input?.catatan === "string" ? input.catatan.trim() : "";
+  if (keputusan === "ditolak" && !catatan) return { error: "catatan wajib diisi saat menolak" };
+  if (catatan.length > 1000) return { error: "catatan maksimal 1000 karakter" };
+  return { keputusan, catatan: catatan || null };
+}
+
+const UUID_USER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Pelaku dari sesi (header x-user-id yang diteruskan BFF) → app_user; null = tak dikenal. */
+export async function aktorDariUser(userId: string | null | undefined): Promise<AktorReview | null> {
+  const id = String(userId ?? "").trim();
+  if (!UUID_USER.test(id)) return null;
+  const sql = db();
+  const [u] = await sql`SELECT id::text AS id, name, email, role, hod_key FROM app_user WHERE id = ${id}`;
+  if (!u) return null;
+  let superuser = false;
+  try {
+    superuser = (await effectivePermissions(id)).superuser;
+  } catch {
+    /* RBAC belum siap → anggap non-superuser */
+  }
+  return {
+    userId: String(u.id),
+    nama: String(u.name ?? "").trim() || String(u.email ?? ""),
+    role: u.role ? String(u.role) : null,
+    hodKey: u.hod_key ? String(u.hod_key) : null,
+    superuser,
+  };
+}
+
+export interface ReviewResult {
+  ok: boolean;
+  error?: string;
+  /** Kode HTTP untuk route: 400 isian salah, 403 tak berhak, 404 tak ada, 409 bukan 'menunggu'. */
+  code?: 400 | 403 | 404 | 409;
+}
+
+// Jejak audit (governance D6, migrasi 002) sbg Layer 5 = Human, pola sama
+// logAudit di ga-asset-assignment.ts. Best-effort — gagal audit tak boleh
+// membatalkan keputusan yang sudah tersimpan.
+async function logReview(aktor: AktorReview, payload: Record<string, unknown>, decision: "approve" | "reject"): Promise<void> {
+  try {
+    const sql = db();
+    await sql`
+      INSERT INTO audit_log (use_case_id, layer, event_type, r_tier, payload, human_actor, decision)
+      VALUES ('F19', 5, 'forecast.dokumen.review', 'R1', ${sql.json(payload as Parameters<typeof sql.json>[0])},
+              ${aktor.nama.slice(0, 100) || null}, ${decision})
+    `;
+  } catch {
+    // best-effort
+  }
+}
+
+export async function reviewDokumen(
+  id: string,
+  input: { keputusan?: unknown; catatan?: unknown },
+  aktor: AktorReview | null,
+): Promise<ReviewResult> {
+  if (!aktor) return { ok: false, error: "pemakai tidak dikenal — masuk ulang", code: 403 };
+  const v = validasiReview(input);
+  if ("error" in v) return { ok: false, error: v.error, code: 400 };
+  if (!UUID.test(id)) return { ok: false, error: "dokumen tidak ditemukan", code: 404 };
+  const sql = db();
+  const [d] = await sql`SELECT kode, status, warehouse_kode, review_status, review_hod_key FROM forecast_dokumen WHERE id = ${id}`;
+  if (!d) return { ok: false, error: "dokumen tidak ditemukan", code: 404 };
+  if (d.status !== "submitted" || d.review_status !== "menunggu") {
+    return { ok: false, error: "dokumen ini tidak sedang menunggu review — muat ulang halaman", code: 409 };
+  }
+  const wilayah = d.review_hod_key ? null : (await wilayahGudang(sql)).get(String(d.warehouse_kode))?.wilayah ?? null;
+  const hodKey = reviewHodKeyDokumen(d.review_hod_key ? String(d.review_hod_key) : null, wilayah);
+  if (!bolehReview(aktor, hodKey)) {
+    return { ok: false, error: "hanya HoD Sales wilayah dokumen ini (atau Direktur/admin) yang boleh memutus", code: 403 };
+  }
+
+  const tolak = v.keputusan === "ditolak";
+  const menang = await sql.begin(async (txRaw) => {
+    const tx = txRaw as unknown as Sql;
+    // Klaim atomik: hanya satu keputusan yang menang bila dua orang memutus bersamaan.
+    const [claim] = await tx`
+      UPDATE forecast_dokumen SET
+        review_status = ${v.keputusan}, review_note = ${v.catatan},
+        reviewed_by = ${aktor.nama || null}, reviewed_by_user_id = ${aktor.userId}, reviewed_at = now()
+      WHERE id = ${id} AND status = 'submitted' AND review_status = 'menunggu'
+      RETURNING warehouse_kode, kategori, periode::text AS periode
+    `;
+    if (!claim) return false;
+    if (!tolak) return true;
+    // Ditolak → kembali draft. Selama dokumen menunggu, Generate bisa sudah
+    // membuat draft baru untuk cabang × kategori × bulan yang sama (index unik
+    // forecast_dokumen_draft_uq); barisnya dipindah ke dokumen ini dan draft
+    // kosong itu dihapus, supaya catatan penolakan tetap menempel di sini.
+    const lain = await tx`
+      SELECT id FROM forecast_dokumen
+      WHERE warehouse_kode = ${claim.warehouse_kode} AND COALESCE(kategori, '-') = ${claim.kategori ?? "-"}
+        AND periode = ${String(claim.periode)}::date AND status = 'draft' AND id <> ${id}
+      FOR UPDATE
+    `;
+    for (const l of lain) {
+      await tx`UPDATE forecast_suggestion SET dokumen_id = ${id} WHERE dokumen_id = ${l.id}`;
+      await tx`DELETE FROM forecast_dokumen WHERE id = ${l.id}`;
+    }
+    await tx`UPDATE forecast_dokumen SET status = 'draft', submitted_by = NULL, submitted_at = NULL WHERE id = ${id}`;
+    // Baris ikut kembali draft (sama seperti lepas klaim Ajukan dulu).
+    await tx`
+      UPDATE forecast_suggestion SET status = 'draft', reviewed_by = NULL, reviewed_at = NULL
+      WHERE dokumen_id = ${id} AND status = 'submitted'
+    `;
+    return true;
+  });
+  if (!menang) return { ok: false, error: "dokumen sudah diputus orang lain — muat ulang halaman", code: 409 };
+  await logReview(
+    aktor,
+    { dokumen_id: id, kode: String(d.kode), keputusan: v.keputusan, catatan: v.catatan, user_id: aktor.userId, review_hod_key: hodKey },
+    tolak ? "reject" : "approve",
+  );
+  return { ok: true };
+}
+
+// ── Wilayah gudang dinamis ────────────────────────────────────────────────
 // Keputusan user 15 Nov 2026: wilayah gudang tidak diisi manual, tapi ikut
 // HoD Sales dari cabang penjualan yang dilayani gudang itu. Rantai:
 // gudang ← cabang penjualan (peta 319: nama sama / peta manual) →
-// hod_territory (cabang → hod_key) → peta approval tahap 1 (hod_key_map
-// {"east": "rocky", "west": "yogi"}, dibalik). warehouse.wilayah (manual)
+// hod_territory (cabang → hod_key) → region HoD Sales (HOD_SALES_REGION di
+// sales.ts; dulu dari approval_chain_config F11). warehouse.wilayah (manual)
 // hanya CADANGAN bila tak bisa diturunkan: gudang tanpa cabang penjualan,
 // cabang tanpa HoD, atau cabangnya terbagi ke dua wilayah.
 
@@ -1106,15 +1197,12 @@ export function tentukanWilayah(
 }
 
 async function wilayahGudang(sql: Sql): Promise<Map<string, WilayahTurunan>> {
-  const [gudangRows, teritori, petaRows, chain] = await Promise.all([
+  const [gudangRows, teritori, petaRows] = await Promise.all([
     sql`SELECT kode, nama, cabang, wilayah FROM warehouse WHERE jenis = 'cabang'`,
     sql`SELECT DISTINCT ON (upper(cabang)) cabang, hod_key FROM hod_territory ORDER BY upper(cabang), (source = 'manual') DESC, updated_at DESC`,
     sql`SELECT cabang FROM forecast_cabang_gudang`,
-    sql`SELECT hod_key_map FROM approval_chain_config WHERE hod_key_map ? 'east' OR hod_key_map ? 'west' LIMIT 1`,
   ]);
-  const hodKeWilayah = new Map<string, string>();
-  const peta = (chain[0]?.hod_key_map ?? {}) as Record<string, string>;
-  for (const [wil, hod] of Object.entries(peta)) if (isWilayah(wil) && hod) hodKeWilayah.set(String(hod).toLowerCase(), wil);
+  const hodKeWilayah = new Map(Object.entries(HOD_SALES_REGION).map(([hod, region]) => [hod.toLowerCase(), region.toLowerCase()]));
   const hodCabang = new Map(teritori.map((t) => [normal(String(t.cabang)), String(t.hod_key)]));
   const { manual, gudang } = await muatPeta(sql);
   // Semua nama cabang penjualan yang dikenal: teritori HoD + peta manual.
@@ -1143,7 +1231,7 @@ async function wilayahGudang(sql: Sql): Promise<Map<string, WilayahTurunan>> {
 export interface WilayahCabangRow {
   kode: string;
   nama: string;
-  /** Wilayah yang dipakai approval (turunan HoD, atau cadangan manual). */
+  /** Wilayah yang menentukan reviewer (turunan HoD, atau cadangan manual). */
   wilayah: string | null;
   sumber: "hod" | "manual" | null;
   /** Isian manual (cadangan). */
@@ -1195,7 +1283,8 @@ export interface LinkPoResult {
 }
 
 
-// F153 — usulan yang SUDAH approved (F11) ditautkan ke PO nyata. Sejak PO
+// F153 — usulan yang dokumennya SUDAH disetujui HoD Sales (migrasi 326; dulu
+// approved F11) ditautkan ke PO nyata. Sejak PO
 // Tracker jadi cermin Accurate (migrasi 205, keputusan user 12 Okt 2026), PO
 // dibuat Purchasing DI ACCURATE; WRG-OS tak lagi membuat PO sendiri (dulu:
 // "auto-draft" PO lokal yang lalu harus diketik ulang ke Accurate = dua versi).
@@ -1208,10 +1297,10 @@ export async function linkPurchaseOrder(id: string, input: LinkPoInput): Promise
 
   const sql = db();
   const rows = await sql`
-    SELECT fs.*, ai.no AS item_no, ar.status AS approval_status, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
+    SELECT fs.*, ai.no AS item_no, d.review_status, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
     FROM forecast_suggestion fs
     JOIN accurate_item ai ON ai.id = fs.item_id
-    LEFT JOIN approval_request ar ON ar.id = fs.approval_request_id
+    LEFT JOIN forecast_dokumen d ON d.id = fs.dokumen_id
     LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
     WHERE fs.id = ${id}
   `;
@@ -1223,8 +1312,8 @@ export async function linkPurchaseOrder(id: string, input: LinkPoInput): Promise
   if (r.status !== "submitted" && !relink) {
     return { ok: false, error: `usulan berstatus "${r.status}" — harus "submitted" (sudah diajukan) dulu` };
   }
-  if (r.approval_status !== "approved") {
-    return { ok: false, error: `approval usulan ini belum selesai (status: ${r.approval_status ?? "belum ada approval_request"})` };
+  if (r.review_status !== "disetujui") {
+    return { ok: false, error: `dokumen usulan ini belum disetujui HoD Sales (status review: ${r.review_status ?? "belum diajukan"})` };
   }
 
   const [po] = await sql`
@@ -1264,7 +1353,7 @@ export async function linkPurchaseOrder(id: string, input: LinkPoInput): Promise
 }
 
 // ── Rekap Purchasing (semua cabang, per barang, per bulan) ─────────────────
-// Hanya dokumen yang approval-nya sudah DISETUJUI. Purchasing membuat PO di
+// Hanya dokumen yang review HoD Sales-nya sudah DISETUJUI. Purchasing membuat PO di
 // Accurate dari rekap ini, lalu menautkan nomornya per barang — satu nomor
 // PO berlaku untuk semua cabang yang memesan barang itu.
 
@@ -1294,8 +1383,8 @@ export interface RekapBarang {
 export interface RekapResult {
   bulan: string;
   barang: RekapBarang[];
-  /** Dokumen bulan itu yang masih menunggu approval — belum masuk rekap. */
-  menungguApproval: number;
+  /** Dokumen bulan itu yang masih menunggu review HoD Sales — belum masuk rekap. */
+  menungguReview: number;
 }
 
 /** Baris bisa (ulang) ditautkan ke PO: disetujui & belum tertaut, atau PO-nya mati. */
@@ -1337,18 +1426,17 @@ export async function rekapPurchasing(bulan: string, brandFilter?: string): Prom
            po.po_number, ${sql.unsafe(PO_MATI_SQL)} AS po_mati
     FROM forecast_suggestion fs
     JOIN forecast_dokumen d ON d.id = fs.dokumen_id
-    JOIN approval_request ar ON ar.id = d.approval_request_id
     JOIN accurate_item ai ON ai.id = fs.item_id
     JOIN warehouse w ON w.kode = fs.warehouse_kode
     LEFT JOIN purchase_order po ON po.id = fs.purchase_order_id
-    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND ar.status = 'approved'
+    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND d.review_status = 'disetujui'
       AND fs.status IN ('submitted', 'ordered')
       AND ${brand ? sql`upper(item_brand(fs.item_id)) = upper(${brand})` : sql`true`}
     ORDER BY w.urutan, w.nama
   `;
   const [{ n }] = await sql`
-    SELECT count(*)::int AS n FROM forecast_dokumen d LEFT JOIN approval_request ar ON ar.id = d.approval_request_id
-    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND COALESCE(ar.status, 'pending') = 'pending'
+    SELECT count(*)::int AS n FROM forecast_dokumen d
+    WHERE d.periode = ${periode}::date AND d.status = 'submitted' AND d.review_status = 'menunggu'
   `;
   const barang = kelompokkanRekap(
     rows.map((r) => ({
@@ -1367,7 +1455,7 @@ export async function rekapPurchasing(bulan: string, brandFilter?: string): Prom
       notes: r.notes ? String(r.notes) : null,
     })),
   );
-  return { bulan: periode.slice(0, 7), barang, menungguApproval: Number(n) };
+  return { bulan: periode.slice(0, 7), barang, menungguReview: Number(n) };
 }
 
 export interface LinkPoRekapResult {
@@ -1382,7 +1470,7 @@ export interface LinkPoRekapResult {
 }
 
 // Tautkan satu nomor PO Accurate ke SEMUA cabang yang memesan barang itu di
-// bulan itu. Per baris memakai linkPurchaseOrder apa adanya (cek approval,
+// bulan itu. Per baris memakai linkPurchaseOrder apa adanya (cek review,
 // PO tersinkron & hidup, klaim atomik).
 export async function linkPoRekap(input: { bulan: string; itemId: number; poNumber: string }): Promise<LinkPoRekapResult> {
   const poNumber = String(input.poNumber ?? "").trim();
@@ -1470,7 +1558,14 @@ export async function rekapXlsx(bulan: string, brand?: string): Promise<Buffer |
 }
 
 const STATUS_DOK: Record<string, string> = { draft: "Draft", submitted: "Diajukan", closed: "Ditutup" };
-const STATUS_APPROVAL: Record<string, string> = { pending: "Menunggu approval", approved: "Disetujui", rejected: "Ditolak", canceled: "Dibatalkan" };
+
+/** Label status review satu dokumen untuk Excel/UI; null = belum pernah diajukan. */
+export function labelReview(d: { reviewStatus: string | null; reviewRegion?: string | null; reviewedBy?: string | null; reviewNote?: string | null }): string {
+  if (d.reviewStatus === "menunggu") return `Menunggu review HoD Sales${d.reviewRegion ? ` ${d.reviewRegion}` : ""}`;
+  if (d.reviewStatus === "disetujui") return `Disetujui${d.reviewedBy ? ` oleh ${d.reviewedBy}` : ""}`;
+  if (d.reviewStatus === "ditolak") return `Ditolak${d.reviewedBy ? ` oleh ${d.reviewedBy}` : ""}${d.reviewNote ? `: ${d.reviewNote}` : ""}`;
+  return "";
+}
 const STATUS_BARIS: Record<string, string> = { draft: "Draft", submitted: "Diajukan", ordered: "PO tertaut", dismissed: "Diabaikan" };
 
 /** Excel dokumen cabang: sheet Dokumen (ringkasan) + Barang (semua baris, termasuk yang diabaikan). */
@@ -1490,7 +1585,7 @@ export async function dokumenXlsx(
     { header: "Periode", key: "periode", width: 16 },
     { header: "Wilayah", key: "wilayah", width: 9 },
     { header: "Status", key: "status", width: 11 },
-    { header: "Approval", key: "approval", width: 20 },
+    { header: "Review HoD Sales", key: "review", width: 32 },
     { header: "Jumlah Barang", key: "jumlah", width: 13, style: { numFmt: "#,##0" } },
     { header: "Total Qty", key: "total", width: 12, style: { numFmt: "#,##0" } },
     { header: "Diajukan oleh", key: "oleh", width: 22 },
@@ -1499,7 +1594,7 @@ export async function dokumenXlsx(
     ws.addRow({
       kode: d.kode, cabang: d.warehouseNama, kategori: d.kategori ?? "Belum ada", periode: namaBulan(`${d.periode}-01`),
       wilayah: d.wilayah ? d.wilayah.charAt(0).toUpperCase() + d.wilayah.slice(1) : "", status: STATUS_DOK[d.status] ?? d.status,
-      approval: d.approvalStatus ? `${d.approvalKode ?? ""} ${STATUS_APPROVAL[d.approvalStatus] ?? d.approvalStatus}`.trim() : "",
+      review: labelReview(d),
       jumlah: d.jumlahBarang, total: d.totalQty, oleh: d.submittedBy ?? "",
     });
   }

@@ -11,7 +11,7 @@ import { SkeletonTable } from "@/components/ui/loading";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PagedTable } from "@/components/ui/paged-table";
 import { TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { WILAYAH_OPTIONS } from "@/lib/approval-routing";
+import { WILAYAH_OPTIONS } from "@/lib/forecast-review";
 
 interface BufferRow {
   itemId: number;
@@ -294,7 +294,7 @@ interface WilayahRow {
 const labelWil = (w: string | null) => WILAYAH_OPTIONS.find((o) => o.value === w)?.label.split(" — ")[0] ?? "–";
 const kapital = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
-// Wilayah approval per gudang DINAMIS (keputusan user 15 Nov 2026): diturunkan
+// Wilayah review (HoD Sales) per gudang DINAMIS (keputusan user 15 Nov 2026): diturunkan
 // dari HoD Sales cabang penjualan yang dilayani gudang (teritori HoD). Isian
 // manual hanya cadangan untuk gudang yang tak bisa diturunkan.
 function WilayahCabangCard() {
@@ -346,10 +346,10 @@ function WilayahCabangCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Wilayah Approval per Gudang</CardTitle>
+        <CardTitle className="text-base">Wilayah Review per Gudang</CardTitle>
         <p className="text-muted-foreground text-xs">
           Otomatis dari HoD Sales cabang penjualan yang dilayani gudang (teritori HoD), jadi ikut berubah bila teritori
-          HoD berubah. Isian manual hanya cadangan untuk gudang yang tak bisa diturunkan.
+          HoD berubah. Dokumen gudang itu direview HoD Sales wilayahnya. Isian manual hanya cadangan untuk gudang yang tak bisa diturunkan.
           {belum > 0 && <span className="text-destructive"> {belum} gudang belum punya wilayah — dokumennya belum bisa diajukan.</span>}
         </p>
       </CardHeader>
