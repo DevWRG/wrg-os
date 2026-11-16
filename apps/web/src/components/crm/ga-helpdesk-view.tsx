@@ -10,6 +10,7 @@ import { GaTicketCategoriesTable, type GaTicketCategory } from "@/components/tab
 import { AddGaTicketButton, type AppUserOption, type AssetOption } from "./add-ga-ticket-button";
 import { AddGaTicketCategoryButton } from "./add-ga-ticket-category-button";
 import type { TeknisiOption } from "./ga-ticket-assign-button";
+import { GaAduanWaPanel, type GaAduanWa } from "./ga-aduan-wa-panel";
 
 const STATUS_FILTERS = [
   ["all", "Semua"],
@@ -24,15 +25,16 @@ const STATUS_FILTERS = [
 // F139 — satu halaman, dua tab (Tiket + Kategori), pola sama F132 (2
 // sub-view domain & fitur yang SAMA, bukan pelanggaran prinsip domain-grouping).
 export function GaHelpdeskView({
-  tickets, categories, users, teknisi, assets,
+  tickets, categories, users, teknisi, assets, aduanWa,
 }: {
   tickets: GaTicket[];
   categories: GaTicketCategory[];
   users: AppUserOption[];
   teknisi: TeknisiOption[];
   assets: AssetOption[];
+  aduanWa: GaAduanWa | null;
 }) {
-  const [tab, setTab] = useState<"tiket" | "kategori">("tiket");
+  const [tab, setTab] = useState<"tiket" | "kategori" | "aduan-wa">("tiket");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
   const activeCategories = categories.filter((c) => c.active);
@@ -51,6 +53,7 @@ export function GaHelpdeskView({
             [
               ["tiket", "Tiket"],
               ["kategori", "Kategori"],
+              ["aduan-wa", "Aduan WA"],
             ] as const
           ).map(([k, lbl]) => (
             <button
@@ -67,7 +70,11 @@ export function GaHelpdeskView({
             </button>
           ))}
         </div>
-        {tab === "tiket" ? <AddGaTicketButton categories={activeCategories} users={users} assets={assets} /> : <AddGaTicketCategoryButton />}
+        {tab === "tiket" ? (
+          <AddGaTicketButton categories={activeCategories} users={users} assets={assets} />
+        ) : tab === "kategori" ? (
+          <AddGaTicketCategoryButton />
+        ) : null}
       </div>
 
       {tab === "tiket" ? (
@@ -107,6 +114,10 @@ export function GaHelpdeskView({
               )}
             </CardContent>
           </Card>
+        </div>
+      ) : tab === "aduan-wa" ? (
+        <div role="tabpanel" id="panel-aduan-wa" aria-labelledby="tab-aduan-wa">
+          <GaAduanWaPanel data={aduanWa} />
         </div>
       ) : (
         <div role="tabpanel" id="panel-kategori" aria-labelledby="tab-kategori">
