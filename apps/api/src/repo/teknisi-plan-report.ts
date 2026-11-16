@@ -418,14 +418,19 @@ export async function tempelFotoTeknisi(input: {
     ORDER BY reported_at DESC LIMIT 1`;
   if (!k) return null;
   const alat = await sql`
-    SELECT ka.id, ka.nomor_blok, COALESCE(a.sn_raw, ka.sn_teks) AS sn
+    SELECT ka.id, ka.nomor_blok, COALESCE(a.sn_raw, ka.sn_teks) AS sn, p.urut AS plan_urut
     FROM teknisi_kunjungan_alat ka LEFT JOIN kso_asset a ON a.id = ka.kso_asset_id
+    LEFT JOIN teknisi_plan_item p ON p.id = ka.plan_item_id
     WHERE ka.kunjungan_id = ${k.id} ORDER BY ka.nomor_blok`;
   const cap = (input.caption ?? "").replace(/<media:[^>]*>/gi, "").trim();
   let pilih: { id: number; nomor: number } | null = null;
   const no = cap.match(/^#?\s*(\d{1,2})\s*$/);
   if (no) {
-    const a = alat.find((x) => Number(x.nomor_blok) === Number(no[1]));
+    // Angka = nomor blok di report, atau nomor PLAN (teknisi menulis "2" untuk #REPORT 2 yang
+    // hanya punya satu blok). Nomor blok didahulukan bila keduanya cocok.
+    const a = alat.find((x) => Number(x.nomor_blok) === Number(no[1]) && (alat.length > 1 || x.plan_urut == null))
+      ?? alat.find((x) => x.plan_urut != null && Number(x.plan_urut) === Number(no[1]))
+      ?? alat.find((x) => Number(x.nomor_blok) === Number(no[1]));
     if (a) pilih = { id: Number(a.id), nomor: Number(a.nomor_blok) };
   } else if (/^[A-Za-z0-9-]{3,}$/.test(cap)) {
     const ekor = normSn(cap);
