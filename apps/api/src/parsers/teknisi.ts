@@ -162,6 +162,8 @@ export interface TeknisiReportBlok {
   sparepart: string | null;
   catatan: string | null;
   tiket: string | null;
+  /** Faskes dari judul blok berformat #PLAN (`RS A | SN | jenis`) — didahulukan dari `RS:` kunjungan. */
+  faskes?: string | null;
 }
 export interface TeknisiReportParse {
   tanggal: string | null;
@@ -192,6 +194,10 @@ const LABEL: Record<string, Field> = {
 // supaya "Jam 10:30 selesai" tak terbaca sebagai label "Jam 10".
 const LABEL_LINE = /^\s*([A-Za-z][A-Za-z./ ]{0,24}?)\s*:\s*(.*)$/;
 const BLOK_LINE = /^\s*(\d{1,2})\s*[.)]\s*(.*)$/;
+// "2 RS A | A202" — nomor tanpa titik/kurung, hanya bila judulnya memuat `|` (jelas judul alat).
+const BLOK_LINE_SPASI = /^\s*(\d{1,2})\s+(\S.*\|.*)$/;
+// Awal nama faskes — segmen judul berawalan ini dibaca sebagai faskes (format #PLAN), bukan alat.
+const AWAL_FASKES = /^(rs[a-z]{0,3}|rumah\s+sakit|pkm|puskesmas|pustu|klinik|lab(?:kesda|oratorium)?|faskes|upt|dinkes|bkia|apotek|bp)\b\.?/i;
 // Judul blok alat yang jelas: kosong, memuat `|`, `#nomor-plan`, atau awalan SN.
 const judulBlokJelas = (t: string) =>
   !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t);
@@ -219,11 +225,13 @@ function blokKosong(nomor: number): TeknisiReportBlok {
   };
 }
 
-// Judul blok: "#2", "SN 0832 | Zybio EXC200 | PM", "0832 | EXC200 | PM",
-// "#2 | PM". Kembalikan galat bila ada bagian yang tak terbaca.
+// Judul blok: "#2", "SN 0832 | Zybio EXC200 | PM", "0832 | EXC200 | PM", "#2 | PM",
+// atau format #PLAN "RS A | 0832 [| PM]" (faskes di depan). Kembalikan galat bila ada
+// bagian yang tak terbaca.
 function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
   const seg = judul.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
-  for (const s of seg) {
+  for (const [i, s] of seg.entries()) {
+    if (i === 0 && seg.length > 1 && AWAL_FASKES.test(s)) { b.faskes = s; continue; }
     const ref = s.match(/^#\s*(\d{1,2})$/);
     if (ref) { b.planNo = Number(ref[1]); continue; }
     const jt = pisahJenisTiket(s);
@@ -232,7 +240,7 @@ function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
     const sa = pisahSnAlat(s);
     if (sa.sn && !b.sn) { b.sn = sa.sn; if (sa.alat && !b.alat) b.alat = sa.alat; continue; }
     if (sa.alat && !b.alat) { b.alat = sa.alat; continue; }
-    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#NOMOR-PLAN\` atau \`SN … | alat | jenis\`.`;
+    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#NOMOR-PLAN\`, \`RS | SN/alat | jenis\`, atau \`SN … | alat | jenis\`.`;
   }
   return null;
 }
@@ -308,7 +316,7 @@ export function parseTeknisiReport(
   for (const raw of lines.slice(h + 1)) {
     if (!raw.trim()) { jeda = true; continue; }
     const lanjutan = !!last && (last.f === "kegiatan" || last.f === "catatan" || last.f === "sparepart");
-    const bm = raw.match(BLOK_LINE);
+    const bm = raw.match(BLOK_LINE) ?? raw.match(BLOK_LINE_SPASI);
     // "1. bersihkan probe" tepat di bawah Kegiatan = daftar isi kegiatan, bukan
     // alat baru — kecuali judulnya jelas judul alat (`|`, `#2`, `SN …`).
     if (bm && !(lanjutan && !jeda && !judulBlokJelas(bm[2]))) {
@@ -363,8 +371,8 @@ export function parseTeknisiReport(
     if (b.planNo == null && !b.sn && !b.alat) {
       out.errors.push(`Blok ${b.nomor}: identitas alat kosong — tulis nomor plan (\`#1\`) atau \`SN:\`/\`Alat:\`.`);
     }
-    if (b.planNo == null && !out.faskes) {
-      out.errors.push(`Blok ${b.nomor}: tanpa nomor plan, \`RS:\` wajib diisi.`);
+    if (b.planNo == null && !out.faskes && !b.faskes) {
+      out.errors.push(`Blok ${b.nomor}: tanpa nomor plan, \`RS:\` (atau RS di judul blok) wajib diisi.`);
     }
     if (!b.status) {
       if (!statusSalah.has(b)) out.errors.push(`Blok ${b.nomor}: \`Status:\` wajib (Selesai / Pending ALASAN / Batal ALASAN / Revisit).`);

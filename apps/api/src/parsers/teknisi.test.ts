@@ -138,7 +138,7 @@ test("report: Pending tanpa alasan ditolak; alasan dari Catatan diterima", () =>
 
 test("report: identitas & status wajib, tanpa plan RS wajib", () => {
   const r = parseTeknisiReport("#REPORT\nAlat: DxH 560\nKegiatan: cek");
-  assert.match(r.errors.join(" "), /RS:` wajib/);
+  assert.match(r.errors.join(" "), /RS:` \(atau RS di judul blok\) wajib/);
   assert.match(r.errors.join(" "), /Status:` wajib/);
   const kosong = parseTeknisiReport("#REPORT\nRS: RS X\nStatus: Selesai");
   assert.match(kosong.errors.join(" "), /identitas alat kosong/);
@@ -271,4 +271,44 @@ test("contoh balasan memuat bentuk banyak alat, tanpa nomor tiket", () => {
   // Contoh banyak alat harus lolos parser sendiri.
   const multi = CONTOH_REPORT_TEKNISI.split("beberapa alat di satu RS:\n")[1];
   assert.deepEqual(parseTeknisiReport(multi).errors, []);
+});
+
+test("report: judul blok format #PLAN (RS | SN), nomor tanpa titik, label kecil — pesan uji user 16 Nov", () => {
+  const body = [
+    "#REPORT",
+    "RS: RS Ujif175 Alfa",
+    "",
+    "1. ⁠RS Ujif175 Alfa | A101",
+    "Status: Selesai",
+    "Kegiatan: bersihkan probe",
+    "",
+    "2 RS Ujif175 Alfa | A202",
+    "Status: Selesai",
+    "Kegiatan: ganti sensor",
+    "",
+    "3. RSUD Ujif175 Beta | B303",
+    "status : selesai",
+  ].join("\n");
+  const r = parseTeknisiReport(body);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.faskes, "RS Ujif175 Alfa");
+  assert.equal(r.blok.length, 3);
+  assert.deepEqual(r.blok.map((b) => [b.faskes, b.sn ?? b.alat, b.status]), [
+    ["RS Ujif175 Alfa", "A101", "Selesai"],
+    ["RS Ujif175 Alfa", "A202", "Selesai"],
+    ["RSUD Ujif175 Beta", "B303", "Selesai"],
+  ]);
+  assert.equal(r.blok[1].kegiatan, "ganti sensor");
+});
+
+test("report: judul RS | alat | jenis → faskes + jenis; format SN | alat | jenis tetap jalan", () => {
+  const a = parseTeknisiReport("#REPORT\n1) PKM Bakunase | Z360 | Install\nStatus: Selesai");
+  assert.deepEqual(a.errors, []);
+  assert.equal(a.blok[0].faskes, "PKM Bakunase");
+  assert.equal(a.blok[0].jenis, "Install");
+  const b = parseTeknisiReport("#REPORT\nRS: RS A\n1) SN 0832 | Zybio EXC200 | PM\nStatus: Selesai");
+  assert.deepEqual(b.errors, []);
+  assert.equal(b.blok[0].faskes ?? null, null);
+  assert.equal(b.blok[0].sn, "0832");
+  assert.equal(b.blok[0].jenis, "PM");
 });
