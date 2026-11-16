@@ -48,6 +48,9 @@ export const TAHAP: Tahap[] = [
 ];
 export const TOTAL_POSISI = 7;
 
+/** Mesin HD di klasifikasi produk: product line "Hemodialysa" (02.13), class "Machine" (25). Migrasi 322. */
+export const PREFIX_MESIN_HD = "02.13.25.";
+
 export const tahapDari = (kode: string): Tahap | undefined => TAHAP.find((t) => t.kode === kode);
 const posisi = (kode: string) => tahapDari(kode)?.posisi ?? 1;
 
@@ -158,7 +161,7 @@ export function tanggalCatatan(v: unknown, hariIni = hariIniWib()): string {
 
 export interface IsianProyek {
   nama_rs: string; account_id: number | null; kota: string | null; segmen: string | null; tipe_proyek: TipeProyek;
-  prioritas: string; nama_alat: string | null; unit_kso: number; unit_terinstal: number; harga_unit: number | null;
+  prioritas: string; produk_kode: string | null; unit_kso: number; unit_terinstal: number; harga_unit: number | null;
   nomor_kontrak: string | null; target_tindakan_bln: number | null; target_golive: string | null;
   pic_employee_id: string | null; next_action: string | null;
 }
@@ -178,7 +181,7 @@ export function isianBaru(b: Record<string, unknown>): IsianProyek {
     segmen: pilihan(b.segmen, SEGMEN, "segmen"),
     tipe_proyek: pilihan(b.tipe_proyek, TIPE_PROYEK, "tipe_proyek") ?? "Start New",
     prioritas: pilihan(b.prioritas, PRIORITAS, "prioritas") ?? "Gas",
-    nama_alat: teks(b.nama_alat, 120),
+    produk_kode: kodeProduk(b.produk_kode),
     unit_kso,
     unit_terinstal: bulat(b.unit_terinstal, "unit_terinstal") ?? 0,
     harga_unit: harga,
@@ -188,6 +191,14 @@ export function isianBaru(b: Record<string, unknown>): IsianProyek {
     pic_employee_id: teks(b.pic_employee_id, 60),
     next_action: teks(b.next_action, 500),
   };
+}
+
+/** Kode produk mesin HD (klasifikasi produk) — kosong = belum ditentukan. Keberadaannya dicek di DB. */
+export function kodeProduk(v: unknown): string | null {
+  const k = teks(v, 40);
+  if (!k) return null;
+  if (!k.startsWith(PREFIX_MESIN_HD) || !/^[0-9.]+$/.test(k)) throw new ProyekHdError(400, "pilih alat dari daftar mesin hemodialisa", "produk_kode");
+  return k;
 }
 
 /** Ubahan sebagian. Hanya kolom yang dikirim yang diubah. */
@@ -202,6 +213,7 @@ export function isianUbah(b: Record<string, unknown>): Record<string, unknown> {
   if ("pic_employee_id" in b) o.pic_employee_id = teks(b.pic_employee_id, 60);
   if ("nomor_kontrak" in b) o.nomor_kontrak = teks(b.nomor_kontrak, 120);
   if ("account_id" in b) o.account_id = bulat(b.account_id, "account_id", { min: 1 });
+  if ("produk_kode" in b) o.produk_kode = kodeProduk(b.produk_kode);
   if ("target_tindakan_bln" in b) o.target_tindakan_bln = bulat(b.target_tindakan_bln, "target_tindakan_bln");
   if ("target_golive" in b) {
     const g = teks(b.target_golive, 7);
@@ -272,7 +284,7 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 export interface ProyekRow {
   id: number; kode: string; account_id: number | null; faskes_nama: string | null; nama_rs: string; kota: string | null;
-  segmen: string | null; tipe_proyek: TipeProyek; prioritas: string; nama_alat: string | null;
+  segmen: string | null; tipe_proyek: TipeProyek; prioritas: string; produk_kode: string | null; nama_alat: string | null;
   unit_kso: number; unit_terinstal: number; unit_running: number; harga_unit: number | null;
   nomor_kontrak: string | null; target_tindakan_bln: number | null; target_golive: string | null;
   tahap_kode: string; tahap_nama: string; progres_pct: number; status_rag: string;
@@ -282,7 +294,7 @@ export interface ProyekRow {
 
 const KOLOM = (sql: ReturnType<typeof db>) => sql`
   p.id::int, p.kode, p.account_id::int, c.name AS faskes_nama, p.nama_rs, p.kota, p.segmen, p.tipe_proyek, p.prioritas,
-  p.nama_alat, p.unit_kso, p.unit_terinstal, p.unit_running, p.harga_unit::float8 AS harga_unit, p.nomor_kontrak,
+  p.produk_kode, p.nama_alat, p.unit_kso, p.unit_terinstal, p.unit_running, p.harga_unit::float8 AS harga_unit, p.nomor_kontrak,
   p.target_tindakan_bln, p.target_golive, p.tahap_kode, p.status_rag, p.pic_employee_id, e.nama AS pic_nama,
   p.next_action, p.diubah_oleh, p.diubah_at::text, p.dibuat_at::text`;
 const DARI = (sql: ReturnType<typeof db>) => sql`
@@ -377,8 +389,24 @@ export async function ringkasan() {
 
 // ---------------------------------------------------------------- referensi
 export async function referensi() {
-  const kar = await db()`SELECT id, nama FROM employee ORDER BY nama`;
-  return { tahap: TAHAP, karyawan: kar.map((r) => ({ id: String(r.id), nama: String(r.nama) })) };
+  const sql = db();
+  const [kar, alat] = await Promise.all([
+    sql`SELECT id, nama FROM employee ORDER BY nama`,
+    sql`SELECT kode, nama, brand FROM product_code WHERE kode LIKE ${PREFIX_MESIN_HD + "%"} ORDER BY nama`,
+  ]);
+  return {
+    tahap: TAHAP,
+    karyawan: kar.map((r) => ({ id: String(r.id), nama: String(r.nama) })),
+    alat: alat.map((r) => ({ kode: String(r.kode), nama: String(r.nama), brand: r.brand ? String(r.brand) : null })),
+  };
+}
+
+/** Nama produk dari kode mesin HD; kode tak dikenal → 400. */
+async function namaProduk(kode: string | null): Promise<string | null> {
+  if (!kode) return null;
+  const [r] = await db()`SELECT nama FROM product_code WHERE kode = ${kode} AND kode LIKE ${PREFIX_MESIN_HD + "%"}`;
+  if (!r) throw new ProyekHdError(400, "alat tidak ditemukan di daftar mesin hemodialisa", "produk_kode");
+  return String(r.nama);
 }
 
 export async function cariFaskes(q: unknown) {
@@ -423,15 +451,16 @@ export async function detailProyek(idStr: string) {
 // ---------------------------------------------------------------- tulis
 export async function buatProyek(b: Record<string, unknown>, oleh: string | null): Promise<ProyekRow> {
   const d = isianBaru(b);
+  const namaAlat = await namaProduk(d.produk_kode);
   const sql = db();
   const id = await sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext('hd_proyek:kode'))`;
     const [last] = await tx`SELECT kode FROM hd_proyek ORDER BY length(kode) DESC, kode DESC LIMIT 1`;
     const kode = kodeBerikut(last ? String(last.kode) : null);
     const [r] = await tx`
-      INSERT INTO hd_proyek (kode, account_id, nama_rs, kota, segmen, tipe_proyek, prioritas, nama_alat, unit_kso, unit_terinstal,
+      INSERT INTO hd_proyek (kode, account_id, nama_rs, kota, segmen, tipe_proyek, prioritas, produk_kode, nama_alat, unit_kso, unit_terinstal,
         harga_unit, nomor_kontrak, target_tindakan_bln, target_golive, pic_employee_id, next_action, dibuat_oleh, diubah_oleh)
-      VALUES (${kode}, ${d.account_id}, ${d.nama_rs}, ${d.kota}, ${d.segmen}, ${d.tipe_proyek}, ${d.prioritas}, ${d.nama_alat},
+      VALUES (${kode}, ${d.account_id}, ${d.nama_rs}, ${d.kota}, ${d.segmen}, ${d.tipe_proyek}, ${d.prioritas}, ${d.produk_kode}, ${namaAlat},
         ${d.unit_kso}, ${d.unit_terinstal}, ${d.harga_unit}, ${d.nomor_kontrak}, ${d.target_tindakan_bln}, ${d.target_golive},
         ${d.pic_employee_id}, ${d.next_action}, ${oleh}, ${oleh})
       RETURNING id::int`;
@@ -461,6 +490,7 @@ export async function ubahProyek(idStr: string, b: Record<string, unknown>, oleh
   const running = (o.unit_running as number | undefined) ?? cur.unit_running;
   if (running > terinstal) throw new ProyekHdError(400, "unit running tidak boleh melebihi unit terinstal", "unit_running");
   if (!Object.keys(o).length) return cur;
+  if ("produk_kode" in o) o.nama_alat = await namaProduk(o.produk_kode as string | null);
   const sql = db();
   await sql`UPDATE hd_proyek SET ${sql(o)}, diubah_oleh = ${oleh}, diubah_at = now() WHERE id = ${id}`.catch(galatFk);
   return satuProyek(id);

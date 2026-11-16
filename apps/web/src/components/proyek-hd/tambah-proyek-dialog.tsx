@@ -8,7 +8,9 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-import { kirim, PRIORITAS, SEGMEN, TIPE_PROYEK, type Proyek } from "./types";
+import type { KabKota } from "@/components/pameran/pilih-kab-kota";
+
+import { kirim, PRIORITAS, SEGMEN, TIPE_PROYEK, type AlatHd, type Proyek, type Referensi } from "./types";
 
 export type Faskes = { id: number; nama: string; no: string | null };
 type Karyawan = { id: string; nama: string };
@@ -57,15 +59,21 @@ export function TambahProyekDialog({ open, onClose, onSaved }: { open: boolean; 
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [f, setF] = useState({
-    nama_rs: "", kota: "", segmen: "", tipe_proyek: "Start New", prioritas: "Gas", nama_alat: "", unit_kso: "", unit_terinstal: "0",
+    nama_rs: "", kota: "", segmen: "", tipe_proyek: "Start New", prioritas: "Gas", produk_kode: "", unit_kso: "", unit_terinstal: "0",
     harga_unit: "", nomor_kontrak: "", target_tindakan_bln: "", target_golive: "", pic_employee_id: "", next_action: "",
   });
   const set = (k: keyof typeof f) => (v: string) => setF((x) => ({ ...x, [k]: v }));
 
+  const [kabKota, setKabKota] = useState<KabKota[]>([]);
+  const [alat, setAlat] = useState<AlatHd[]>([]);
   useEffect(() => {
-    kirim<{ karyawan: Karyawan[] }>("/api/proyek-hd/ref").then((d) => setKaryawan(d.karyawan)).catch(() => undefined);
+    kirim<Referensi>("/api/proyek-hd/ref").then((d) => { setKaryawan(d.karyawan); setAlat(d.alat); }).catch(() => undefined);
+    // Master 514 kab/kota (migrasi 260) — sumber yang sama dengan form pameran.
+    kirim<{ items: KabKota[] }>("/api/publik/kab-kota").then((d) => setKabKota(d.items)).catch(() => undefined);
   }, []);
   const opsiPic = useMemo(() => karyawan.map((k) => ({ value: k.id, label: k.nama })), [karyawan]);
+  const opsiAlat = useMemo(() => alat.map((a) => ({ value: a.kode, label: a.nama })), [alat]);
+  const opsiKota = useMemo(() => kabKota.map((k) => ({ value: k.nama, label: `${k.nama} · ${k.provinsi}` })), [kabKota]);
 
   function pilihFaskes(x: Faskes | null) {
     setFaskes(x);
@@ -109,16 +117,18 @@ export function TambahProyekDialog({ open, onClose, onSaved }: { open: boolean; 
           </div>
           <div className="space-y-1 sm:col-span-2"><Label htmlFor="tp-rs">Nama Customer / RS</Label>
             <Input id="tp-rs" value={f.nama_rs} onChange={(e) => set("nama_rs")(e.target.value)} /></div>
-          <div className="space-y-1"><Label htmlFor="tp-kota">Kota</Label>
-            <Input id="tp-kota" value={f.kota} onChange={(e) => set("kota")(e.target.value)} /></div>
+          <div className="space-y-1"><Label htmlFor="tp-kota">Kota / kabupaten</Label>
+            <Combobox id="tp-kota" value={f.kota} onChange={set("kota")} options={opsiKota} emptyOption="—"
+              placeholder={kabKota.length ? "— pilih —" : "Memuat…"} searchPlaceholder="Cari kota / kabupaten…" /></div>
           <div className="space-y-1"><Label>Segmen</Label>
             <Combobox value={f.segmen} onChange={set("segmen")} options={opsi(SEGMEN)} emptyOption="—" /></div>
           <div className="space-y-1"><Label>Tipe proyek</Label>
             <Combobox value={f.tipe_proyek} onChange={set("tipe_proyek")} options={opsi(TIPE_PROYEK)} /></div>
           <div className="space-y-1"><Label>Prioritas</Label>
             <Combobox value={f.prioritas} onChange={set("prioritas")} options={opsi(PRIORITAS)} /></div>
-          <div className="space-y-1"><Label htmlFor="tp-alat">Nama alat</Label>
-            <Input id="tp-alat" value={f.nama_alat} onChange={(e) => set("nama_alat")(e.target.value)} /></div>
+          <div className="space-y-1"><Label htmlFor="tp-alat">Nama alat (mesin HD)</Label>
+            <Combobox id="tp-alat" value={f.produk_kode} onChange={set("produk_kode")} options={opsiAlat} emptyOption="— belum ditentukan —"
+              placeholder={alat.length ? "— pilih —" : "Memuat…"} searchPlaceholder="Cari mesin hemodialisa…" /></div>
           <div className="space-y-1"><Label htmlFor="tp-harga">Harga unit (Rp)</Label>
             <Input id="tp-harga" type="number" min={0} value={f.harga_unit} onChange={(e) => set("harga_unit")(e.target.value)} /></div>
           <div className="space-y-1"><Label htmlFor="tp-kso">Jml unit KSO</Label>
