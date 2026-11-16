@@ -155,9 +155,9 @@ export function ForecastConfigView({ bisaUbah }: { bisaUbah: boolean }) {
       <div>
         <h1 className="text-2xl font-semibold">Setup Buffer & Wilayah</h1>
         <p className="text-muted-foreground">
-          F19 — safety stock per item per gudang dalam <b>persen dari rata-rata penjualan per bulan</b>. Stok minimum =
-          persen × rata-rata penjualan pada rentang yang dipilih saat Generate (mis. 20% × 70/bln = 14). Item tanpa
-          buffer tidak pernah kena alert (bukan error).
+          F19 — Generate memakai semua barang yang terjual per gudang dengan <b>buffer umum (%)</b> yang diisi di
+          halaman Forecast. Buffer di sini <b>opsional</b>: pengecualian per barang per gudang dalam persen dari rata-rata
+          penjualan per bulan (mis. 20% × 70/bln = 14), atau untuk barang yang mau dipantau walau belum pernah terjual.
         </p>
         <p className="text-muted-foreground mt-1 text-xs italic">
           ⚠️ Sementara diisi manual — Accurate kemungkinan sudah punya data buffer ini secara native, tapi
