@@ -24,7 +24,7 @@ const LABELS: Record<string, string> = {
   network: "Spider Network",
   briefings: "Executive Briefings",
   // Menu KSO — tanpa entri ini judulnya jadi "Kso Kontrak"/"Kso Alat" (title-case slug).
-  "kso-simulator": "Simulator KSO",
+  "kso-simulator": "Simulator KSO IVD",
   "kso-produktivitas": "Produktivitas KSO",
   "kso-alat": "Daftar Alat",
   "kso-kontrak": "Kontrak KSO",
