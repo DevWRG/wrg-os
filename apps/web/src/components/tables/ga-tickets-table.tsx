@@ -62,7 +62,7 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
     {
       id: "kategori",
       header: "Kategori",
-      className: "max-w-36 whitespace-normal",
+      className: "min-w-36 max-w-44 whitespace-normal",
       cell: (t) => <span>{t.category_icon ? `${t.category_icon} ` : ""}{t.category_nama}</span>,
     },
     {
