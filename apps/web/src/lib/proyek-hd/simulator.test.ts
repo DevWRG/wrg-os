@@ -1,7 +1,7 @@
 // Angka di sini REKAAN (repo publik) — hanya menguji bentuk rumus.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hitungMargin, hitungProyeksi, marginAwal, proyeksiAwal, setExPpn, type MarginInput, type ProyeksiInput } from "./simulator";
+import { hitungMargin, hitungProyeksi, keNilaiAwal, marginAwal, proyeksiAwal, setExPpn, type MarginInput, type ProyeksiInput } from "./simulator";
 
 const PX: ProyeksiInput = { mesin: 10, shift: 2, hari: 24, tarif_klaim: 1000, mode: "bagi_hasil", porsi_pct: 50, harga_tetap: 300 };
 
@@ -65,4 +65,16 @@ test("nilai awal dari parameter: kunci kosong = 0 + dilaporkan", () => {
   const m = marginAwal({ margin_mesin: 30 });
   assert.equal(m.input.mesin, 30);
   assert.ok(m.kosong.includes("dialyzer"));
+});
+
+test("jadikan nilai awal: angka di layar → kunci rs_* / margin_*; mode tak ikut", () => {
+  const rs = keNilaiAwal("proyeksi_rs", PX);
+  assert.deepEqual(Object.keys(rs).sort(), ["rs_harga_tetap", "rs_hari", "rs_mesin", "rs_porsi_pct", "rs_shift", "rs_tarif_klaim"]);
+  assert.equal(rs.rs_tarif_klaim, 1000);
+  const mg = keNilaiAwal("margin_wrg", { ...NOL, dialyzer: 77 });
+  assert.equal(mg.margin_dialyzer, 77);
+  assert.equal(Object.keys(mg).every((k) => k.startsWith("margin_")), true);
+  assert.equal(Object.keys(mg).length, 26);
+  // round-trip: nilai awal yang disimpan menghasilkan input yang sama
+  assert.deepEqual(marginAwal(mg).input, { ...NOL, dialyzer: 77 });
 });
