@@ -220,6 +220,8 @@ export interface AlatTerlapor {
   durasiMenit: number | null;
   /** Pekerjaan tak pernah di-#START — diterima, ditandai. */
   tanpaStart: boolean;
+  /** Item plan ini SUDAH di-#REPORT sebelumnya (laporan dobel/susulan) — diterima, ditandai. */
+  sudahDilaporkan: { planNo: number; jam: string } | null;
 }
 
 /** Foto dari pengirim yang sama dalam jendela ini sebelum #REPORT ikut jadi foto kunjungan. */
@@ -245,7 +247,7 @@ export async function simpanReportTeknisi(input: {
   const unitAda = await punyaInstallationUnit(sql);
   const plan = await sql`
     SELECT p.id, p.urut, p.account_id, p.faskes_teks, p.kso_asset_id, p.installation_unit_id::text, p.sn_teks,
-           p.alat_teks, p.jenis, p.catatan_cocok, p.started_at,
+           p.alat_teks, p.jenis, p.catatan_cocok, p.started_at, p.reported_at,
            COALESCE(NULLIF(a.nama_alat, ''), a.type_alat, ${unitAda ? sql`iu.alat_name` : sql`NULL`}) AS asset_nama,
            COALESCE(a.sn_raw, ${unitAda ? sql`iu.serial_number` : sql`NULL`}) AS asset_sn
     FROM teknisi_plan_item p LEFT JOIN kso_asset a ON a.id = p.kso_asset_id
@@ -420,6 +422,13 @@ export async function simpanReportTeknisi(input: {
   // Waktu kerja = jam report − jam #START item plan yang ditaut (alat tanpa start ditandai).
   const startPerPlan = new Map(plan.map((p) => [Number(p.id), p.started_at ? new Date(p.started_at as string) : null]));
   const selesai = input.receivedAt ? new Date(input.receivedAt) : new Date();
+  // Item plan yang sudah di-report SEBELUM pesan ini (snapshot `plan` diambil sebelum UPDATE di atas).
+  const sudahDilaporkan = (planId: number | null): AlatTerlapor["sudahDilaporkan"] => {
+    const p = planId ? plan.find((x) => Number(x.id) === planId) : undefined;
+    if (!p?.reported_at || hasil.duplikat) return null;
+    const jam = new Date(new Date(p.reported_at as string).getTime() + 7 * 3600_000).toISOString().slice(11, 16);
+    return { planNo: Number(p.urut), jam };
+  };
   const durasi = (planId: number | null): number | null => {
     const mulai = planId ? startPerPlan.get(planId) : null;
     if (!mulai) return null;
@@ -436,6 +445,7 @@ export async function simpanReportTeknisi(input: {
       nomor: x.b.nomor, alatLabel: x.label, sn: x.snTampil, jenis: x.jenis,
       status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah, efek: efek.get(x.b.nomor) ?? null,
       durasiMenit: durasi(x.planId), tanpaStart: !(x.planId && startPerPlan.get(x.planId)),
+      sudahDilaporkan: sudahDilaporkan(x.planId),
     })),
   };
 }

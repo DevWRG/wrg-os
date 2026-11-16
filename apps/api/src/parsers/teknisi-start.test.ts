@@ -111,3 +111,24 @@ test("balasan report >1 faskes: dikelompokkan per faskes", () => {
   // satu faskes → format lama
   assert.match(balasanReportTeknisi({ faskes: "RS A", alat: alat.slice(0, 1), kelompok: [{ faskes: "RS A", nomor: [1] }] }), /^✅ RS A — 1 alat tercatat/);
 });
+
+test("#START teks bebas (bukan faskes, tanpa label RS:) ditolak — bukan dicari sebagai nama faskes", () => {
+  for (const t of ["#START besok saja", "#START mulai kerja", "#START Siloam Kediri"]) {
+    const a = parseTeknisiStart(t);
+    assert.equal(a.faskes, null, t);
+    assert.equal(a.errors.length, 1, t);
+  }
+  assert.equal(parseTeknisiStart("#START RS: Siloam Kediri").faskes, "Siloam Kediri");
+  assert.equal(parseTeknisiStart("#START Klinik Pratama Sehat").faskes, "Klinik Pratama Sehat");
+  assert.equal(parseTeknisiStart("#START Rumah Sakit Umum Daerah X").faskes, "Rumah Sakit Umum Daerah X");
+});
+
+test("balasan #REPORT: nomor yang sudah dilaporkan diberi keterangan (menggantikan tanda tanpa #START)", () => {
+  const t = balasanReportTeknisi({
+    faskes: "RS A",
+    alat: [{ nomor: 1, alatLabel: "DxH", sn: "SN123", jenis: "PM", status: "Selesai", alasan: null, masalah: null,
+             tanpaStart: true, sudahDilaporkan: { planNo: 1, jam: "10:05" } }],
+  });
+  assert.match(t, /No\. 1 sudah dilaporkan sebelumnya \(10:05\)/);
+  assert.doesNotMatch(t, /tanpa #START/);
+});
