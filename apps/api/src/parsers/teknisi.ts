@@ -567,23 +567,39 @@ export function balasanReportTeknisi(input: {
   foto?: number;
   /** Bukti lokasi dari foto report: ada geotag / ada foto tanpa geotag / belum ada foto. */
   lokasi?: "ada" | "tanpa-geotag" | "tanpa-foto";
+  /** Report memuat >1 faskes → dikelompokkan per faskes (satu kunjungan per faskes). */
+  kelompok?: { faskes: string | null; nomor: number[] }[];
 }): string {
-  const n = input.alat.length;
-  const baris = [`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`];
-  for (const a of input.alat) {
+  const baris1 = (a: (typeof input.alat)[number]): string[] => {
     const sn = ekorSn(a.sn);
     const nama = [a.alatLabel ?? "alat ?", sn ? `(${sn})` : null].filter(Boolean).join(" ");
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
     const durasi = fmtDurasi(a.durasiMenit);
-    baris.push(`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`);
-    if (a.tanpaStart) baris.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
-    if (a.masalah) baris.push(`   ⚠️ perlu cek: ${a.masalah}`);
-    if (a.efek) baris.push(`   ↳ ${a.efek}`);
+    const out = [`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`];
+    if (a.tanpaStart) out.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
+    if (a.masalah) out.push(`   ⚠️ perlu cek: ${a.masalah}`);
+    if (a.efek) out.push(`   ↳ ${a.efek}`);
+    return out;
+  };
+  const n = input.alat.length;
+  const multi = (input.kelompok?.length ?? 0) > 1;
+  const baris: string[] = [];
+  if (multi) {
+    baris.push(`✅ ${n} alat tercatat`);
+    for (const g of input.kelompok!) {
+      baris.push("", `🏥 ${g.faskes ?? "Faskes ?"}`);
+      for (const a of input.alat.filter((x) => g.nomor.includes(x.nomor))) baris.push(...baris1(a));
+    }
+  } else {
+    baris.push(`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`);
+    for (const a of input.alat) baris.push(...baris1(a));
   }
   if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);
   if (input.lokasi === "ada") baris.push("📍 lokasi tercatat");
   else if (input.lokasi === "tanpa-geotag") baris.push("⚠️ foto tanpa geotag — pakai Geo-Tagging Camera supaya lokasi tercatat");
-  else if (input.lokasi === "tanpa-foto") baris.push("📷 kirim foto Geo-Tagging Camera kunjungan ini (boleh menyusul)");
+  else if (input.lokasi === "tanpa-foto") {
+    baris.push(multi ? "📷 kirim foto Geo-Tagging Camera tiap kunjungan (boleh menyusul)" : "📷 kirim foto Geo-Tagging Camera kunjungan ini (boleh menyusul)");
+  }
   return baris.join("\n");
 }
 

@@ -90,3 +90,24 @@ test("balasan report: tanda lokasi dari foto report", () => {
   assert.match(balasanReportTeknisi({ faskes: "RS A", alat, lokasi: "tanpa-foto" }), /📷 kirim foto Geo-Tagging Camera kunjungan ini \(boleh menyusul\)$/);
   assert.doesNotMatch(balasanReportTeknisi({ faskes: "RS A", alat }), /lokasi|Geo-Tagging/);
 });
+
+test("balasan report >1 faskes: dikelompokkan per faskes", () => {
+  const alat = [
+    { nomor: 1, alatLabel: "Hema", sn: "A101", jenis: "PM", status: "Selesai", alasan: null, masalah: null, durasiMenit: 5, efek: "jadwal rutin bulan ini selesai" },
+    { nomor: 2, alatLabel: "Kimia", sn: "A202", jenis: "Service", status: "Selesai", alasan: null, masalah: null, durasiMenit: 5 },
+    { nomor: 3, alatLabel: "Centrifuge", sn: "B303", jenis: "Install", status: "Selesai", alasan: null, masalah: null, tanpaStart: true },
+  ];
+  const t = balasanReportTeknisi({
+    faskes: "RS A", alat, lokasi: "tanpa-foto",
+    kelompok: [{ faskes: "RS A", nomor: [1, 2] }, { faskes: "RSUD B", nomor: [3] }],
+  });
+  assert.equal(t, [
+    "✅ 3 alat tercatat", "", "🏥 RS A",
+    "1. Hema (…A101) · PM · Selesai · ⏱ 5 m", "   ↳ jadwal rutin bulan ini selesai",
+    "2. Kimia (…A202) · Service · Selesai · ⏱ 5 m", "", "🏥 RSUD B",
+    "3. Centrifuge (…B303) · Install · Selesai", "   ⚠️ tanpa #START — waktu kerja tak terhitung",
+    "📷 kirim foto Geo-Tagging Camera tiap kunjungan (boleh menyusul)",
+  ].join("\n"));
+  // satu faskes → format lama
+  assert.match(balasanReportTeknisi({ faskes: "RS A", alat: alat.slice(0, 1), kelompok: [{ faskes: "RS A", nomor: [1] }] }), /^✅ RS A — 1 alat tercatat/);
+});
