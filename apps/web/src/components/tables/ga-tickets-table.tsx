@@ -43,11 +43,16 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       id: "ticket",
       header: "Tiket",
       sortable: true,
-      accessor: (t) => `${t.ticket_no} ${t.title} ${t.asset_code ?? ""} ${t.asset_nama ?? ""}`,
+      accessor: (t) => `${t.ticket_no} ${t.title} ${t.reporter_name ?? ""} ${t.asset_code ?? ""} ${t.asset_nama ?? ""}`,
+      // Sel tabel default nowrap — judul tiket dari grup WA Aduan GA panjang,
+      // dulu melebarkan kolom ini sampai tabel harus digeser & kolom Aksi
+      // terjepit (laporan user 16 Nov). Lebar dibatasi, judul maks 2 baris.
+      className: "min-w-56 max-w-80 whitespace-normal",
       cell: (t) => (
         <div>
           <div className="font-medium">{t.ticket_no}</div>
-          <div className="text-muted-foreground text-xs">{t.title}</div>
+          <div className="text-muted-foreground line-clamp-2 text-xs" title={t.title}>{t.title}</div>
+          {t.reporter_name && <div className="text-muted-foreground text-xs">Pelapor: {t.reporter_name}</div>}
           {t.asset_code && (
             <div className="text-muted-foreground text-xs">Aset: {t.asset_code} — {t.asset_nama}</div>
           )}
@@ -84,6 +89,8 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       id: "aksi",
       header: "Aksi",
       align: "right",
+      // Stepper 5 status + Batalkan: tanpa lebar minimum tombolnya menumpuk satu per baris.
+      className: "min-w-80 whitespace-normal",
       cell: (t) => (
         <div className="flex items-center justify-end gap-1">
           <GaTicketTransitionActions ticketId={t.id} status={t.status} />
