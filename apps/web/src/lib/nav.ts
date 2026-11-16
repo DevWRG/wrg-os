@@ -78,6 +78,7 @@ import { canViewGaReporting } from "@/lib/ga-reporting-access";
 import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
+import { canViewKinerjaTeknisi } from "@/lib/kinerja-teknisi-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 import { canViewHppKonversi, FITUR_HPP_KONVERSI } from "@/lib/hpp-konversi-access";
@@ -370,6 +371,11 @@ export const NAV: NavGroup[] = [
       // boleh), pola sama dgn F39/F134.
       { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
       { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
+      // Kinerja Teknisi — jadwal per teknisi + Plan & Report (waktu kerja, SLA tiket vs ETA, kepatuhan).
+      // Kunci "kinerja-teknisi" (teknisi: hanya dirinya) + "kinerja-teknisi-semua" (HoD Aftersales: semua);
+      // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
+      { title: "Kinerja Teknisi", url: "/kinerja-teknisi", icon: Gauge, badge: "NEW", show: canViewKinerjaTeknisi,
+        features: [{ key: "kinerja-teknisi-semua", name: "Kinerja Teknisi — lihat semua teknisi" }] },
     ],
   },
   {

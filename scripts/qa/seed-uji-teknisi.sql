@@ -79,6 +79,17 @@ VALUES (date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')::date, (now() AT 
         '[{"sn": "UJ75A101", "nama": "Uji Analyzer Hematologi", "skema": "PER_TEST"}]'::jsonb,
         'rencana', 'manual', 'UJIF175 data uji');
 
+-- Tugaskan semua jadwal uji ke teknisi uji (menu Kinerja Teknisi → Jadwal). ETA tiket 4 jam sejak masuk
+-- (= 2 jam lagi) → laporkan dalam 2 jam = tepat ETA; lewat dari itu = "lewat ETA".
+UPDATE maintenance_schedule SET teknisi_id = (SELECT id FROM teknisi_capacity WHERE am_id = 'UJI-TEKNISI-F175'),
+       teknisi_name = '[UJI] Teknisi F175'
+ WHERE installation_unit_id = 'f1750000-0000-4000-8000-000000000b03';
+UPDATE install_schedule SET teknisi_id = (SELECT id FROM teknisi_capacity WHERE am_id = 'UJI-TEKNISI-F175')
+ WHERE id = 'f1750000-0000-4000-8000-0000000005c1';
+UPDATE service_ticket SET assigned_teknisi_id = (SELECT id FROM teknisi_capacity WHERE am_id = 'UJI-TEKNISI-F175'),
+       assigned_teknisi_name = '[UJI] Teknisi F175', eta_at = created_at + interval '4 hours'
+ WHERE id = 'f1750000-0000-4000-8000-0000000071c7';
+
 -- Mulai bersih: plan/report uji hari-hari sebelumnya untuk dua faskes ini dihapus.
 DELETE FROM teknisi_kunjungan WHERE account_id IN (990001751, 990001752) OR faskes_teks ILIKE '%ujif175%';
 DELETE FROM teknisi_plan_item WHERE account_id IN (990001751, 990001752) OR faskes_teks ILIKE '%ujif175%';
