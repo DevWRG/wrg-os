@@ -162,6 +162,8 @@ export interface TeknisiReportBlok {
   sparepart: string | null;
   catatan: string | null;
   tiket: string | null;
+  /** Faskes dari judul blok berformat #PLAN (`RS A | SN | jenis`) — didahulukan dari `RS:` kunjungan. */
+  faskes?: string | null;
 }
 export interface TeknisiReportParse {
   tanggal: string | null;
@@ -192,6 +194,10 @@ const LABEL: Record<string, Field> = {
 // supaya "Jam 10:30 selesai" tak terbaca sebagai label "Jam 10".
 const LABEL_LINE = /^\s*([A-Za-z][A-Za-z./ ]{0,24}?)\s*:\s*(.*)$/;
 const BLOK_LINE = /^\s*(\d{1,2})\s*[.)]\s*(.*)$/;
+// "2 RS A | A202" — nomor tanpa titik/kurung, hanya bila judulnya memuat `|` (jelas judul alat).
+const BLOK_LINE_SPASI = /^\s*(\d{1,2})\s+(\S.*\|.*)$/;
+// Awal nama faskes — segmen judul berawalan ini dibaca sebagai faskes (format #PLAN), bukan alat.
+const AWAL_FASKES = /^(rs[a-z]{0,3}|rumah\s+sakit|pkm|puskesmas|pustu|klinik|lab(?:kesda|oratorium)?|faskes|upt|dinkes|bkia|apotek|bp)\b\.?/i;
 // Judul blok alat yang jelas: kosong, memuat `|`, `#nomor-plan`, atau awalan SN.
 const judulBlokJelas = (t: string) =>
   !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t);
@@ -219,11 +225,13 @@ function blokKosong(nomor: number): TeknisiReportBlok {
   };
 }
 
-// Judul blok: "#2", "SN 0832 | Zybio EXC200 | PM", "0832 | EXC200 | PM",
-// "#2 | PM". Kembalikan galat bila ada bagian yang tak terbaca.
+// Judul blok: "#2", "SN 0832 | Zybio EXC200 | PM", "0832 | EXC200 | PM", "#2 | PM",
+// atau format #PLAN "RS A | 0832 [| PM]" (faskes di depan). Kembalikan galat bila ada
+// bagian yang tak terbaca.
 function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
   const seg = judul.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
-  for (const s of seg) {
+  for (const [i, s] of seg.entries()) {
+    if (i === 0 && seg.length > 1 && AWAL_FASKES.test(s)) { b.faskes = s; continue; }
     const ref = s.match(/^#\s*(\d{1,2})$/);
     if (ref) { b.planNo = Number(ref[1]); continue; }
     const jt = pisahJenisTiket(s);
@@ -232,7 +240,7 @@ function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
     const sa = pisahSnAlat(s);
     if (sa.sn && !b.sn) { b.sn = sa.sn; if (sa.alat && !b.alat) b.alat = sa.alat; continue; }
     if (sa.alat && !b.alat) { b.alat = sa.alat; continue; }
-    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#NOMOR-PLAN\` atau \`SN … | alat | jenis\`.`;
+    return `Blok ${b.nomor}: judul "${judul}" tak terbaca. Pakai \`#NOMOR-PLAN\`, \`RS | SN/alat | jenis\`, atau \`SN … | alat | jenis\`.`;
   }
   return null;
 }
@@ -308,7 +316,7 @@ export function parseTeknisiReport(
   for (const raw of lines.slice(h + 1)) {
     if (!raw.trim()) { jeda = true; continue; }
     const lanjutan = !!last && (last.f === "kegiatan" || last.f === "catatan" || last.f === "sparepart");
-    const bm = raw.match(BLOK_LINE);
+    const bm = raw.match(BLOK_LINE) ?? raw.match(BLOK_LINE_SPASI);
     // "1. bersihkan probe" tepat di bawah Kegiatan = daftar isi kegiatan, bukan
     // alat baru — kecuali judulnya jelas judul alat (`|`, `#2`, `SN …`).
     if (bm && !(lanjutan && !jeda && !judulBlokJelas(bm[2]))) {
@@ -363,8 +371,8 @@ export function parseTeknisiReport(
     if (b.planNo == null && !b.sn && !b.alat) {
       out.errors.push(`Blok ${b.nomor}: identitas alat kosong — tulis nomor plan (\`#1\`) atau \`SN:\`/\`Alat:\`.`);
     }
-    if (b.planNo == null && !out.faskes) {
-      out.errors.push(`Blok ${b.nomor}: tanpa nomor plan, \`RS:\` wajib diisi.`);
+    if (b.planNo == null && !out.faskes && !b.faskes) {
+      out.errors.push(`Blok ${b.nomor}: tanpa nomor plan, \`RS:\` (atau RS di judul blok) wajib diisi.`);
     }
     if (!b.status) {
       if (!statusSalah.has(b)) out.errors.push(`Blok ${b.nomor}: \`Status:\` wajib (Selesai / Pending ALASAN / Batal ALASAN / Revisit).`);
@@ -377,6 +385,109 @@ export function parseTeknisiReport(
   // Galat dari label yang sama bisa tercatat dua kali (mis. jenis di judul & baris).
   out.errors = [...new Set(out.errors)];
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// #START — jam mulai per pekerjaan (waktu servis = jam #REPORT − jam #START)
+// ---------------------------------------------------------------------------
+
+export interface TeknisiStartParse {
+  /** Nomor item plan hari ini: `#START 1` / `#START 1, 2`. */
+  nomor: number[];
+  /** Kerja di luar plan: `#START RS A | SN 0832 | Service` → item plan baru. */
+  baru: Omit<TeknisiPlanItem, "urut"> | null;
+  /** `#START RSUD Trenggalek` → semua item plan hari ini untuk faskes itu yang belum di-start. */
+  faskes: string | null;
+  errors: string[];
+}
+
+const START_LINE = /^\s*#\s*start\b/i;
+const LABEL_FASKES = /^\s*(rs|faskes|customer|cust)\s*:\s*/i;
+
+export function parseTeknisiStart(body: string): TeknisiStartParse {
+  const lines = barisPesan(body);
+  const h = lines.findIndex((l) => START_LINE.test(l));
+  const out: TeknisiStartParse = { nomor: [], baru: null, faskes: null, errors: [] };
+  if (h < 0) return out;
+  // Isi = sisa baris hashtag; kalau kosong, baris berisi pertama sesudahnya.
+  let isi = lines[h].replace(START_LINE, "").trim();
+  if (!isi) isi = lines.slice(h + 1).map((l) => l.trim()).find(Boolean) ?? "";
+  if (!isi) {
+    out.errors.push("Tulis nomor plan, mis. `#START 1`, atau pekerjaan baru `#START RS | SN/alat | jenis`.");
+    return out;
+  }
+  if (isi.includes("|")) {
+    const seg = isi.replace(LABEL_FASKES, "").split(/\s*\|\s*/).map((x) => x.trim());
+    if (seg.length < 3 || !seg[0] || !seg[1] || !seg[2]) {
+      out.errors.push("Pekerjaan di luar plan perlu 3 bagian: `#START RS | SN/alat | jenis`.");
+      return out;
+    }
+    const { jenis, tiket } = pisahJenisTiket(seg.slice(2).join(" "));
+    if (!jenis) {
+      out.errors.push(`Jenis "${seg[2]}" tak dikenal. Pilih: ${JENIS_TEKNISI.join(" · ")}.`);
+      return out;
+    }
+    const { sn, alat } = pisahSnAlat(seg[1]);
+    out.baru = { faskes: seg[0], sn, alat, jenis, tiket };
+    return out;
+  }
+  // Nomor (pemisah koma/spasi/"dan") → item plan; selain itu dibaca sebagai NAMA FASKES
+  // (semua item plan hari ini di faskes itu). Pencocokan faskes dilakukan di repo.
+  const sisa = isi.replace(/\b(no|nomor|dan)\b\.?/gi, " ").replace(/[#,;&+]/g, " ").trim();
+  if (/^\d{1,2}(\s+\d{1,2})*$/.test(sisa)) {
+    out.nomor = [...new Set(sisa.split(/\s+/).map(Number))];
+    return out;
+  }
+  const berlabel = LABEL_FASKES.test(isi);
+  const faskes = isi.replace(LABEL_FASKES, "").trim();
+  // Tanpa label `RS:`, teks hanya dibaca sebagai faskes bila diawali RS/RSUD/PKM/Klinik/Lab/… — uji 16 Nov
+  // 2026: `#START besok saja` sempat dicari sebagai nama faskes.
+  if (!/[A-Za-z]{2,}/.test(faskes) || (!berlabel && !AWAL_FASKES.test(faskes))) {
+    out.errors.push("Tulis nomor plan (`#START 1`), nama faskes (`#START RSUD Trenggalek`), atau pekerjaan di luar plan (`#START RS | SN/alat | jenis`).");
+    return out;
+  }
+  out.faskes = faskes;
+  return out;
+}
+
+/** 95 → "1 j 35 m"; 45 → "45 m"; null → null. */
+export function fmtDurasi(menit: number | null | undefined): string | null {
+  if (menit == null || !Number.isFinite(menit) || menit < 0) return null;
+  const j = Math.floor(menit / 60);
+  const m = Math.round(menit % 60);
+  return j > 0 ? `${j} j ${m} m` : `${m} m`;
+}
+
+export const CONTOH_START_TEKNISI = [
+  "#START 1",
+  "",
+  "beberapa pekerjaan sekaligus: #START 1, 2",
+  "semua pekerjaan di satu faskes: #START RSUD Trenggalek",
+  "pekerjaan di luar plan: #START RS Al Irsyad | DxH 560 | Service",
+].join("\n");
+
+export function balasanStartTeknisi(input: {
+  nama: string;
+  jam: string;
+  mulai: { urut: number; diLuarPlan: boolean; berlokasi?: boolean }[];
+  ditolak: { urut: number; alasan: string }[];
+  /** Pesan umum (mis. faskes tak ada di plan hari ini). */
+  pesan?: string[];
+}): string {
+  // Bukti lokasi diambil dari foto REPORT (keputusan user 16 Nov 2026), jadi balasan start
+  // tidak menilai lokasi — cukup jam mulai + nomor pekerjaan.
+  const baris: string[] = [];
+  for (const p of input.pesan ?? []) baris.push(`⚠️ ${p}`);
+  if (input.mulai.length) {
+    baris.push(`▶️ Mulai tercatat ${input.jam}, ${input.nama}`);
+    const biasa = input.mulai.filter((m) => !m.diLuarPlan).map((m) => m.urut);
+    if (biasa.length) baris.push(`No. ${biasa.join(", ")}`);
+    for (const m of input.mulai.filter((x) => x.diLuarPlan)) baris.push(`No. ${m.urut} (di luar plan)`);
+  }
+  for (const d of input.ditolak) baris.push(`⚠️ No. ${d.urut}: ${d.alasan}`);
+  const lapor = input.mulai.map((m) => m.urut);
+  if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")} + foto Geo-Tagging Camera`);
+  return baris.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +549,7 @@ export function balasanPlanTeknisi(input: {
     for (const it of bermasalah) baris.push(`⚠️ No. ${it.urut}: ${it.masalah}`);
   }
   if (input.dilewati.length) {
-    baris.push("", `ℹ️ No. ${input.dilewati.join(", ")} sudah dilaporkan — tak diganti.`);
+    baris.push("", `ℹ️ No. ${input.dilewati.join(", ")} sudah dimulai/dilaporkan — tak diganti.`);
   }
   if (bermasalah.length) {
     baris.push("", "Item bertanda ⚠️ tetap tersimpan; laporkan dengan SN supaya alatnya pasti.");
@@ -448,27 +559,62 @@ export function balasanPlanTeknisi(input: {
 
 export function balasanReportTeknisi(input: {
   faskes: string | null;
-  alat: { nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null; masalah: string | null; efek?: string | null }[];
+  alat: {
+    nomor: number; alatLabel: string | null; sn: string | null; jenis: string | null; status: string; alasan: string | null;
+    masalah: string | null; efek?: string | null;
+    /** Menit #START → #REPORT; null = tak ada start. */
+    durasiMenit?: number | null;
+    /** true = pekerjaan ini tak pernah di-#START (ditandai, tetap diterima). */
+    tanpaStart?: boolean;
+    /** Item plan sudah di-#REPORT sebelumnya (ditandai, tetap diterima). */
+    sudahDilaporkan?: { planNo: number; jam: string } | null;
+  }[];
   foto?: number;
+  /** Bukti lokasi dari foto report: ada geotag / ada foto tanpa geotag / belum ada foto. */
+  lokasi?: "ada" | "tanpa-geotag" | "tanpa-foto";
+  /** Report memuat >1 faskes → dikelompokkan per faskes (satu kunjungan per faskes). */
+  kelompok?: { faskes: string | null; nomor: number[] }[];
 }): string {
-  const n = input.alat.length;
-  const baris = [`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`];
-  for (const a of input.alat) {
+  const baris1 = (a: (typeof input.alat)[number]): string[] => {
     const sn = ekorSn(a.sn);
     const nama = [a.alatLabel ?? "alat ?", sn ? `(${sn})` : null].filter(Boolean).join(" ");
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
-    baris.push(`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}`);
-    if (a.masalah) baris.push(`   ⚠️ perlu cek: ${a.masalah}`);
-    if (a.efek) baris.push(`   ↳ ${a.efek}`);
+    const durasi = fmtDurasi(a.durasiMenit);
+    const out = [`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`];
+    if (a.sudahDilaporkan) {
+      out.push(`   ⚠️ No. ${a.sudahDilaporkan.planNo} sudah dilaporkan sebelumnya (${a.sudahDilaporkan.jam}) — dicatat sebagai laporan tambahan`);
+    } else if (a.tanpaStart) out.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
+    if (a.masalah) out.push(`   ⚠️ perlu cek: ${a.masalah}`);
+    if (a.efek) out.push(`   ↳ ${a.efek}`);
+    return out;
+  };
+  const n = input.alat.length;
+  const multi = (input.kelompok?.length ?? 0) > 1;
+  const baris: string[] = [];
+  if (multi) {
+    baris.push(`✅ ${n} alat tercatat`);
+    for (const g of input.kelompok!) {
+      baris.push("", `🏥 ${g.faskes ?? "Faskes ?"}`);
+      for (const a of input.alat.filter((x) => g.nomor.includes(x.nomor))) baris.push(...baris1(a));
+    }
+  } else {
+    baris.push(`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`);
+    for (const a of input.alat) baris.push(...baris1(a));
   }
   if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);
+  if (input.lokasi === "ada") baris.push("📍 lokasi tercatat");
+  else if (input.lokasi === "tanpa-geotag") baris.push("⚠️ foto tanpa geotag — pakai Geo-Tagging Camera supaya lokasi tercatat");
+  else if (input.lokasi === "tanpa-foto") {
+    baris.push(multi ? "📷 kirim foto Geo-Tagging Camera tiap kunjungan (boleh menyusul)" : "📷 kirim foto Geo-Tagging Camera kunjungan ini (boleh menyusul)");
+  }
   return baris.join("\n");
 }
 
-export function balasanFormatSalah(kind: "plan" | "report", nama: string, errors: string[]): string {
-  const contoh = kind === "plan" ? CONTOH_PLAN_TEKNISI : CONTOH_REPORT_TEKNISI;
+export function balasanFormatSalah(kind: "plan" | "report" | "start", nama: string, errors: string[]): string {
+  const contoh = kind === "plan" ? CONTOH_PLAN_TEKNISI : kind === "start" ? CONTOH_START_TEKNISI : CONTOH_REPORT_TEKNISI;
+  const judul = kind === "plan" ? "Plan" : kind === "start" ? "Start" : "Report";
   return [
-    `⚠️ ${kind === "plan" ? "Plan" : "Report"} teknisi belum tersimpan, ${nama}:`,
+    `⚠️ ${judul} teknisi belum tersimpan, ${nama}:`,
     ...errors.slice(0, 6).map((e) => `• ${e}`),
     "",
     "Kirim ulang lengkap. Contoh:",

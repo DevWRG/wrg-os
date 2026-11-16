@@ -14,8 +14,10 @@ import { balasanOrder } from "./order-wa.js";
 import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { listStockBranch } from "./stock-branch.js";
 import { balasanBriefing } from "./senin-brief.js";
-import { parseTeknisiPlan, parseTeknisiReport, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
+import { parseTeknisiPlan, parseTeknisiReport, parseTeknisiStart, balasanStartTeknisi, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
 import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi, tempelFotoTeknisi } from "./teknisi-plan-report.js";
+import { simpanStartTeknisi, tempelFotoStart } from "./teknisi-start.js";
+import { lampiranGagalAktif, peringatkanLampiranGagal, PENANDA_LAMPIRAN_GAGAL, UMUR_MAKS_MENIT } from "./lampiran-gagal.js";
 import type { JenisTeknisi } from "../parsers/teknisi.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -120,6 +122,7 @@ export type InboundKind =
   | "training"
   | "kalibrasi"
   | "briefing"
+  | "start"
   | "none";
 
 // Hashtag yang dijaring processUnprocessed. Diekspor supaya diuji berpasangan
@@ -130,7 +133,7 @@ export type InboundKind =
 export const INBOUND_FILTER_KINDS = [
   "plan", "report", "leads", "update", "sales", "koran", "overtime", "faktur", "approve", "reject", "call", "note",
   "kirim", "terima", "bast", "bukti", "demo", "trial", "kampanye", "brief", "briefing", "kso", "jadwal", "order", "revisi",
-  "install", "servis", "training", "kalibrasi", "bon", "opname", "stok",
+  "install", "servis", "training", "kalibrasi", "bon", "opname", "stok", "start",
 ] as const;
 export const inboundHashtagPattern = (): string => `#\\s*(${INBOUND_FILTER_KINDS.join("|")})`;
 
@@ -174,6 +177,8 @@ const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
 // F110 — #BRIEFING: ringkasan Senin Brief F85 untuk Direktur (baca saja). `\b`
 // membedakannya dari #BRIEF (F131): "#briefing" tak ikut terpicu #BRIEF.
 const BRIEFING_LINE = /^\s*#\s*briefing\b/i;
+// F175 #START — jam mulai pekerjaan teknisi (323).
+const START_LINE = /^\s*[*_~]*#\s*start\b/i;
 // Peran app_user yang boleh membaca Senin Brief lewat WA.
 const BRIEFING_ROLES = new Set(["direktur", "admin", "superuser"]);
 const SHIPPING_LINE = /^\s*#\s*(kirim|terima|bast|bukti)\b\s*(.*)$/i;
@@ -214,6 +219,7 @@ export function detectKind(body: string | null): InboundKind {
       if (STOK_LINE.test(line)) return "stok";
       if (REVISI_LINE.test(line)) return "revisi";
       if (BRIEFING_LINE.test(line)) return "briefing";
+      if (START_LINE.test(line)) return "start";
       const rd = line.match(READINESS_LINE);
       if (rd) return rd[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
     }
@@ -546,7 +552,7 @@ async function handleTeknisiPlanReport(
     pengirim: { groupJid: row.group_jid, senderName: row.sender_name },
   });
   if (r.duplikat) return { skipped: "teknisi-report-duplikat", am_id: am.am_id, mode: "teknisi" };
-  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto });
+  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto, lokasi: r.lokasi, kelompok: r.kelompok });
   const peringatan = buildPeringatanTanggal(tanggal, String(tgl_pesan));
   if (peringatan) body += peringatan;
   const reply = await sendViaWaGateway(target, body);
@@ -1533,6 +1539,32 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ report_id: report.id, teknisi: teknisi.nama, reply });
   }
 
+  // F175 #START — jam mulai pekerjaan teknisi (waktu servis = #REPORT − #START). Hanya role
+  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi diambil dari foto #REPORT (325);
+  // foto yang kebetulan dikirim saat #START (caption / ±10 menit) disimpan sebagai cadangan.
+  if (kind === "start") {
+    if (!teknisiPlanReportAktif()) return finish({ skipped: "teknisi-start-off" });
+    const tek = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!tek) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (!tek.aktif || !isTeknisi(tek.role)) return finish({ skipped: "bukan-teknisi", am_id: tek.am_id });
+    const ps = parseTeknisiStart(row.body ?? "");
+    if (ps.errors.length || (!ps.baru && !ps.faskes && ps.nomor.length === 0)) {
+      const errors = ps.errors.length ? ps.errors : ["Tulis nomor plan, mis. `#START 1`."];
+      const reply = await sendViaWaGateway(row.group_jid, balasanFormatSalah("start", tek.nama, errors));
+      return finish({ error: "teknisi-start-format", errors, reply });
+    }
+    const [{ tgl }] = await sql<{ tgl: string }[]>`
+      SELECT (COALESCE(${row.received_at}::timestamptz, now()) AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl`;
+    const r = await simpanStartTeknisi({
+      teknisiId: tek.am_id, tanggal: String(tgl), parse: ps, waMessageId: row.message_id,
+      receivedAt: row.received_at, groupJid: row.group_jid, senderName: row.sender_name,
+      mediaPath: /^image/i.test(row.message_type ?? "") && row.media_path ? row.media_path : null,
+      geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
+    });
+    const reply = await sendViaWaGateway(row.group_jid, balasanStartTeknisi({ nama: tek.nama, ...r }));
+    return finish({ am_id: tek.am_id, via: tek.via, mode: "teknisi", tanggal: String(tgl), ...r, reply });
+  }
+
   if (kind === "none") {
     // Lampiran rekening koran yang dikirim sebagai pesan TERPISAH dari
     // hashtagnya. WhatsApp mengirim dokumen + teks sebagai dua pesan, dan admin
@@ -1558,11 +1590,20 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       // blok / ekor SN). Tanpa kunjungan dalam jendela → jalur foto lama. Diam (tanpa
       // balasan): satu kunjungan bisa berbelas foto.
       if (teknisiPlanReportAktif() && isTeknisi(amp.role)) {
+        // Bukti lokasi diambil dari foto REPORT (325, keputusan user 16 Nov 2026), jadi foto susulan
+        // ditautkan ke kunjungan #REPORT terakhir dulu (caption = nomor blok / ekor SN). Baru bila tak ada
+        // report dalam jendela, foto dianggap foto #START. (Urutan lama "start dulu" salah menaut foto
+        // report No. 2 ke start No. 3 pada uji 16 Nov 15:43.)
         const tf = await tempelFotoTeknisi({
           teknisiId: amp.am_id, mediaPath: row.media_path, caption: row.body,
           waMessageId: row.message_id, receivedAt: row.received_at,
         });
         if (tf) return finish({ via: amp.via, mode: "teknisi", ...tf }, "photo");
+        const fs = await tempelFotoStart({
+          teknisiId: amp.am_id, mediaPath: row.media_path, receivedAt: row.received_at,
+          geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
+        });
+        if (fs) return finish({ via: amp.via, mode: "teknisi-start-foto", ...fs }, "photo");
       }
       const r = await photoFollowup(row, amp);
       return finish({ via: amp.via, ...r }, "photo");
@@ -2384,7 +2425,11 @@ export async function processUnprocessed(
                    AND k.received_at BETWEEN wa_message.received_at - make_interval(mins => ${KSO_JENDELA_MENIT})
                                          AND wa_message.received_at + make_interval(mins => ${KSO_JENDELA_MENIT})
                ))
-           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
+           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()})
+           -- Foto/lampiran gagal diunduh openclaw (tanpa hashtag pun) → pengirim diminta kirim ulang.
+           OR (${lampiranGagalAktif()} AND media_path IS NULL
+               AND received_at > now() - make_interval(mins => ${UMUR_MAKS_MENIT})
+               AND strpos(lower(coalesce(body, '')), ${PENANDA_LAMPIRAN_GAGAL}) > 0))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
@@ -2424,6 +2469,17 @@ export async function processUnprocessed(
       `;
       results.push({ id: String(r.id), kind: "error", error: pesan });
       continue;
+    }
+    // Teks pesannya sudah diproses jalur biasa; peringatan lampiran gagal menyusul (tak membatalkan apa pun).
+    try {
+      const lg = await peringatkanLampiranGagal(r as unknown as WaRow);
+      if (lg) {
+        await sql`UPDATE wa_message SET processed_result = coalesce(processed_result, '{}'::jsonb) || ${sql.json(lg as Parameters<typeof sql.json>[0])} WHERE id = ${r.id}`;
+        Object.assign(out, lg);
+        if ((lg.lampiran_gagal_reply as WaSendResult | undefined)?.sent) replied += 1;
+      }
+    } catch (e) {
+      console.error(`[inbound] peringatan lampiran gagal baris ${r.id}:`, (e as Error).message);
     }
     results.push(out);
     processed += 1;

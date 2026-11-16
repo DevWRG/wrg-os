@@ -103,7 +103,10 @@ async function efekTiket(sql: Sql, b: BarisEfek): Promise<string | null> {
     UPDATE service_ticket SET status = 'resolved', resolved_at = now(), resolved_note = ${catatan}, updated_at = now()
     WHERE id = ${buka[0].id}::uuid AND status = 'open'
     RETURNING id`;
-  return u.length ? "tiket servis ditutup" : null;
+  if (!u.length) return null;
+  // Tautkan tiket ke laporan alat → SLA (tiket masuk → #START → #REPORT) di teknisi_kerja_v (323).
+  await sql`UPDATE teknisi_kunjungan_alat SET service_ticket_id = ${buka[0].id}::uuid WHERE id = ${b.id}`;
+  return "tiket servis ditutup";
 }
 
 /** Install selesai → jadwal install unit itu done. Langkah unit (training/BAST) TIDAK dilompati. */
@@ -127,7 +130,9 @@ export async function terapkanEfek(kunjunganId: number): Promise<Map<number, str
   const sql = db();
   const rows = await sql`
     SELECT ka.id, ka.nomor_blok, ka.jenis, ka.status, ka.kegiatan, ka.kso_asset_id,
-           ka.installation_unit_id::text, k.account_id, k.tanggal::text, mu.nama AS teknisi_nama,
+           ka.installation_unit_id::text,
+           -- #REPORT n tanpa RS: → faskes dari item plan yang dirujuk (dulu NULL → efek PM/Service dilewati diam).
+           COALESCE(k.account_id, p.account_id) AS account_id, k.tanggal::text, mu.nama AS teknisi_nama,
            p.jadwal_rutin_id
     FROM teknisi_kunjungan_alat ka
     JOIN teknisi_kunjungan k ON k.id = ka.kunjungan_id

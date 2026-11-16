@@ -194,3 +194,32 @@ otomatis), Fase 3 (tab Plan & Report di Readiness Board).
 **Perbaikan parser (13 Nov 2026):** label bertanda tebal WA, baris kosong di dalam blok, Kegiatan berupa daftar
 bernomor, dan contoh balasan bot kini memuat bentuk banyak alat. Nomor tiket `T-` dihapus dari contoh (sistem belum
 punya nomor itu); parser tetap menerimanya.
+
+## #START — jam mulai per pekerjaan (migrasi 323, 16 Nov 2026)
+
+Alur: `#PLAN` → `#START n` (jam mulai) → `#REPORT n` (jam selesai). **Waktu servis = jam #REPORT − jam #START.**
+Untuk Service bertiket: SLA respon = tiket masuk → #START, SLA selesai = tiket masuk → #REPORT (`teknisi_kerja_v`).
+
+```
+#START 1                          ← jam mulai (lokasi dibuktikan lewat foto saat #REPORT)
+#START 1, 2                       ← beberapa pekerjaan sekaligus
+#START RS Al Irsyad | DxH 560 | Service   ← kerja di luar plan → item baru No. 51, 52, …
+```
+
+- `#START <nama faskes>` (mis. `#START RSUD Trenggalek`) = mulai SEMUA pekerjaan di plan hari ini untuk faskes itu yang belum di-start; faskes tak ada di plan → bot memberi format kerja di luar plan.
+- **Bukti lokasi** = foto **#REPORT** ber-geotag (Geo-Tagging Camera, pola foto kunjungan AM; revisi user 16 Nov
+  2026 — semula di #START). Koordinat dari OCR wa-bridge (`wa_message.geo_*`) lewat `teknisi_kunjungan_foto`: foto
+  ber-caption report, foto ≤30 menit sebelum report, dan foto susulan sesudahnya. Balasan #REPORT memberi tanda
+  `📍 lokasi tercatat` / `⚠️ foto tanpa geotag` / `📷 kirim foto … (boleh menyusul)`. #START tak menilai lokasi;
+  foto yang kebetulan dikirim saat #START dipakai sebagai cadangan (`teknisi_kerja_v.lokasi_sumber`, migrasi 325).
+- **Retensi:** foto start dihapus setelah `TEKNISI_FOTO_START_RETENSI_HARI` (default 30) oleh job
+  `teknisi-foto-start-retensi`; koordinat & jam tetap. **Foto #REPORT disimpan permanen** (tak disentuh).
+- `#REPORT` tanpa `#START` → diterima, ditandai "tanpa #START" (waktu kerja tak terhitung).
+- `#PLAN` dikirim ulang → item yang sudah di-start / dilaporkan / di luar plan TIDAK diganti.
+- **17:00** (`teknisi-start-reminder`): pekerjaan yang sudah di-start tapi belum di-report hari ini → satu pengingat
+  per teknisi di grup tempat #START. Esok pagi yang tetap kosong ditandai `teknisi-tidak-realisasi` (sudah ada).
+- Kepatuhan per pekerjaan di `teknisi_kerja_v`: plan_telat, start_berlokasi, report_tanpa_start, start_tanpa_report,
+  durasi_menit, sla_respon_menit, sla_selesai_menit. Dashboard (tab Plan & Report) menyusul.
+
+Saklar: jalur `#START` ikut `TEKNISI_PLAN_REPORT_ENABLED`; job baru `TEKNISI_START_REMINDER_ENABLED` (+`_CRON`, 17:00)
+dan `TEKNISI_FOTO_START_RETENSI_ENABLED` (+`_HARI`, `_CRON` 03:30) — default mati.
