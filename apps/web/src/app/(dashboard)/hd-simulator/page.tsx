@@ -15,7 +15,7 @@ export default async function SimulatorHdPage({ searchParams }: { searchParams: 
   if (!me || !featureAllowed(me, "/hd-simulator", "view")) {
     return (
       <>
-        <PageHeader title="Simulator HD" />
+        <PageHeader title="Simulator KSO HD" />
         <EmptyState title="Tidak punya akses" description="Menu ini dibuka lewat matriks Akses Grup." />
       </>
     );
@@ -25,7 +25,7 @@ export default async function SimulatorHdPage({ searchParams }: { searchParams: 
   return (
     <>
       <PageHeader
-        title="Simulator HD"
+        title="Simulator KSO HD"
         description="Evaluasi calon mitra hemodialisa: proyeksi tindakan & omset untuk RS, dan (internal) biaya serta margin WRG per tindakan."
       />
       <SimulatorHd

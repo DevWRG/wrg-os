@@ -69,7 +69,7 @@ export function ProyekDetail({ id, bolehUbah, bolehSimulator }: { id: string; bo
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={RAG_KELAS[p.status_rag]}>{p.status_rag}</Badge>
-            {bolehSimulator && <Link href={`/hd-simulator?proyek=${p.id}`} className={buttonVariants({ variant: "soft" })}><Calculator />Simulator HD</Link>}
+            {bolehSimulator && <Link href={`/hd-simulator?proyek=${p.id}`} className={buttonVariants({ variant: "soft" })}><Calculator />Simulator KSO HD</Link>}
           </div>
         </CardContent>
       </Card>
