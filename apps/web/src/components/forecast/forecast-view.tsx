@@ -261,7 +261,8 @@ export function ForecastSubmissionView({ bisaBuat, bisaUbah }: { bisaBuat: boole
         </Button>
       </div>
 
-      <Card>
+      {/* overflow-visible: Card bawaan overflow-hidden memotong daftar dropdown Brand (Combobox absolute). */}
+      <Card className="relative z-10 overflow-visible">
         <CardContent className="flex flex-wrap items-end justify-between gap-3 pt-4">
           <div className="flex flex-wrap items-end gap-3">
             <RentangPicker value={rentang} onChange={setRentang} />
