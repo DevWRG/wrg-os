@@ -97,7 +97,8 @@ interface RekapBarang {
 }
 
 const REASON_LABEL: Record<string, string> = {
-  near_buffer: "Di bawah buffer",
+  near_buffer: "Stok di bawah buffer",
+  forecast: "Kebutuhan dari penjualan",
   near_ed: "Batch mendekati ED",
   ed_lewat: "Batch sudah lewat ED",
 };
@@ -203,6 +204,8 @@ export function ForecastSubmissionView({ bisaBuat, bisaUbah }: { bisaBuat: boole
   const [rentang, setRentang] = useState<Rentang>(() => bulanTerakhir(6));
   const [jenis, setJenis] = useState("");
   const [brand, setBrand] = useState("");
+  // Buffer umum (% dari rata-rata/bln) untuk barang tanpa buffer khusus di Setup.
+  const [bufferPersen, setBufferPersen] = useState("20");
   const [brandOpsi, setBrandOpsi] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
@@ -230,7 +233,7 @@ export function ForecastSubmissionView({ bisaBuat, bisaUbah }: { bisaBuat: boole
     setError(null);
     setNotice(null);
     try {
-      const data = await kirim("/api/forecast/generate", "POST", { ...rentang, jenis: jenis || "semua", brand });
+      const data = await kirim("/api/forecast/generate", "POST", { ...rentang, jenis: jenis || "semua", brand, bufferPersen: bufferPersen || "0" });
       setNotice(
         data.created > 0
           ? `${data.created} barang baru masuk ke ${data.dokumen} dokumen cabang` +
@@ -252,8 +255,9 @@ export function ForecastSubmissionView({ bisaBuat, bisaUbah }: { bisaBuat: boole
         <div>
           <h1 className="text-2xl font-semibold">Forecast Submission</h1>
           <p className="text-muted-foreground">
-            F19 — usulan otomatis dari stok gudang (vs buffer & ED), dikumpulkan per dokumen cabang. Dokumen yang
-            diajukan direview HoD Sales wilayahnya; Purchasing memakai rekap dokumen yang disetujui.
+            F19 — alat bantu forecast Purchasing & HoD Business dari data transaksi: usulan per barang × gudang =
+            rata-rata penjualan/bln (rentang, KSO/Regular, brand) + buffer − stok. Dokumen yang diajukan direview HoD
+            Sales wilayahnya; Purchasing memakai rekap dokumen yang disetujui.
           </p>
         </div>
         <Button size="sm" variant="soft" render={<Link href="/forecast-submission/config" />} nativeButton={false}>
@@ -268,6 +272,18 @@ export function ForecastSubmissionView({ bisaBuat, bisaUbah }: { bisaBuat: boole
             <RentangPicker value={rentang} onChange={setRentang} />
             <FilterSelect label="Jenis penjualan" value={jenis} onChange={setJenis} options={JENIS_OPSI} semua="KSO & Regular" />
             <FilterCombo label="Brand" value={brand} onChange={setBrand} options={brandOpsi} semua="Semua brand" />
+            <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
+              <span className="whitespace-nowrap">Buffer (%)</span>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                step="any"
+                className="bg-card h-8 w-20"
+                value={bufferPersen}
+                onChange={(e) => setBufferPersen(e.target.value)}
+              />
+            </label>
           </div>
           {bisaBuat && (
             <Button size="sm" onClick={() => void generate()} disabled={generating}>

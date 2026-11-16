@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const guard = await requireFeature("/forecast-submission", "create");
   if (!guard.ok) return guard.res;
-  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown } = {};
+  let body: { dari?: unknown; sampai?: unknown; jenis?: unknown; brand?: unknown; bufferPersen?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     const res = await gatewayFetch("/forecast/generate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand }),
+      body: JSON.stringify({ dari: body.dari, sampai: body.sampai, jenis: body.jenis, brand: body.brand, bufferPersen: body.bufferPersen }),
     });
     const data = await res.json();
     return Response.json(data, { status: res.status });
