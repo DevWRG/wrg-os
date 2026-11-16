@@ -118,6 +118,13 @@ def ticket_triage_models() -> List[str]:
     return [primary, fallback]
 
 
+def ga_aduan_models() -> List[str]:
+    """Model OpenRouter untuk pemilah grup WA Aduan GA (token tier LOW → flash-lite)."""
+    primary = os.environ.get("GA_ADUAN_MODEL_PRIMARY", DEFAULT_PRIMARY)
+    fallback = os.environ.get("GA_ADUAN_MODEL_FALLBACK", "deepseek/deepseek-v3.2")
+    return [primary, fallback]
+
+
 def exec_models() -> List[str]:
     """Model OpenRouter untuk A10 executive synthesis, growth-levers,
     weekend-briefing, pola-profile (flash-lite — Sonnet/Haiku tak sepadan biayanya)."""

@@ -5,6 +5,7 @@ import type { GaTicket } from "@/components/tables/ga-tickets-table";
 import type { GaTicketCategory } from "@/components/tables/ga-ticket-categories-table";
 import type { AppUserOption, AssetOption } from "@/components/crm/add-ga-ticket-button";
 import type { TeknisiOption } from "@/components/crm/ga-ticket-assign-button";
+import type { GaAduanWa } from "@/components/crm/ga-aduan-wa-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -71,9 +72,20 @@ async function getAssets(): Promise<AssetOption[]> {
   }
 }
 
+// Pengaturan + ringkasan pemindai grup WA "Aduan GA" (tab "Aduan WA").
+async function getAduanWa(): Promise<GaAduanWa | null> {
+  try {
+    const res = await gatewayFetch("/ga-aduan-wa");
+    if (!res.ok) return null;
+    return (await res.json()) as GaAduanWa;
+  } catch {
+    return null;
+  }
+}
+
 export default async function GaHelpdeskPage() {
-  const [tickets, categories, users, teknisi, assets] = await Promise.all([
-    getTickets(), getCategories(), getUsers(), getTeknisi(), getAssets(),
+  const [tickets, categories, users, teknisi, assets, aduanWa] = await Promise.all([
+    getTickets(), getCategories(), getUsers(), getTeknisi(), getAssets(), getAduanWa(),
   ]);
   return (
     <>
@@ -81,7 +93,7 @@ export default async function GaHelpdeskPage() {
         title="Helpdesk GA"
         description="Ticketing kendala operasional, termasuk kerusakan laptop/PC & aset kantor lain — SLA otomatis per kategori, tracking progres, eskalasi overdue ke assignee + HoD."
       />
-      <GaHelpdeskView tickets={tickets} categories={categories} users={users} teknisi={teknisi} assets={assets} />
+      <GaHelpdeskView tickets={tickets} categories={categories} users={users} teknisi={teknisi} assets={assets} aduanWa={aduanWa} />
     </>
   );
 }
