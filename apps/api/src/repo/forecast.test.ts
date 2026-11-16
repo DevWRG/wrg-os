@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  alasanUsulan,
   bisaTautPo,
   bufferEfektif,
   hitungUsulan,
@@ -25,6 +26,7 @@ import {
   periodeDariBulan,
   qtyEfektif,
   usulanMasihBerjalan,
+  validasiBufferPersen,
   validasiJenis,
 } from "./forecast.js";
 import { hodSalesUntukRegion } from "./sales.js";
@@ -118,9 +120,10 @@ test("bufferEfektif: persen × rata-rata; tanpa persen pakai angka tetap lama", 
   assert.equal(bufferEfektif({ bufferPersen: null, bufferQty: null }, 70), null);
 });
 
-test("hitungUsulan: tutup kekurangan ke buffer + 1 bulan rata-rata", () => {
+test("hitungUsulan: rata-rata 1 bulan + buffer − stok, minimal 0", () => {
   assert.equal(hitungUsulan(0, 14, 70), 84);
-  assert.equal(hitungUsulan(20, 14, 70), 70);
+  assert.equal(hitungUsulan(20, 14, 70), 64);
+  assert.equal(hitungUsulan(100, 14, 70), 0);
   assert.equal(hitungUsulan(0, null, 12.4), 12);
 });
 
@@ -250,4 +253,18 @@ test("isWilayah / isKategori: kosakata lokal F19", () => {
   assert.equal(isWilayah("East"), false);
   assert.equal(isKategori("Medical"), true);
   assert.equal(isKategori("QC"), false);
+});
+
+test("validasiBufferPersen: kosong = 0, 0–1000 sah", () => {
+  assert.equal(validasiBufferPersen(undefined), 0);
+  assert.equal(validasiBufferPersen(""), 0);
+  assert.equal(validasiBufferPersen("20"), 20);
+  assert.equal(validasiBufferPersen(-1), null);
+  assert.equal(validasiBufferPersen("abc"), null);
+});
+
+test("alasanUsulan: stok ≤ buffer, dari penjualan, ED", () => {
+  assert.deepEqual(alasanUsulan({ currentQty: 0, bufferQty: 14, adaPenjualan: true, nearEd: false }), ["near_buffer"]);
+  assert.deepEqual(alasanUsulan({ currentQty: 20, bufferQty: 14, adaPenjualan: true, nearEd: true }), ["forecast", "near_ed"]);
+  assert.deepEqual(alasanUsulan({ currentQty: 0, bufferQty: null, adaPenjualan: false, nearEd: true }), ["near_ed"]);
 });
