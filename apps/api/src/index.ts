@@ -356,6 +356,7 @@ import {
   listTeknisiReports,
 } from "./repo/readinessboard.js";
 import { KinerjaError, bacaRentang, cakupanKinerja, daftarTeknisi, hariIniWib, jadwalTeknisi, kerjaTeknisi, ringkasKerja } from "./repo/kinerja-teknisi.js";
+import { RiwayatAlatError, bacaKunci, daftarAlat, detailAlat } from "./repo/riwayat-alat.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { GalatKso, berkasLampiran, berkasSph, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
@@ -4985,6 +4986,23 @@ app.get("/kinerja-teknisi/kerja", async (c) => {
     const rows = await kerjaTeknisi(cak, { teknisi: c.req.query("teknisi"), ...r });
     return c.json({ semua: cak.semua, ...r, rows, ringkasan: ringkasKerja(rows) });
   } catch (e) { return kinerjaErr(c, e); }
+});
+
+// ── F176 Riwayat Alat (Aftersales, keputusan user 17 Nov 2026) — riwayat PM/servis per alat (SN), lintas
+// faskes. Semua pemegang menu melihat semua alat; BFF (/api/riwayat-alat) menggerbang menu `riwayat-alat`. ──
+app.get("/riwayat-alat/alat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await daftarAlat();
+  return c.json({ count: rows.length, rows });
+});
+app.get("/riwayat-alat/alat/:kunci", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    return c.json(await detailAlat(bacaKunci(c.req.param("kunci"))));
+  } catch (e) {
+    if (e instanceof RiwayatAlatError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
 });
 
 app.get("/watchpoint", async (c) => c.json(await getWatchBoard()));
