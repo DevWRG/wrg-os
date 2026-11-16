@@ -7,6 +7,16 @@ const dok = (x: Partial<Parameters<typeof labelReview>[0]>) => ({
   status: "submitted", reviewStatus: null, reviewRegion: null, reviewedBy: null, reviewNote: null, ...x,
 });
 
+test("labelReview: diajukan ulang menampilkan alasan tolak sebelumnya", () => {
+  assert.deepEqual(labelReview(dok({ reviewStatus: "menunggu", reviewRegion: "East", reviewNote: "kurangi qty" })), {
+    label: "Menunggu review HoD Sales East", variant: "secondary", catatan: "Ditolak sebelumnya: kurangi qty",
+  });
+  // Disetujui tanpa catatan baru: API sudah menyimpan riwayat berawalan.
+  assert.deepEqual(labelReview(dok({ reviewStatus: "disetujui", reviewedBy: "Penguji", reviewNote: "Ditolak sebelumnya: kurangi qty" })), {
+    label: "Disetujui oleh Penguji", variant: "default", catatan: "Ditolak sebelumnya: kurangi qty",
+  });
+});
+
 test("labelReview: menunggu menyebut region HoD Sales, tanpa catatan", () => {
   assert.deepEqual(labelReview(dok({ reviewStatus: "menunggu", reviewRegion: "West" })), {
     label: "Menunggu review HoD Sales West", variant: "secondary", catatan: null,
