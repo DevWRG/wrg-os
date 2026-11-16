@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { SlidersHorizontal } from "lucide-react";
+import { RotateCcw, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,10 +13,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   BATAS_TINDAKAN_SEHAT, CONSUMABLE, hitungMargin, hitungProyeksi, marginAwal, proyeksiAwal,
-  type MarginInput, type ParamMap, type ProyeksiInput,
+  keNilaiAwal, type MarginInput, type ParamMap, type ProyeksiInput,
 } from "@/lib/proyek-hd/simulator";
 
-import { ParamDialog } from "./param-dialog";
+import { useConfirm } from "@/components/ui/use-confirm";
 import { kirim, rp, rpRingkas, tgl, type Param } from "./types";
 
 /** Proyek untuk pemilih simulator — kolom minimal dari /api/hd-simulator/proyek. */
@@ -36,8 +36,9 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
   const [tab, setTab] = useState<Jenis>(bolehMargin ? tabAwal : "proyeksi_rs");
   const [daftar, setDaftar] = useState<ProyekSim[]>([]);
   const [proyek, setProyek] = useState<ProyekSim | null>(null);
-  const [param, setParam] = useState(false);
   const [versi, setVersi] = useState(0);
+  const [pesanAwal, setPesanAwal] = useState<{ ok: boolean; teks: string } | null>(null);
+  const { confirm, dialog } = useConfirm();
   const [px, setPx] = useState<ProyeksiInput | null>(null);
   const [mg, setMg] = useState<MarginInput | null>(null);
   const [kosong, setKosong] = useState<{ rs: string[]; margin: string[] }>({ rs: [], margin: [] });
@@ -80,6 +81,28 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
     if (s.jenis === "margin_wrg" && mg) { setMg({ ...mg, ...(s.input as Partial<MarginInput>) }); setTab("margin_wrg"); }
   }
 
+  // Angka yang sedang di layar (tab aktif) disimpan sebagai nilai awal untuk SEMUA pemakai.
+  // Margin hanya bila tab Margin aktif — tab itu sendiri hanya ada untuk pemegang izin margin.
+  function jadikanNilaiAwal() {
+    const jenis = tab;
+    const input = jenis === "proyeksi_rs" ? px : mg;
+    if (!input) return;
+    const judulTab = jenis === "proyeksi_rs" ? "Proyeksi RS" : "Margin WRG";
+    confirm({
+      title: `Jadikan angka tab ${judulTab} sebagai nilai awal?`,
+      description: `Semua angka di tab ${judulTab} saat ini menjadi nilai awal untuk SEMUA pemakai simulator.`
+        + (proyek ? ` Perhatian: jumlah mesin${jenis === "margin_wrg" ? " dan harga mesin" : ""} saat ini terisi dari proyek ${proyek.kode}.` : ""),
+      confirmLabel: "Jadikan nilai awal",
+    }, () => {
+      kirim("/api/hd-simulator/param", {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ nilai: keNilaiAwal(jenis, input) }),
+      }).then(() => {
+        setPesanAwal({ ok: true, teks: `Nilai awal ${judulTab} tersimpan — berlaku untuk semua pemakai simulator.` });
+        setKosong((k) => (jenis === "proyeksi_rs" ? { ...k, rs: [] } : { ...k, margin: [] }));
+      }).catch((e) => setPesanAwal({ ok: false, teks: (e as Error).message }));
+    });
+  }
+
   if (err) return <p className="text-destructive text-sm">{err}</p>;
   if (!px) return <p className="text-muted-foreground text-sm">Memuat…</p>;
   const kosongTab = tab === "proyeksi_rs" ? kosong.rs : kosong.margin;
@@ -93,7 +116,10 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
             <Combobox value={proyekId ?? ""} onChange={pindahProyek} emptyOption="— tanpa proyek (simulasi bebas) —"
               options={daftar.map((p) => ({ value: String(p.id), label: `${p.nama_rs} · ${p.kode}` }))} searchPlaceholder="Cari RS…" />
           </div>
-          {bolehParam && <Button variant="soft" onClick={() => setParam(true)}><SlidersHorizontal />Parameter</Button>}
+          <div className="flex flex-wrap gap-2">
+            {bolehParam && <Button variant="soft" onClick={jadikanNilaiAwal}><Save />Jadikan nilai awal</Button>}
+            <Button variant="outline" onClick={() => { setPesanAwal(null); setVersi((x) => x + 1); }}><RotateCcw />Kembalikan ke nilai awal</Button>
+          </div>
           <p className="text-muted-foreground max-w-xl text-xs">
             {tab === "proyeksi_rs"
               ? "Untuk dibawa ke direktur RS + nefrolog: berapa tindakan, klaim RS, dan omset Wahana."
@@ -104,7 +130,8 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
 
       {kosongTab.length > 0 && (
         <p className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          Parameter belum diisi admin ({kosongTab.join(", ")}) — dihitung sebagai 0. Isi lewat tombol Parameter, atau ketik langsung di bawah.
+          Nilai awal belum diisi ({kosongTab.join(", ")}) — dihitung sebagai 0.{" "}
+          {bolehParam ? "Atur angkanya di bawah, lalu klik Jadikan nilai awal." : "Minta admin mengisinya; sementara ini bisa diketik langsung di bawah."}
         </p>
       )}
 
@@ -117,9 +144,8 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
         {bolehMargin && mg && <TabsContent value="margin_wrg" className="pt-4"><TabMargin v={mg} set={setMg} /></TabsContent>}
       </Tabs>
 
-      {param && <ParamDialog open api="/api/hd-simulator/param" judul="Parameter Simulator KSO HD"
-        keterangan="Nilai awal simulator. Kosong = belum diisi (dihitung 0 dan muncul peringatan). Parameter Margin WRG hanya terlihat oleh pemegang izin Margin WRG."
-        onClose={() => { setParam(false); setVersi((x) => x + 1); }} />}
+      {pesanAwal && <p role="status" className={cn("text-sm", pesanAwal.ok ? "text-emerald-600" : "text-destructive")}>{pesanAwal.teks}</p>}
+      {dialog}
 
       {proyek ? (
         <KartuSimpan key={tab} proyekId={proyek.id} jenis={tab} input={tab === "proyeksi_rs" ? px : mg} saved={saved.filter((s) => s.jenis === tab)}
