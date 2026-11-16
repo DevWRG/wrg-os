@@ -267,8 +267,8 @@ export const NAV: NavGroup[] = [
       // Simulator HD — menu sendiri seperti Simulator KSO (keputusan user 16 Nov 2026), kunci
       // 'hd-simulator'. Tab Margin WRG = kunci 'proyek-hd-margin', WAJIB di `features`
       // supaya Sync Fitur tak mematikannya sebagai zombie. Default tertutup.
-      { title: "Simulator HD", url: "/hd-simulator", icon: Calculator, badge: "NEW", show: canViewSimulatorHd,
-        features: [{ key: FITUR_HD_MARGIN, name: "Simulator HD — tab Margin WRG (harga, biaya & margin)" }] },
+      { title: "Simulator KSO HD", url: "/hd-simulator", icon: Calculator, badge: "NEW", show: canViewSimulatorHd,
+        features: [{ key: FITUR_HD_MARGIN, name: "Simulator KSO HD — tab Margin WRG (harga, biaya & margin)" }] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio
