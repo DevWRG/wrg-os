@@ -33,7 +33,7 @@ export default async function SimulatorHdPage({ searchParams }: { searchParams: 
         proyekId={proyek}
         bolehMargin={canLihatMarginHd(me)}
         bolehSimpan={featureAllowed(me, "/hd-simulator", "create")}
-        bolehParam={canAturParamHd(me) || canLihatMarginHd(me)}
+        bolehParam={canAturParamHd(me)}
         tabAwal={sp.tab === "margin" ? "margin_wrg" : "proyeksi_rs"}
       />
     </>

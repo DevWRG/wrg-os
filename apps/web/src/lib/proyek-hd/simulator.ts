@@ -105,7 +105,7 @@ export function hitungMargin(i: MarginInput) {
 
 export type ParamMap = Record<string, number | null>;
 
-const KUNCI_PROYEKSI = ["mesin", "shift", "hari", "tarif_klaim", "porsi_pct", "harga_tetap"] as const;
+export const KUNCI_PROYEKSI = ["mesin", "shift", "hari", "tarif_klaim", "porsi_pct", "harga_tetap"] as const;
 export const KUNCI_MARGIN = [
   "needle", "circuit", "bicarb", "acid", "dialyzer", "harga_mesin", "ro",
   "mesin", "backup", "tindakan_per_hari", "hari", "tenor", "pendapatan", "share_pct",
@@ -129,6 +129,15 @@ export function marginAwal(p: ParamMap): { input: MarginInput; kosong: string[] 
     return [k, x ?? 0];
   })) as unknown as MarginInput;
   return { input: o, kosong };
+}
+
+/** Angka di layar → nilai awal tersimpan (kunci hd_param ber-awalan rs_ / margin_). Hanya angka ≥ 0. */
+export function keNilaiAwal(jenis: "proyeksi_rs" | "margin_wrg", input: ProyeksiInput | MarginInput): Record<string, number> {
+  const [awalan, kunci] = jenis === "proyeksi_rs" ? ["rs_", KUNCI_PROYEKSI] as const : ["margin_", KUNCI_MARGIN] as const;
+  const src = input as unknown as Record<string, unknown>;
+  return Object.fromEntries(kunci
+    .map((k) => [`${awalan}${k}`, Number(src[k])] as const)
+    .filter(([, v]) => Number.isFinite(v) && v >= 0));
 }
 
 const persen = (x: number) => `${(x * 100).toFixed(1).replace(".", ",")}%`;
