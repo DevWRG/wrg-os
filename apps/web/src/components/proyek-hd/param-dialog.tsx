@@ -16,7 +16,7 @@ const KELOMPOK = [
 
 // Nilai default tracker & simulator (tabel hd_param). Harga/tarif sengaja tidak ada di kode
 // (repo publik) — diisi di sini. Kunci margin_* hanya terkirim ke pemegang Margin WRG.
-export function ParamDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param" }: { open: boolean; onClose: () => void; api?: string }) {
   const [items, setItems] = useState<Param[] | null>(null);
   const [boleh, setBoleh] = useState(false);
   const [ubah, setUbah] = useState<Record<string, string>>({});
@@ -24,10 +24,10 @@ export function ParamDialog({ open, onClose }: { open: boolean; onClose: () => v
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    kirim<{ items: Param[]; boleh_ubah: boolean }>("/api/proyek-hd/param")
+    kirim<{ items: Param[]; boleh_ubah: boolean }>(api)
       .then((d) => { setItems(d.items); setBoleh(d.boleh_ubah); })
       .catch((e) => setErr((e as Error).message));
-  }, []);
+  }, [api]);
 
   const nilaiTampil = (p: Param) => (p.kunci in ubah ? ubah[p.kunci] : p.nilai == null ? "" : String(p.nilai));
 
@@ -36,7 +36,7 @@ export function ParamDialog({ open, onClose }: { open: boolean; onClose: () => v
     setErr(null);
     try {
       const nilai = Object.fromEntries(Object.entries(ubah).map(([k, v]) => [k, v.trim() === "" ? null : Number(v)]));
-      const d = await kirim<{ items: Param[] }>("/api/proyek-hd/param", {
+      const d = await kirim<{ items: Param[] }>(api, {
         method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ nilai }),
       });
       setItems((prev) => {

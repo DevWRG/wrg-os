@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,22 +16,28 @@ import {
   type MarginInput, type ParamMap, type ProyeksiInput,
 } from "@/lib/proyek-hd/simulator";
 
-import { kirim, rp, rpRingkas, tgl, type Detail, type Param, type Proyek } from "./types";
+import { ParamDialog } from "./param-dialog";
+import { kirim, rp, rpRingkas, tgl, type Param } from "./types";
+
+/** Proyek untuk pemilih simulator — kolom minimal dari /api/hd-simulator/proyek. */
+type ProyekSim = { id: number; kode: string; nama_rs: string; unit_kso: number; harga_unit: number | null };
 
 type Jenis = "proyeksi_rs" | "margin_wrg";
 interface Tersimpan { id: number; jenis: Jenis; label: string | null; input: Record<string, unknown>; ringkasan: string; oleh: string | null; dibuat_at: string }
 
-const persen = (x: number) => `${(x * 100).toFixed(1).replace(".", ",")}%`;
+const persen = (x: number) => `${(Math.abs(x) < 0.0005 ? 0 : x * 100).toFixed(1).replace(".", ",")}%`;
 
 // Simulator HD. Tab Margin WRG hanya dirender bila `bolehMargin` — dan BFF juga tidak
 // mengirim parameter margin_* / simulasi margin ke selain pemegang 'proyek-hd-margin'.
-export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
-  proyekId: string | null; bolehMargin: boolean; bolehSimpan: boolean; tabAwal: Jenis;
+export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, tabAwal }: {
+  proyekId: string | null; bolehMargin: boolean; bolehSimpan: boolean; bolehParam: boolean; tabAwal: Jenis;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Jenis>(bolehMargin ? tabAwal : "proyeksi_rs");
-  const [daftar, setDaftar] = useState<Proyek[]>([]);
-  const [proyek, setProyek] = useState<Proyek | null>(null);
+  const [daftar, setDaftar] = useState<ProyekSim[]>([]);
+  const [proyek, setProyek] = useState<ProyekSim | null>(null);
+  const [param, setParam] = useState(false);
+  const [versi, setVersi] = useState(0);
   const [px, setPx] = useState<ProyeksiInput | null>(null);
   const [mg, setMg] = useState<MarginInput | null>(null);
   const [kosong, setKosong] = useState<{ rs: string[]; margin: string[] }>({ rs: [], margin: [] });
@@ -39,21 +46,20 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
 
   const muatTersimpan = useCallback(() => {
     if (!proyekId) return;
-    kirim<{ items: Tersimpan[] }>(`/api/proyek-hd/${encodeURIComponent(proyekId)}/simulasi`).then((d) => setSaved(d.items)).catch(() => undefined);
+    kirim<{ items: Tersimpan[] }>(`/api/hd-simulator/${encodeURIComponent(proyekId)}/simulasi`).then((d) => setSaved(d.items)).catch(() => undefined);
   }, [proyekId]);
 
   useEffect(() => {
     let batal = false;
     Promise.all([
-      kirim<{ items: Param[] }>("/api/proyek-hd/param"),
-      kirim<{ items: Proyek[] }>("/api/proyek-hd"),
-      proyekId ? kirim<Detail>(`/api/proyek-hd/${encodeURIComponent(proyekId)}`) : Promise.resolve(null),
-    ]).then(([pr, l, det]) => {
+      kirim<{ items: Param[] }>("/api/hd-simulator/param"),
+      kirim<{ items: ProyekSim[] }>("/api/hd-simulator/proyek"),
+    ]).then(([pr, l]) => {
       if (batal) return;
       const pm: ParamMap = Object.fromEntries(pr.items.map((x) => [x.kunci, x.nilai]));
       const a = proyeksiAwal(pm);
       const b = marginAwal(pm);
-      const p = det?.proyek ?? null;
+      const p = proyekId ? l.items.find((x) => String(x.id) === proyekId) ?? null : null;
       setProyek(p);
       setDaftar(l.items);
       // Isi awal dari proyek: jumlah mesin = unit KSO, harga mesin = harga unit proyek.
@@ -65,9 +71,9 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
     }).catch((e) => { if (!batal) setErr((e as Error).message); });
     muatTersimpan();
     return () => { batal = true; };
-  }, [proyekId, bolehMargin, muatTersimpan]);
+  }, [proyekId, bolehMargin, muatTersimpan, versi]);
 
-  const pindahProyek = (v: string) => router.push(`/proyek-hd/simulator${v ? `?proyek=${encodeURIComponent(v)}` : ""}${tab === "margin_wrg" ? `${v ? "&" : "?"}tab=margin` : ""}`);
+  const pindahProyek = (v: string) => router.push(`/hd-simulator${v ? `?proyek=${encodeURIComponent(v)}` : ""}${tab === "margin_wrg" ? `${v ? "&" : "?"}tab=margin` : ""}`);
 
   function buka(s: Tersimpan) {
     if (s.jenis === "proyeksi_rs" && px) { setPx({ ...px, ...(s.input as Partial<ProyeksiInput>) }); setTab("proyeksi_rs"); }
@@ -87,6 +93,7 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
             <Combobox value={proyekId ?? ""} onChange={pindahProyek} emptyOption="— tanpa proyek (simulasi bebas) —"
               options={daftar.map((p) => ({ value: String(p.id), label: `${p.nama_rs} · ${p.kode}` }))} searchPlaceholder="Cari RS…" />
           </div>
+          {bolehParam && <Button variant="soft" onClick={() => setParam(true)}><SlidersHorizontal />Parameter</Button>}
           <p className="text-muted-foreground max-w-xl text-xs">
             {tab === "proyeksi_rs"
               ? "Untuk dibawa ke direktur RS + nefrolog: berapa tindakan, klaim RS, dan omset Wahana."
@@ -97,7 +104,7 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
 
       {kosongTab.length > 0 && (
         <p className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          Parameter belum diisi admin ({kosongTab.join(", ")}) — dihitung sebagai 0. Isi lewat tombol Parameter di halaman Proyek HD, atau ketik langsung di bawah.
+          Parameter belum diisi admin ({kosongTab.join(", ")}) — dihitung sebagai 0. Isi lewat tombol Parameter, atau ketik langsung di bawah.
         </p>
       )}
 
@@ -109,6 +116,8 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, tabAwal }: {
         <TabsContent value="proyeksi_rs" className="pt-4"><TabProyeksi v={px} set={setPx} /></TabsContent>
         {bolehMargin && mg && <TabsContent value="margin_wrg" className="pt-4"><TabMargin v={mg} set={setMg} /></TabsContent>}
       </Tabs>
+
+      {param && <ParamDialog open api="/api/hd-simulator/param" onClose={() => { setParam(false); setVersi((x) => x + 1); }} />}
 
       {proyek ? (
         <KartuSimpan key={tab} proyekId={proyek.id} jenis={tab} input={tab === "proyeksi_rs" ? px : mg} saved={saved.filter((s) => s.jenis === tab)}
@@ -294,7 +303,7 @@ function KartuSimpan({ proyekId, jenis, input, saved, bolehSimpan, onSaved, onBu
     setBusy(true);
     setMsg(null);
     try {
-      const r = await kirim<{ id: number }>(`/api/proyek-hd/${proyekId}/simulasi`, {
+      const r = await kirim<{ id: number }>(`/api/hd-simulator/${proyekId}/simulasi`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jenis, label, input }),
       });
       setMsg({ ok: true, teks: `Tersimpan (#${r.id}).` });
