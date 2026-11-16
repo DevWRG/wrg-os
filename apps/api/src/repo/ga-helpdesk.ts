@@ -214,7 +214,7 @@ function mapTicketRow(r: Record<string, unknown>): GaTicketRow {
   };
 }
 
-async function generateTicketNo(): Promise<string> {
+export async function generateTicketNo(): Promise<string> {
   const sql = db();
   const [row] = await sql`
     SELECT 'TKT-' || TO_CHAR(NOW(), 'YYYY') || '-' ||
@@ -359,9 +359,13 @@ const TRANSITIONS: Record<string, string[]> = {
 export async function transitionTicket(
   id: string,
   toStatus: string,
-  opts: { changed_by_user_id?: string | null; note?: string | null } = {},
+  // `at` — waktu kejadian sebenarnya. Default sekarang; pemindai grup WA Aduan
+  // GA (repo/ga-aduan-wa.ts) mengisi waktu pesan supaya timeline & SLA tiket
+  // hasil backfill mengikuti kejadian aslinya.
+  opts: { changed_by_user_id?: string | null; note?: string | null; at?: Date | null } = {},
 ): Promise<ActionResult> {
   const sql = db();
+  const at = (opts.at ?? new Date()).toISOString();
   const [row] = await sql`SELECT status FROM ga_tickets WHERE id = ${id}`;
   if (!row) return { ok: false, error: "tiket tidak ditemukan" };
   const fromStatus = String(row.status);
@@ -373,17 +377,17 @@ export async function transitionTicket(
   // sql`` (fragment kosong) TETAP truthy sbg object — jangan pakai trik
   // "stageTs ? sql`, ${stageTs}` : sql``", cabang if/else lengkap lebih aman.
   if (toStatus === "in_progress" && fromStatus === "open") {
-    await sql`UPDATE ga_tickets SET status = ${toStatus}, started_at = COALESCE(started_at, now()), updated_at = now() WHERE id = ${id}`;
+    await sql`UPDATE ga_tickets SET status = ${toStatus}, started_at = COALESCE(started_at, ${at}), updated_at = now() WHERE id = ${id}`;
   } else if (toStatus === "completed") {
-    await sql`UPDATE ga_tickets SET status = ${toStatus}, completed_at = now(), updated_at = now() WHERE id = ${id}`;
+    await sql`UPDATE ga_tickets SET status = ${toStatus}, completed_at = ${at}, updated_at = now() WHERE id = ${id}`;
   } else if (toStatus === "closed") {
-    await sql`UPDATE ga_tickets SET status = ${toStatus}, closed_at = now(), updated_at = now() WHERE id = ${id}`;
+    await sql`UPDATE ga_tickets SET status = ${toStatus}, closed_at = ${at}, updated_at = now() WHERE id = ${id}`;
   } else {
     await sql`UPDATE ga_tickets SET status = ${toStatus}, updated_at = now() WHERE id = ${id}`;
   }
   await sql`
-    INSERT INTO ga_ticket_status_log (ticket_id, from_status, to_status, changed_by_user_id, note)
-    VALUES (${id}, ${fromStatus}, ${toStatus}, ${opts.changed_by_user_id ?? null}, ${opts.note ?? null})
+    INSERT INTO ga_ticket_status_log (ticket_id, from_status, to_status, changed_by_user_id, note, created_at)
+    VALUES (${id}, ${fromStatus}, ${toStatus}, ${opts.changed_by_user_id ?? null}, ${opts.note ?? null}, ${at})
   `;
   return { ok: true };
 }
@@ -412,16 +416,17 @@ export interface GaTicketCommentRow {
 
 export async function addComment(
   ticketId: string,
-  input: { comment: string; is_internal?: boolean; created_by_user_id?: string | null },
+  input: { comment: string; is_internal?: boolean; created_by_user_id?: string | null; at?: Date | null },
 ): Promise<GaTicketCommentRow | ActionResult> {
   const sql = db();
+  const at = (input.at ?? new Date()).toISOString();
   const comment = input.comment.trim();
   if (!comment) return { ok: false, error: "comment wajib" };
   const ticket = await sql`SELECT id FROM ga_tickets WHERE id = ${ticketId}`;
   if (!ticket.length) return { ok: false, error: "tiket tidak ditemukan" };
   const rows = await sql`
-    INSERT INTO ga_ticket_comments (ticket_id, comment, is_internal, created_by_user_id)
-    VALUES (${ticketId}, ${comment}, ${input.is_internal ?? false}, ${input.created_by_user_id ?? null})
+    INSERT INTO ga_ticket_comments (ticket_id, comment, is_internal, created_by_user_id, created_at)
+    VALUES (${ticketId}, ${comment}, ${input.is_internal ?? false}, ${input.created_by_user_id ?? null}, ${at})
     RETURNING id, comment, is_internal, created_at
   `;
   const [u] = input.created_by_user_id ? await sql`SELECT name FROM app_user WHERE id = ${input.created_by_user_id}` : [null];

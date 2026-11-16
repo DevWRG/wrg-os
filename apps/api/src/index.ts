@@ -557,6 +557,7 @@ import {
   getTicketTimeline as getGaTicketTimeline,
   runGaHelpdeskOverdueAlert,
 } from "./repo/ga-helpdesk.js";
+import { getGaAduanConfig, getGaAduanStatistik, runGaAduanScan, setGaAduanStaf } from "./repo/ga-aduan-wa.js";
 import {
   listChainConfig as listAuditFindingChainConfig,
   updateChainConfigStep as updateAuditFindingChainConfigStep,
@@ -8879,6 +8880,35 @@ app.post("/ga-tickets/overdue-alert/run", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const r = await runGaHelpdeskOverdueAlert();
   return c.json(r);
+});
+
+// ── Aduan GA dari WhatsApp → Helpdesk (repo/ga-aduan-wa.ts, migrasi 324) ──
+// updated_by dipercaya dari BFF (actorName sesi), pola F60 di bawah.
+app.get("/ga-aduan-wa", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const [config, statistik] = await Promise.all([getGaAduanConfig(), getGaAduanStatistik()]);
+  return c.json({ config, statistik });
+});
+
+app.put("/ga-aduan-wa/config", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { staf_ga_names?: unknown; updated_by?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!Array.isArray(body.staf_ga_names) || !body.staf_ga_names.every((n) => typeof n === "string")) {
+    return c.json({ error: "staf_ga_names harus array teks" }, 400);
+  }
+  return c.json(await setGaAduanStaf(body.staf_ga_names as string[], body.updated_by ?? null));
+});
+
+// Trigger manual (backfill / uji tanpa nunggu cron). ?dry_run=1 = putusan LLM
+// dihitung tapi tak ada yang ditulis.
+app.post("/ga-aduan-wa/run", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  return c.json(await runGaAduanScan({ dryRun: c.req.query("dry_run") === "1" }));
 });
 
 // ── F60 Komite Audit Findings Tracker ──

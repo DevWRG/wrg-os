@@ -42,6 +42,7 @@ import { runWeeklyReport } from "./repo/weeklyreport.js";
 import { mirrorFreshness } from "./repo/mirror-health.js";
 import { runCashinResume } from "./repo/cashin.js";
 import { runDetectLeaveScan } from "./repo/detectleave.js";
+import { runGaAduanScan } from "./repo/ga-aduan-wa.js";
 import { runExtractCompetitor } from "./repo/extractcompetitor.js";
 import { runWeekendBriefing } from "./repo/weekendbriefing.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
@@ -202,6 +203,10 @@ export function startScheduler(): ScheduleStatus {
   // detect-leave (port detect_leave.sh) — scan grup HRD tiap 10 menit, deteksi
   // izin/sakit/cuti via LLM + approval admin. KIRIM WA ke grup HRD.
   const detectLeaveEnabled = (process.env.DETECT_LEAVE_ENABLED ?? "false").toLowerCase() === "true";
+  // ga-aduan-scan — pindai grup WA "Aduan GA" tiap 10 menit, catat aduan jadi
+  // tiket Helpdesk GA + balasan staf GA jadi progres/selesai (LLM flash-lite).
+  // TANPA kirim WA.
+  const gaAduanScanEnabled = (process.env.GA_ADUAN_SCAN_ENABLED ?? "false").toLowerCase() === "true";
   // extract-competitor (port extract_competitor.sh) — LLM ekstrak sebutan
   // kompetitor dari activity_log → competitor_intel. TANPA kirim WA. Harian 23:00.
   const extractCompetitorEnabled = (process.env.EXTRACT_COMPETITOR_ENABLED ?? "false").toLowerCase() === "true";
@@ -402,12 +407,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || direkturInboxEnabled || salesAreaRingkasanEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || teknisiTidakRealisasiEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || gaAduanScanEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || direkturInboxEnabled || salesAreaRingkasanEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || teknisiTidakRealisasiEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !direkturInboxEnabled && !salesAreaRingkasanEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !teknisiTidakRealisasiEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !gaAduanScanEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !direkturInboxEnabled && !salesAreaRingkasanEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !teknisiTidakRealisasiEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1503,6 +1508,29 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`detect-leave=${dlExpr}`);
+  }
+
+  // ga-aduan-scan — grup WA Aduan GA → tiket Helpdesk GA, tiap 10 menit.
+  const gaAduanExpr = process.env.GA_ADUAN_SCAN_CRON ?? "*/10 * * * *";
+  if ((enabled || gaAduanScanEnabled) && cron.validate(gaAduanExpr)) {
+    cron.schedule(
+      gaAduanExpr,
+      async () => {
+        const startedAt = new Date().toISOString();
+        try {
+          const r = await runGaAduanScan({});
+          if (r.berhenti && r.berhenti.startsWith("ai-")) {
+            console.error(`[scheduler] ga-aduan-scan berhenti @ ${startedAt}: ${r.berhenti}`);
+          } else if (r.dipindai > 0 || r.berhenti) {
+            console.log(`[scheduler] ga-aduan-scan @ ${startedAt} ${JSON.stringify(r)}`);
+          }
+        } catch (e) {
+          console.error(`[scheduler] ga-aduan-scan gagal @ ${startedAt}:`, e);
+        }
+      },
+      { timezone },
+    );
+    live.push(`ga-aduan-scan=${gaAduanExpr}`);
   }
 
   // extract-competitor (port extract_competitor.sh) — harian 23:00, tanpa WA.

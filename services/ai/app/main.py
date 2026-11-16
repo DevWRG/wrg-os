@@ -28,6 +28,7 @@ from .openrouter import (
     collection_models,
     exec_models,
     extract_models,
+    ga_aduan_models,
     raport_models,
     rekap_models,
     resume_models,
@@ -41,6 +42,8 @@ from .angka_berdasar import ganti_angka_tak_berdasar
 from .senin import bersihkan_narasi, buang_kalimat_pelanggar, build_senin_system, build_senin_user, cek_pelanggaran
 from .salesdoc import build_salesdoc_system, build_salesdoc_user, doc_title, template_doc
 from .schemas import (
+    AduanGaRequest,
+    AduanGaResponse,
     CollectionDraftRequest,
     KoranLine,
     KoranParseRequest,
@@ -80,6 +83,7 @@ from .schemas import (
     WeekendBriefingResponse,
 )
 from .executive import NAMA_PERUSAHAAN
+from .aduan_ga import build_aduan_system, build_aduan_user, parse_aduan
 
 # System prompt stabil (cache-friendly) — port dari legacy/crm wrg-daily SKILL.md.
 DAILY_SYSTEM_PROMPT = """Kamu adalah WRG CRM Daily Summary Generator.
@@ -559,6 +563,32 @@ def triage_ticket(req: TicketTriageRequest) -> TicketTriageResponse:
         model=model,
         dry_run=model == "dry-run-fallback",
         severity_uncertain=severity_uncertain,
+    )
+
+
+# === Aduan GA: pilah pesan grup WA "Aduan GA" jadi aksi tiket Helpdesk ===
+@app.post("/triage-aduan-ga", response_model=AduanGaResponse)
+def triage_aduan_ga(req: AduanGaRequest) -> AduanGaResponse:
+    """Putus tiap pesan baru grup Aduan GA: aduan_baru/progres/selesai/komentar/abaikan.
+
+    dry_run / tanpa OPENROUTER_API_KEY → aksi kosong + dry_run=True; apps/api
+    tidak menandai pesan apa pun dan mencoba lagi nanti (tak ada putusan tanpa LLM).
+    """
+    if req.dry_run or not os.environ.get("OPENROUTER_API_KEY"):
+        return AduanGaResponse(model="dry-run", dry_run=True)
+    refs = [str(p.get("ref")) for p in req.pesan]
+    text, model, tin, tout = chat_or_fallback(
+        build_aduan_system(req.kategori),
+        build_aduan_user(req.pesan, req.konteks, req.tiket),
+        "",
+        max_tokens=200 + 120 * len(refs),
+        models=ga_aduan_models(),
+    )
+    if model == "dry-run-fallback":
+        return AduanGaResponse(model=model, dry_run=True)
+    aksi = parse_aduan(text, refs, req.kategori)
+    return AduanGaResponse(
+        aksi=aksi or [], model=model, parse_gagal=aksi is None, tokens_in=tin, tokens_out=tout,
     )
 
 
