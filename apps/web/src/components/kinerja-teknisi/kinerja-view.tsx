@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -71,6 +72,63 @@ function useMuat<T>(path: string): { data: T | null; err: string | null } {
   return { data: hasil.data ?? null, err: hasil.err ?? null };
 }
 
+const jamCsv = (iso: string | null) => (iso ? jam(iso) : "");
+const yaTidak = (b: boolean | null | undefined) => (b == null ? "" : b ? "ya" : "tidak");
+
+const EKSPOR_JADWAL: ExportColumn<JadwalRow>[] = [
+  { header: "Teknisi", value: (r) => r.teknisi_nama ?? "belum ditugaskan" },
+  { header: "Tanggal", value: (r) => r.tanggal },
+  { header: "Jenis", value: (r) => r.jenis },
+  { header: "Faskes", value: (r) => r.faskes },
+  { header: "Alat / keluhan", value: (r) => r.alat },
+  { header: "Status", value: (r) => r.status },
+  { header: "Lewat tanggal", value: (r) => yaTidak(r.terlambat) },
+];
+
+const EKSPOR_RINGKAS: ExportColumn<Ringkasan>[] = [
+  { header: "Teknisi", value: (r) => r.teknisi_nama ?? r.teknisi_id },
+  { header: "Pekerjaan", value: (r) => r.pekerjaan },
+  { header: "Di luar plan", value: (r) => r.di_luar_plan },
+  { header: "Dimulai (#START)", value: (r) => r.dimulai },
+  { header: "Dilaporkan (#REPORT)", value: (r) => r.dilaporkan },
+  { header: "Selesai", value: (r) => r.selesai },
+  { header: "Rata waktu kerja (menit)", value: (r) => r.rata_durasi_menit },
+  { header: "Tiket", value: (r) => r.tiket },
+  { header: "Rata SLA respon (menit)", value: (r) => r.rata_sla_respon_menit },
+  { header: "Rata SLA selesai (menit)", value: (r) => r.rata_sla_selesai_menit },
+  { header: "Lewat ETA", value: (r) => r.lewat_eta },
+  { header: "Hari plan telat", value: (r) => r.hari_plan_telat },
+  { header: "Report tanpa #START", value: (r) => r.report_tanpa_start },
+  { header: "#START belum #REPORT", value: (r) => r.start_tanpa_report },
+  { header: "Tanpa laporan", value: (r) => r.tanpa_laporan },
+  { header: "Report berlokasi", value: (r) => r.report_berlokasi },
+];
+
+const EKSPOR_KERJA: ExportColumn<KerjaRow>[] = [
+  { header: "Tanggal", value: (r) => r.tanggal },
+  { header: "No.", value: (r) => r.urut },
+  { header: "Teknisi", value: (r) => r.teknisi_nama ?? r.teknisi_id },
+  { header: "Jenis", value: (r) => r.jenis },
+  { header: "Faskes", value: (r) => r.faskes },
+  { header: "Di luar plan", value: (r) => yaTidak(r.di_luar_plan) },
+  { header: "Jam #START", value: (r) => jamCsv(r.started_at) },
+  { header: "Jam #REPORT", value: (r) => jamCsv(r.selesai_at) },
+  { header: "Waktu kerja (menit)", value: (r) => r.durasi_menit },
+  { header: "Status", value: (r) => r.status_report },
+  { header: "SLA respon (menit)", value: (r) => r.sla_respon_menit },
+  { header: "SLA selesai (menit)", value: (r) => r.sla_selesai_menit },
+  { header: "Lewat ETA", value: (r) => yaTidak(r.lewat_eta) },
+  { header: "Lokasi tercatat", value: (r) => yaTidak(r.selesai_at == null ? null : r.berlokasi) },
+  { header: "Alamat lokasi", value: (r) => r.lokasi_alamat },
+  { header: "Jumlah foto", value: (r) => r.jumlah_foto },
+  { header: "Plan telat", value: (r) => yaTidak(r.plan_telat && !r.di_luar_plan) },
+  { header: "Report tanpa #START", value: (r) => yaTidak(r.report_tanpa_start) },
+  { header: "#START belum #REPORT", value: (r) => yaTidak(r.start_tanpa_report) },
+  { header: "Tanpa laporan", value: (r) => yaTidak(r.tanpa_laporan) },
+];
+
+const rentangBerkas = (dari: string, sampai: string) => (dari === sampai ? dari : `${dari}_${sampai}`);
+
 const TAB_JADWAL = "jadwal";
 const TAB_KERJA = "kerja";
 
@@ -131,8 +189,8 @@ export function KinerjaTeknisiView() {
         <TabsTrigger value={TAB_JADWAL}>Jadwal</TabsTrigger>
         <TabsTrigger value={TAB_KERJA}>Plan &amp; Report</TabsTrigger>
       </TabsList>
-      <TabsContent value={TAB_JADWAL}><TabJadwal query={query} filter={filter} dari={dari} /></TabsContent>
-      <TabsContent value={TAB_KERJA}><TabKerja query={query} filter={filter} /></TabsContent>
+      <TabsContent value={TAB_JADWAL}><TabJadwal query={query} filter={filter} dari={dari} sampai={sampai} /></TabsContent>
+      <TabsContent value={TAB_KERJA}><TabKerja query={query} filter={filter} dari={dari} sampai={sampai} /></TabsContent>
     </Tabs>
   );
 }
@@ -143,7 +201,7 @@ export function KinerjaTeknisiView() {
 //   - tunggakan (tanggal sebelum rentang, masih terbuka) DISEMBUNYIKAN — tombol "Tunggakan (n)"
 //     menampilkannya; API tetap mengirimnya supaya jumlahnya selalu terlihat.
 //   - "lewat" (merah) = tanggal sebelum hari ini dan belum selesai.
-function TabJadwal({ query, filter, dari }: { query: string; filter: ReactNode; dari: string }) {
+function TabJadwal({ query, filter, dari, sampai }: { query: string; filter: ReactNode; dari: string; sampai: string }) {
   const { data, err } = useMuat<{ rows: JadwalRow[] }>(`jadwal?${query}`);
   const [lihatTunggakan, setLihatTunggakan] = useState(false);
   const rows = data?.rows ?? null;
@@ -175,6 +233,8 @@ function TabJadwal({ query, filter, dari }: { query: string; filter: ReactNode; 
         title="Jadwal sebelum rentang yang dipilih dan belum selesai">
         {lihatTunggakan ? "Sembunyikan tunggakan" : `Tunggakan (${tunggakan})`}
       </Button>
+      <ExportButton filename={`jadwal-teknisi_${rentangBerkas(dari, sampai)}${lihatTunggakan ? "_dengan-tunggakan" : ""}`}
+        columns={EKSPOR_JADWAL} data={tampil ?? []} />
     </div>
   );
   return (
@@ -192,7 +252,7 @@ function TabJadwal({ query, filter, dari }: { query: string; filter: ReactNode; 
 }
 
 // ───────── Tab Plan & Report ─────────
-function TabKerja({ query, filter }: { query: string; filter: ReactNode }) {
+function TabKerja({ query, filter, dari, sampai }: { query: string; filter: ReactNode; dari: string; sampai: string }) {
   const { data, err } = useMuat<{ rows: KerjaRow[]; ringkasan: Ringkasan[] }>(`kerja?${query}`);
 
   const kolomRingkas: DataColumn<Ringkasan>[] = [
@@ -248,7 +308,9 @@ function TabKerja({ query, filter }: { query: string; filter: ReactNode }) {
         <CardHeader><CardTitle className="text-base font-semibold">Ringkasan per teknisi</CardTitle></CardHeader>
         <CardContent>
           <DataTable columns={kolomRingkas} data={data.ringkasan} getKey={(r) => r.teknisi_id} pageSize={10}
-            initialSort={{ id: "nama", dir: "asc" }} searchPlaceholder="Cari teknisi…" toolbar={filter}
+            initialSort={{ id: "nama", dir: "asc" }} searchPlaceholder="Cari teknisi…"
+            toolbar={<div className="flex flex-wrap items-center gap-3">{filter}
+              <ExportButton filename={`kinerja-teknisi-ringkasan_${rentangBerkas(dari, sampai)}`} columns={EKSPOR_RINGKAS} data={data.ringkasan} /></div>}
             empty="Belum ada #PLAN/#REPORT teknisi di rentang ini." />
           <p className="text-muted-foreground mt-2 text-xs">
             Waktu kerja = jam #REPORT − jam #START. SLA tiket = tiket masuk → #START (respon) dan → #REPORT (selesai);
@@ -261,6 +323,7 @@ function TabKerja({ query, filter }: { query: string; filter: ReactNode }) {
         <CardContent>
           <DataTable columns={kolom} data={data.rows} getKey={(r) => String(r.plan_item_id)} pageSize={20}
             initialSort={{ id: "tanggal", dir: "desc" }} searchPlaceholder="Cari teknisi / faskes…"
+            toolbar={<ExportButton filename={`kinerja-teknisi-detail_${rentangBerkas(dari, sampai)}`} columns={EKSPOR_KERJA} data={data.rows} />}
             empty="Belum ada pekerjaan di rentang ini." />
         </CardContent>
       </Card>
