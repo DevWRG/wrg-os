@@ -11,6 +11,7 @@ import {
   tentukanWilayah,
   validasiRentang,
   bolehReview,
+  catatanSetelahReview,
   labelReview,
   reviewHodKeyDokumen,
   validasiReview,
@@ -221,6 +222,27 @@ test("labelReview: menunggu / disetujui / ditolak + catatan; belum diajukan koso
   assert.equal(labelReview({ reviewStatus: "disetujui", reviewedBy: "Penguji" }), "Disetujui oleh Penguji");
   assert.equal(labelReview({ reviewStatus: "ditolak", reviewedBy: "Penguji", reviewNote: "kurangi qty" }), "Ditolak oleh Penguji: kurangi qty");
   assert.equal(labelReview({ reviewStatus: null }), "");
+});
+
+test("labelReview: diajukan ulang menampilkan alasan tolak sebelumnya; disetujui membawa catatan", () => {
+  assert.equal(
+    labelReview({ reviewStatus: "menunggu", reviewRegion: "West", reviewNote: "kurangi qty" }),
+    "Menunggu review HoD Sales West (Ditolak sebelumnya: kurangi qty)",
+  );
+  assert.equal(
+    labelReview({ reviewStatus: "disetujui", reviewedBy: "Penguji", reviewNote: "Ditolak sebelumnya: kurangi qty" }),
+    "Disetujui oleh Penguji — Ditolak sebelumnya: kurangi qty",
+  );
+});
+
+test("catatanSetelahReview: setuju tanpa catatan menyimpan alasan tolak lama sebagai riwayat", () => {
+  assert.equal(catatanSetelahReview("disetujui", null, "kurangi qty"), "Ditolak sebelumnya: kurangi qty");
+  assert.equal(catatanSetelahReview("disetujui", null, "Ditolak sebelumnya: kurangi qty"), "Ditolak sebelumnya: kurangi qty");
+  assert.equal(catatanSetelahReview("disetujui", null, null), null);
+  assert.equal(catatanSetelahReview("disetujui", null, "   "), null);
+  // Catatan baru penyetuju / penolak menggantikan catatan lama.
+  assert.equal(catatanSetelahReview("disetujui", "sudah sesuai", "kurangi qty"), "sudah sesuai");
+  assert.equal(catatanSetelahReview("ditolak", "stok cukup", "kurangi qty"), "stok cukup");
 });
 
 test("isWilayah / isKategori: kosakata lokal F19", () => {

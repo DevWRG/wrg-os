@@ -992,8 +992,10 @@ export async function submitDokumen(id: string, submittedBy: string): Promise<Su
   }
 
   // Klaim atomik (dua klik "Ajukan" bersamaan — uji dev 12 Okt 2026). Review
-  // sebelumnya (dokumen yang pernah ditolak) dikosongkan kecuali catatannya,
-  // yang tetap terlihat sampai ada keputusan baru.
+  // sebelumnya (dokumen yang pernah ditolak) dikosongkan kecuali catatannya:
+  // selama menunggu, catatan itu tampil sebagai "Ditolak sebelumnya: …" supaya
+  // reviewer tahu apa yang diminta; saat disetujui tanpa catatan baru, ia
+  // disimpan dengan awalan itu sebagai riwayat (catatanSetelahReview).
   const [claim] = await sql`
     UPDATE forecast_dokumen SET
       status = 'submitted', submitted_by = ${submittedBy}, submitted_at = now(),
@@ -1054,6 +1056,26 @@ export function validasiReview(
   return { keputusan, catatan: catatan || null };
 }
 
+/** Awalan catatan tolak lama yang dibawa ke dokumen yang akhirnya disetujui (selaras lib/forecast-review.ts web). */
+export const AWALAN_TOLAK_SEBELUMNYA = "Ditolak sebelumnya: ";
+
+/**
+ * review_note setelah keputusan. Tolak / setuju bercatatan → catatan baru.
+ * Setuju tanpa catatan → catatan tolak lama (bila ada) TIDAK dihapus, tapi
+ * diberi awalan AWALAN_TOLAK_SEBELUMNYA supaya tak terbaca sebagai catatan
+ * penyetuju. Selama 'menunggu', review_note hanya bisa berasal dari penolakan.
+ */
+export function catatanSetelahReview(
+  keputusan: KeputusanReview,
+  catatanBaru: string | null,
+  catatanLama: string | null | undefined,
+): string | null {
+  if (keputusan === "ditolak" || catatanBaru) return catatanBaru;
+  const lama = String(catatanLama ?? "").trim();
+  if (!lama) return null;
+  return lama.startsWith(AWALAN_TOLAK_SEBELUMNYA) ? lama : `${AWALAN_TOLAK_SEBELUMNYA}${lama}`;
+}
+
 const UUID_USER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Pelaku dari sesi (header x-user-id yang diteruskan BFF) → app_user; null = tak dikenal. */
@@ -1111,7 +1133,7 @@ export async function reviewDokumen(
   if ("error" in v) return { ok: false, error: v.error, code: 400 };
   if (!UUID.test(id)) return { ok: false, error: "dokumen tidak ditemukan", code: 404 };
   const sql = db();
-  const [d] = await sql`SELECT kode, status, warehouse_kode, review_status, review_hod_key FROM forecast_dokumen WHERE id = ${id}`;
+  const [d] = await sql`SELECT kode, status, warehouse_kode, review_status, review_hod_key, review_note FROM forecast_dokumen WHERE id = ${id}`;
   if (!d) return { ok: false, error: "dokumen tidak ditemukan", code: 404 };
   if (d.status !== "submitted" || d.review_status !== "menunggu") {
     return { ok: false, error: "dokumen ini tidak sedang menunggu review — muat ulang halaman", code: 409 };
@@ -1123,12 +1145,15 @@ export async function reviewDokumen(
   }
 
   const tolak = v.keputusan === "ditolak";
+  // review_note tak bisa berubah selama 'menunggu' (klaim di bawah mensyaratkannya),
+  // jadi catatan lama yang dibaca di atas masih berlaku.
+  const catatan = catatanSetelahReview(v.keputusan, v.catatan, d.review_note ? String(d.review_note) : null);
   const menang = await sql.begin(async (txRaw) => {
     const tx = txRaw as unknown as Sql;
     // Klaim atomik: hanya satu keputusan yang menang bila dua orang memutus bersamaan.
     const [claim] = await tx`
       UPDATE forecast_dokumen SET
-        review_status = ${v.keputusan}, review_note = ${v.catatan},
+        review_status = ${v.keputusan}, review_note = ${catatan},
         reviewed_by = ${aktor.nama || null}, reviewed_by_user_id = ${aktor.userId}, reviewed_at = now()
       WHERE id = ${id} AND status = 'submitted' AND review_status = 'menunggu'
       RETURNING warehouse_kode, kategori, periode::text AS periode
@@ -1561,8 +1586,12 @@ const STATUS_DOK: Record<string, string> = { draft: "Draft", submitted: "Diajuka
 
 /** Label status review satu dokumen untuk Excel/UI; null = belum pernah diajukan. */
 export function labelReview(d: { reviewStatus: string | null; reviewRegion?: string | null; reviewedBy?: string | null; reviewNote?: string | null }): string {
-  if (d.reviewStatus === "menunggu") return `Menunggu review HoD Sales${d.reviewRegion ? ` ${d.reviewRegion}` : ""}`;
-  if (d.reviewStatus === "disetujui") return `Disetujui${d.reviewedBy ? ` oleh ${d.reviewedBy}` : ""}`;
+  if (d.reviewStatus === "menunggu") {
+    // Catatan saat menunggu = alasan penolakan sebelumnya (diajukan ulang).
+    const lalu = d.reviewNote ? ` (${AWALAN_TOLAK_SEBELUMNYA}${d.reviewNote})` : "";
+    return `Menunggu review HoD Sales${d.reviewRegion ? ` ${d.reviewRegion}` : ""}${lalu}`;
+  }
+  if (d.reviewStatus === "disetujui") return `Disetujui${d.reviewedBy ? ` oleh ${d.reviewedBy}` : ""}${d.reviewNote ? ` — ${d.reviewNote}` : ""}`;
   if (d.reviewStatus === "ditolak") return `Ditolak${d.reviewedBy ? ` oleh ${d.reviewedBy}` : ""}${d.reviewNote ? `: ${d.reviewNote}` : ""}`;
   return "";
 }
