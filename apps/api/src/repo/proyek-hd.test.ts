@@ -58,6 +58,14 @@ test("isianBaru: wajib nama RS & unit KSO > 0; enum dicek", () => {
   assert.throws(() => isianBaru({ nama_rs: "RS", unit_kso: 1, target_golive: "2026-13" }), /go-live/);
 });
 
+test("produk alat: hanya kode mesin HD (02.13.25.*); kosong = belum ditentukan", () => {
+  assert.equal(isianBaru({ nama_rs: "RS", unit_kso: 1, produk_kode: "02.13.25.028.0001" }).produk_kode, "02.13.25.028.0001");
+  assert.equal(isianBaru({ nama_rs: "RS", unit_kso: 1 }).produk_kode, null);
+  assert.throws(() => isianBaru({ nama_rs: "RS", unit_kso: 1, produk_kode: "02.13.09.031.0001" }), /mesin hemodialisa/);
+  assert.throws(() => isianBaru({ nama_rs: "RS", unit_kso: 1, produk_kode: "02.13.25.%" }), /mesin hemodialisa/);
+  assert.deepEqual(isianUbah({ produk_kode: "" }), { produk_kode: null });
+});
+
 test("isianUbah hanya membawa kolom yang dikirim", () => {
   assert.deepEqual(isianUbah({ status_rag: "Merah" }), { status_rag: "Merah" });
   assert.deepEqual(isianUbah({ next_action: "  " }), { next_action: null });
