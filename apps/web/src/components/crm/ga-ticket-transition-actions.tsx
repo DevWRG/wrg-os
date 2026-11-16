@@ -26,7 +26,7 @@ const LABEL: Record<string, string> = {
   open: "Open", in_progress: "In Progress", waiting: "Waiting", completed: "Completed", closed: "Closed",
 };
 
-// Satu tombol "Ubah status" berisi transisi yang sah saja. Dulu stepper 5
+// Satu tombol "Status ▾" berisi transisi yang sah saja. Dulu stepper 5
 // status + Batalkan selalu tampil — di tabel /ga-helpdesk kolom Aksi jadi
 // terlalu lebar dan terpotong di kanan (laporan user 16 Nov). Status sekarang
 // sudah tampil di kolom Status, jadi tak perlu diulang di sini.
@@ -63,7 +63,7 @@ export function GaTicketTransitionActions({ ticketId, status }: { ticketId: stri
       {dialog}
       <DropdownMenu>
         <DropdownMenuTrigger render={<Button size="sm" variant="outline" disabled={busy} />}>
-          Ubah status <ChevronDown className="size-3.5" />
+          Status <ChevronDown className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           {maju.map((s) => (
