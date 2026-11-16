@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
@@ -130,18 +131,29 @@ export function KinerjaTeknisiView() {
         <TabsTrigger value={TAB_JADWAL}>Jadwal</TabsTrigger>
         <TabsTrigger value={TAB_KERJA}>Plan &amp; Report</TabsTrigger>
       </TabsList>
-      <TabsContent value={TAB_JADWAL}><TabJadwal query={query} filter={filter} /></TabsContent>
+      <TabsContent value={TAB_JADWAL}><TabJadwal query={query} filter={filter} dari={dari} /></TabsContent>
       <TabsContent value={TAB_KERJA}><TabKerja query={query} filter={filter} /></TabsContent>
     </Tabs>
   );
 }
 
 // ───────── Tab Jadwal ─────────
-function TabJadwal({ query, filter }: { query: string; filter: ReactNode }) {
+// Aturan (keputusan user 16 Nov 2026):
+//   - tabel = jadwal DALAM rentang yang dipilih; urut default per teknisi lalu tanggal;
+//   - tunggakan (tanggal sebelum rentang, masih terbuka) DISEMBUNYIKAN — tombol "Tunggakan (n)"
+//     menampilkannya; API tetap mengirimnya supaya jumlahnya selalu terlihat.
+//   - "lewat" (merah) = tanggal sebelum hari ini dan belum selesai.
+function TabJadwal({ query, filter, dari }: { query: string; filter: ReactNode; dari: string }) {
   const { data, err } = useMuat<{ rows: JadwalRow[] }>(`jadwal?${query}`);
+  const [lihatTunggakan, setLihatTunggakan] = useState(false);
   const rows = data?.rows ?? null;
+  const tunggakan = rows ? rows.filter((r) => r.tanggal < dari).length : 0;
+  const tampil = rows ? (lihatTunggakan ? rows : rows.filter((r) => r.tanggal >= dari)) : null;
 
   const kolom: DataColumn<JadwalRow>[] = [
+    // Kunci sortir teknisi menyertakan tanggal → "per teknisi, lalu tanggal"; belum ditugaskan di akhir.
+    { id: "teknisi", header: "Teknisi", sortable: true, accessor: (r) => `${r.teknisi_nama ?? "\uffff"}|${r.tanggal}|${r.jenis}`,
+      cell: (r) => r.teknisi_nama ?? <span className="text-muted-foreground">belum ditugaskan</span> },
     { id: "tanggal", header: "Tanggal", sortable: true, accessor: (r) => r.tanggal,
       cell: (r) => (
         <span className={r.terlambat ? "font-semibold text-destructive" : ""}>
@@ -149,27 +161,26 @@ function TabJadwal({ query, filter }: { query: string; filter: ReactNode }) {
         </span>
       ) },
     { id: "jenis", header: "Jenis", sortable: true, accessor: (r) => r.jenis, cell: (r) => <Badge variant="outline">{r.jenis}</Badge> },
-    { id: "teknisi", header: "Teknisi", sortable: true, accessor: (r) => r.teknisi_nama ?? "", cell: (r) => r.teknisi_nama ?? <span className="text-muted-foreground">belum ditugaskan</span> },
     { id: "faskes", header: "Faskes", accessor: (r) => r.faskes ?? "", cell: (r) => r.faskes ?? "—" },
     { id: "alat", header: "Alat / keluhan", accessor: (r) => r.alat ?? "", cell: (r) => <span className="text-muted-foreground">{r.alat ?? "—"}</span> },
     { id: "status", header: "Status", accessor: (r) => r.status },
   ];
 
   if (err) return <p role="alert" className="text-destructive text-sm">{err}</p>;
-  const terlambat = rows?.filter((r) => r.terlambat).length ?? 0;
-  return (
-    <div className="space-y-3">
-      {terlambat > 0 && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
-          {terlambat} jadwal sudah lewat tanggal tapi belum selesai — ikut ditampilkan di atas rentang yang dipilih.
-        </p>
-      )}
-      {rows === null ? <p className="text-muted-foreground text-sm">Memuat…</p> : (
-        <DataTable columns={kolom} data={rows} getKey={(r) => `${r.jenis}-${r.ref_id}`} pageSize={20}
-          initialSort={{ id: "tanggal", dir: "asc" }} searchPlaceholder="Cari faskes / alat…" toolbar={filter}
-          empty="Tidak ada jadwal di rentang ini." />
-      )}
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-3">
+      {filter}
+      <Button size="sm" variant={lihatTunggakan ? "default" : "outline"} disabled={tunggakan === 0}
+        onClick={() => setLihatTunggakan((v) => !v)} aria-pressed={lihatTunggakan}
+        title="Jadwal sebelum rentang yang dipilih dan belum selesai">
+        {lihatTunggakan ? "Sembunyikan tunggakan" : `Tunggakan (${tunggakan})`}
+      </Button>
     </div>
+  );
+  return tampil === null ? <p className="text-muted-foreground text-sm">Memuat…</p> : (
+    <DataTable columns={kolom} data={tampil} getKey={(r) => `${r.jenis}-${r.ref_id}`} pageSize={20}
+      initialSort={{ id: "teknisi", dir: "asc" }} searchPlaceholder="Cari teknisi / faskes / alat…" toolbar={toolbar}
+      empty={lihatTunggakan ? "Tidak ada jadwal." : "Tidak ada jadwal di rentang ini."} />
   );
 }
 
