@@ -16,10 +16,13 @@ export const dynamic = "force-dynamic";
 // pun — termasuk yang tak punya grup — bisa membaca stok seluruh gudang lewat
 // curl walau menunya tertutup. `warehouses` hanya master gudang cabang dan
 // dipakai kedua menu, jadi cukup salah satu izin.
+//
+// F19: /forecast-submission/config juga membaca `warehouses` + `branch`
+// (pencarian SKU), jadi izin menu itu ikut diterima.
 const MENU_PER_SEGMEN: Record<string, string[]> = {
-  branch: ["/stok-gudang"],
+  branch: ["/stok-gudang", "/forecast-submission"],
   batch: ["/ed-watch"],
-  warehouses: ["/stok-gudang", "/ed-watch"],
+  warehouses: ["/stok-gudang", "/ed-watch", "/forecast-submission"],
 };
 
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
