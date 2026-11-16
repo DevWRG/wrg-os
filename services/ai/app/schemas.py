@@ -270,6 +270,24 @@ class LeaveDetectResponse(BaseModel):
     dry_run: bool = False
 
 
+class AduanGaRequest(BaseModel):
+    # Helpdesk GA — pilah pesan grup WA "Aduan GA" (repo/ga-aduan-wa.ts).
+    pesan: List[Dict[str, Any]]  # {ref, waktu, pengirim, staf_ga, isi}
+    konteks: List[Dict[str, Any]] = Field(default_factory=list)
+    tiket: List[Dict[str, Any]] = Field(default_factory=list)  # {no, status, dibuka, pelapor, judul}
+    kategori: List[str] = Field(default_factory=list)
+    dry_run: bool = False
+
+
+class AduanGaResponse(BaseModel):
+    aksi: List[Dict[str, Any]] = Field(default_factory=list)
+    model: str = "dry-run"
+    dry_run: bool = False
+    parse_gagal: bool = False
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+
+
 # === extract_competitor (ekstrak sebutan kompetitor dari activity_log.hasil) ===
 
 
