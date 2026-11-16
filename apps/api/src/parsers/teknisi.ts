@@ -449,7 +449,6 @@ export function fmtDurasi(menit: number | null | undefined): string | null {
 
 export const CONTOH_START_TEKNISI = [
   "#START 1",
-  "(kirim sebagai caption foto Geo-Tagging Camera di lokasi — sama seperti foto kunjungan AM)",
   "",
   "beberapa pekerjaan sekaligus: #START 1, 2",
   "semua pekerjaan di satu faskes: #START RSUD Trenggalek",
@@ -459,25 +458,24 @@ export const CONTOH_START_TEKNISI = [
 export function balasanStartTeknisi(input: {
   nama: string;
   jam: string;
-  mulai: { urut: number; diLuarPlan: boolean; berlokasi: boolean }[];
+  mulai: { urut: number; diLuarPlan: boolean; berlokasi?: boolean }[];
   ditolak: { urut: number; alasan: string }[];
   /** Pesan umum (mis. faskes tak ada di plan hari ini). */
   pesan?: string[];
 }): string {
+  // Bukti lokasi diambil dari foto REPORT (keputusan user 16 Nov 2026), jadi balasan start
+  // tidak menilai lokasi — cukup jam mulai + nomor pekerjaan.
   const baris: string[] = [];
   for (const p of input.pesan ?? []) baris.push(`⚠️ ${p}`);
   if (input.mulai.length) {
     baris.push(`▶️ Mulai tercatat ${input.jam}, ${input.nama}`);
-    for (const m of input.mulai) {
-      baris.push(`No. ${m.urut}${m.diLuarPlan ? " (di luar plan)" : ""} · ${m.berlokasi ? "📍 lokasi tercatat" : "⚠️ tanpa lokasi"}`);
-    }
+    const biasa = input.mulai.filter((m) => !m.diLuarPlan).map((m) => m.urut);
+    if (biasa.length) baris.push(`No. ${biasa.join(", ")}`);
+    for (const m of input.mulai.filter((x) => x.diLuarPlan)) baris.push(`No. ${m.urut} (di luar plan)`);
   }
   for (const d of input.ditolak) baris.push(`⚠️ No. ${d.urut}: ${d.alasan}`);
-  if (input.mulai.some((m) => !m.berlokasi)) {
-    baris.push("", "Supaya lokasi tercatat, kirim foto Geo-Tagging Camera (seperti foto kunjungan AM) dengan caption #START (nomor atau nama faskes).");
-  }
   const lapor = input.mulai.map((m) => m.urut);
-  if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")}`);
+  if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")} + foto Geo-Tagging Camera`);
   return baris.join("\n");
 }
 
@@ -559,6 +557,8 @@ export function balasanReportTeknisi(input: {
     tanpaStart?: boolean;
   }[];
   foto?: number;
+  /** Bukti lokasi dari foto report: ada geotag / ada foto tanpa geotag / belum ada foto. */
+  lokasi?: "ada" | "tanpa-geotag" | "tanpa-foto";
 }): string {
   const n = input.alat.length;
   const baris = [`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`];
@@ -573,6 +573,9 @@ export function balasanReportTeknisi(input: {
     if (a.efek) baris.push(`   ↳ ${a.efek}`);
   }
   if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);
+  if (input.lokasi === "ada") baris.push("📍 lokasi tercatat");
+  else if (input.lokasi === "tanpa-geotag") baris.push("⚠️ foto tanpa geotag — pakai Geo-Tagging Camera supaya lokasi tercatat");
+  else if (input.lokasi === "tanpa-foto") baris.push("📷 kirim foto Geo-Tagging Camera kunjungan ini (boleh menyusul)");
   return baris.join("\n");
 }
 

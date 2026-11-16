@@ -36,18 +36,21 @@ test("fmtDurasi", () => {
   assert.equal(fmtDurasi(-3), null);
 });
 
-test("balasan #START: ringkas, tanda lokasi, ajakan foto bila tanpa lokasi", () => {
+test("balasan #START: ringkas, tanpa penilaian lokasi (lokasi dari foto report)", () => {
   const t = balasanStartTeknisi({
     nama: "Budi", jam: "09:05",
-    mulai: [{ urut: 1, diLuarPlan: false, berlokasi: true }, { urut: 51, diLuarPlan: true, berlokasi: false }],
+    mulai: [{ urut: 1, diLuarPlan: false }, { urut: 2, diLuarPlan: false }, { urut: 51, diLuarPlan: true }],
     ditolak: [{ urut: 3, alasan: "tak ada di #PLAN hari ini" }],
   });
-  assert.match(t, /^▶️ Mulai tercatat 09:05, Budi\nNo\. 1 · 📍 lokasi tercatat\nNo\. 51 \(di luar plan\) · ⚠️ tanpa lokasi/);
-  assert.match(t, /⚠️ No\. 3: tak ada di #PLAN hari ini/);
-  assert.match(t, /kirim foto Geo-Tagging Camera \(seperti foto kunjungan AM\) dengan caption #START \(nomor atau nama faskes\)/);
-  assert.match(t, /Selesai → #REPORT 1 \/ 51$/);
-  const semuaLokasi = balasanStartTeknisi({ nama: "Budi", jam: "09:05", mulai: [{ urut: 1, diLuarPlan: false, berlokasi: true }], ditolak: [] });
-  assert.doesNotMatch(semuaLokasi, /Geo-Tagging Camera/);
+  assert.equal(t, [
+    "▶️ Mulai tercatat 09:05, Budi",
+    "No. 1, 2",
+    "No. 51 (di luar plan)",
+    "⚠️ No. 3: tak ada di #PLAN hari ini",
+    "",
+    "Selesai → #REPORT 1 / 2 / 51 + foto Geo-Tagging Camera",
+  ].join("\n"));
+  assert.doesNotMatch(t, /tanpa lokasi|lokasi tercatat/);
 });
 
 test("balasan report: durasi & tanda tanpa #START", () => {
@@ -78,4 +81,12 @@ test("#START <nama faskes> → semua pekerjaan di faskes itu", () => {
 test("balasan #START: pesan umum (faskes tak ada di plan)", () => {
   const t = balasanStartTeknisi({ nama: "Budi", jam: "09:05", mulai: [], ditolak: [], pesan: ['Tak ada #PLAN hari ini untuk "RS X".'] });
   assert.equal(t, '⚠️ Tak ada #PLAN hari ini untuk "RS X".');
+});
+
+test("balasan report: tanda lokasi dari foto report", () => {
+  const alat = [{ nomor: 1, alatLabel: "EXC200", sn: null, jenis: "PM", status: "Selesai", alasan: null, masalah: null }];
+  assert.match(balasanReportTeknisi({ faskes: "RS A", alat, foto: 2, lokasi: "ada" }), /📷 2 foto terlampir\n📍 lokasi tercatat$/);
+  assert.match(balasanReportTeknisi({ faskes: "RS A", alat, foto: 1, lokasi: "tanpa-geotag" }), /⚠️ foto tanpa geotag — pakai Geo-Tagging Camera/);
+  assert.match(balasanReportTeknisi({ faskes: "RS A", alat, lokasi: "tanpa-foto" }), /📷 kirim foto Geo-Tagging Camera kunjungan ini \(boleh menyusul\)$/);
+  assert.doesNotMatch(balasanReportTeknisi({ faskes: "RS A", alat }), /lokasi|Geo-Tagging/);
 });

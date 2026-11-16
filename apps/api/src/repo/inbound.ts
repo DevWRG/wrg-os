@@ -609,7 +609,7 @@ async function handleTeknisiPlanReport(
     pengirim: { groupJid: row.group_jid, senderName: row.sender_name },
   });
   if (r.duplikat) return { skipped: "teknisi-report-duplikat", am_id: am.am_id, mode: "teknisi" };
-  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto });
+  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto, lokasi: r.lokasi });
   const peringatan = buildPeringatanTanggal(tanggal, String(tgl_pesan));
   if (peringatan) body += peringatan;
   const reply = await sendViaWaGateway(target, body);
@@ -1601,8 +1601,8 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
   }
 
   // F175 #START — jam mulai pekerjaan teknisi (waktu servis = #REPORT − #START). Hanya role
-  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM)
-  // (caption #START n, atau foto terpisah ±10 menit) → koordinat hasil OCR wa-bridge.
+  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi diambil dari foto #REPORT (325);
+  // foto yang kebetulan dikirim saat #START (caption / ±10 menit) disimpan sebagai cadangan.
   if (kind === "start") {
     if (!teknisiPlanReportAktif()) return finish({ skipped: "teknisi-start-off" });
     const tek = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });

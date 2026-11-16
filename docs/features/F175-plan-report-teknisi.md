@@ -201,15 +201,17 @@ Alur: `#PLAN` → `#START n` (jam mulai) → `#REPORT n` (jam selesai). **Waktu 
 Untuk Service bertiket: SLA respon = tiket masuk → #START, SLA selesai = tiket masuk → #REPORT (`teknisi_kerja_v`).
 
 ```
-#START 1                          ← kirim sebagai caption foto Geo-Tagging Camera di lokasi — sama seperti foto kunjungan AM
+#START 1                          ← jam mulai (lokasi dibuktikan lewat foto saat #REPORT)
 #START 1, 2                       ← beberapa pekerjaan sekaligus
 #START RS Al Irsyad | DxH 560 | Service   ← kerja di luar plan → item baru No. 51, 52, …
 ```
 
 - `#START <nama faskes>` (mis. `#START RSUD Trenggalek`) = mulai SEMUA pekerjaan di plan hari ini untuk faskes itu yang belum di-start; faskes tak ada di plan → bot memberi format kerja di luar plan.
-- **Bukti lokasi** = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM); koordinat dibaca dari OCR wa-bridge (`wa_message.geo_lat/geo_lon/geo_address`).
-  Foto boleh caption `#START n` atau dikirim terpisah ±10 menit sebelum/sesudah teks. Tanpa foto/cap lokasi → start
-  tetap diterima, ditandai **tanpa lokasi**.
+- **Bukti lokasi** = foto **#REPORT** ber-geotag (Geo-Tagging Camera, pola foto kunjungan AM; revisi user 16 Nov
+  2026 — semula di #START). Koordinat dari OCR wa-bridge (`wa_message.geo_*`) lewat `teknisi_kunjungan_foto`: foto
+  ber-caption report, foto ≤30 menit sebelum report, dan foto susulan sesudahnya. Balasan #REPORT memberi tanda
+  `📍 lokasi tercatat` / `⚠️ foto tanpa geotag` / `📷 kirim foto … (boleh menyusul)`. #START tak menilai lokasi;
+  foto yang kebetulan dikirim saat #START dipakai sebagai cadangan (`teknisi_kerja_v.lokasi_sumber`, migrasi 325).
 - **Retensi:** foto start dihapus setelah `TEKNISI_FOTO_START_RETENSI_HARI` (default 30) oleh job
   `teknisi-foto-start-retensi`; koordinat & jam tetap. **Foto #REPORT disimpan permanen** (tak disentuh).
 - `#REPORT` tanpa `#START` → diterima, ditandai "tanpa #START" (waktu kerja tak terhitung).

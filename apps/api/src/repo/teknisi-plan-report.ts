@@ -234,7 +234,7 @@ export async function simpanReportTeknisi(input: {
   mediaPath: string | null;
   /** Untuk menjodohkan foto yang dikirim SEBELUM teks report (WA mengirimnya terpisah). */
   pengirim?: { groupJid: string; senderName: string | null } | null;
-}): Promise<{ duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number }> {
+}): Promise<{ duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number; lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" }> {
   const sql = db();
   const { parse } = input;
   // Nama/SN alat BELI (installation_unit) ikut tampil di balasan, bukan hanya alat KSO.
@@ -357,6 +357,16 @@ export async function simpanReportTeknisi(input: {
   });
 
   const efek = hasil.kunjunganId ? await terapkanEfek(hasil.kunjunganId) : new Map<number, string>();
+  // Bukti lokasi = foto report ber-geotag (OCR Geo-Tagging Camera di wa-bridge → wa_message.geo_*).
+  // Foto susulan sesudah balasan ini tetap terhitung di teknisi_kerja_v (325).
+  let lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" = "tanpa-foto";
+  if (hasil.kunjunganId && hasil.foto > 0) {
+    const [g] = await sql`
+      SELECT bool_or(w.geo_lat IS NOT NULL AND w.geo_lon IS NOT NULL) AS ada
+      FROM teknisi_kunjungan_foto f JOIN wa_message w ON w.message_id = f.wa_message_id
+      WHERE f.kunjungan_id = ${hasil.kunjunganId}`;
+    lokasi = g?.ada ? "ada" : "tanpa-geotag";
+  }
   // Waktu kerja = jam report − jam #START item plan yang ditaut (alat tanpa start ditandai).
   const startPerPlan = new Map(plan.map((p) => [Number(p.id), p.started_at ? new Date(p.started_at as string) : null]));
   const selesai = input.receivedAt ? new Date(input.receivedAt) : new Date();
@@ -370,6 +380,7 @@ export async function simpanReportTeknisi(input: {
     duplikat: hasil.duplikat,
     faskes: faskesLabel,
     foto: hasil.foto,
+    lokasi,
     alat: baris.map((x) => ({
       nomor: x.b.nomor, alatLabel: x.label, sn: x.snTampil, jenis: x.jenis,
       status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah, efek: efek.get(x.b.nomor) ?? null,
