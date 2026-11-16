@@ -62,6 +62,7 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
     {
       id: "kategori",
       header: "Kategori",
+      className: "min-w-36 max-w-44 whitespace-normal",
       cell: (t) => <span>{t.category_icon ? `${t.category_icon} ` : ""}{t.category_nama}</span>,
     },
     {
@@ -72,14 +73,18 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
     {
       id: "status",
       header: "Status",
+      // Batas SLA digabung di sini (dulu kolom sendiri) supaya tabel muat
+      // tanpa geser ke samping — kolom Aksi sempat terpotong (16 Nov).
       cell: (t) => (
-        <div className="flex items-center gap-1.5">
-          <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>{STATUS_LABEL[t.status] ?? t.status}</Badge>
-          {t.sla_overdue && <Badge variant="destructive">Overdue</Badge>}
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>{STATUS_LABEL[t.status] ?? t.status}</Badge>
+            {t.sla_overdue && <Badge variant="destructive">Overdue</Badge>}
+          </div>
+          <div className="text-muted-foreground text-xs">SLA {fmt(t.sla_due_at)}</div>
         </div>
       ),
     },
-    { id: "sla", header: "Batas SLA", cell: (t) => fmt(t.sla_due_at) },
     {
       id: "assignee",
       header: "Assignee",
@@ -89,8 +94,7 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       id: "aksi",
       header: "Aksi",
       align: "right",
-      // Stepper 5 status + Batalkan: tanpa lebar minimum tombolnya menumpuk satu per baris.
-      className: "min-w-80 whitespace-normal",
+
       cell: (t) => (
         <div className="flex items-center justify-end gap-1">
           <GaTicketTransitionActions ticketId={t.id} status={t.status} />

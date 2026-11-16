@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ChevronDown } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useConfirm } from "@/components/ui/use-confirm";
 
 // Cermin TRANSITIONS di apps/api/src/repo/ga-helpdesk.ts — jaga sinkron kalau
@@ -17,24 +22,20 @@ const TRANSITIONS: Record<string, string[]> = {
   cancelled: [],
 };
 
-// Pipeline utama (tanpa cancelled — itu aksi terpisah, destructive).
-const PIPELINE: { status: string; label: string }[] = [
-  { status: "open", label: "Open" },
-  { status: "in_progress", label: "In Progress" },
-  { status: "waiting", label: "Waiting" },
-  { status: "completed", label: "Completed" },
-  { status: "closed", label: "Closed" },
-];
+const LABEL: Record<string, string> = {
+  open: "Open", in_progress: "In Progress", waiting: "Waiting", completed: "Completed", closed: "Closed",
+};
 
-// Stepper status — SEMUA status pipeline selalu tampil sbg button (bukan
-// cuma "next step" saja): status SEKARANG aktif (filled+disabled), status yg
-// valid ditransisikan LANGSUNG dari sini bisa diklik, sisanya disabled abu-abu.
-// "Batalkan" dipisah sbg aksi destructive sendiri (bukan bagian pipeline linear).
+// Satu tombol "Status ▾" berisi transisi yang sah saja. Dulu stepper 5
+// status + Batalkan selalu tampil — di tabel /ga-helpdesk kolom Aksi jadi
+// terlalu lebar dan terpotong di kanan (laporan user 16 Nov). Status sekarang
+// sudah tampil di kolom Status, jadi tak perlu diulang di sini.
 export function GaTicketTransitionActions({ ticketId, status }: { ticketId: string; status: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const { confirm, dialog } = useConfirm();
   const validNext = TRANSITIONS[status] ?? [];
+  const maju = validNext.filter((s) => s !== "cancelled");
   const canCancel = validNext.includes("cancelled");
 
   async function act(to: string) {
@@ -54,51 +55,38 @@ export function GaTicketTransitionActions({ ticketId, status }: { ticketId: stri
     }
   }
 
-  // Tiket cancelled — di luar pipeline linear, cuma tampilkan badge-statis via Button disabled.
-  if (status === "cancelled") {
-    return (
-      <div className="flex justify-end gap-1">
-        <Button size="sm" variant="destructive" disabled>Cancelled</Button>
-      </div>
-    );
-  }
+  // closed / cancelled — status akhir, tak ada aksi.
+  if (validNext.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap justify-end gap-1">
+    <>
       {dialog}
-      {PIPELINE.map((s) => {
-        const isCurrent = s.status === status;
-        const isClickable = !isCurrent && validNext.includes(s.status);
-        return (
-          <Button
-            key={s.status}
-            size="sm"
-            variant={isCurrent ? "default" : isClickable ? "outline" : "ghost"}
-            disabled={busy || (!isCurrent && !isClickable)}
-            aria-current={isCurrent ? "step" : undefined}
-            onClick={isClickable ? () => act(s.status) : undefined}
-            className={!isCurrent && !isClickable ? "opacity-40" : undefined}
-          >
-            {s.label}
-          </Button>
-        );
-      })}
-      {canCancel && (
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={busy}
-          className="text-danger hover:text-danger"
-          onClick={() =>
-            confirm(
-              { title: "Batalkan tiket?", description: "Tiket akan ditutup sbg cancelled.", destructive: true, confirmLabel: "Batalkan" },
-              () => act("cancelled"),
-            )
-          }
-        >
-          Batalkan
-        </Button>
-      )}
-    </div>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button size="sm" variant="outline" disabled={busy} />}>
+          Status <ChevronDown className="size-3.5" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          {maju.map((s) => (
+            <DropdownMenuItem key={s} onClick={() => act(s)}>
+              {LABEL[s] ?? s}
+            </DropdownMenuItem>
+          ))}
+          {canCancel && maju.length > 0 && <DropdownMenuSeparator />}
+          {canCancel && (
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() =>
+                confirm(
+                  { title: "Batalkan tiket?", description: "Tiket akan ditutup sbg cancelled.", destructive: true, confirmLabel: "Batalkan" },
+                  () => act("cancelled"),
+                )
+              }
+            >
+              Batalkan
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
