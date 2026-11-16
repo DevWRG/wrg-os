@@ -1651,17 +1651,20 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       // blok / ekor SN). Tanpa kunjungan dalam jendela → jalur foto lama. Diam (tanpa
       // balasan): satu kunjungan bisa berbelas foto.
       if (teknisiPlanReportAktif() && isTeknisi(amp.role)) {
-        // Foto sesudah teks #START (bukti lokasi) didahulukan dari foto report.
-        const fs = await tempelFotoStart({
-          teknisiId: amp.am_id, mediaPath: row.media_path, receivedAt: row.received_at,
-          geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
-        });
-        if (fs) return finish({ via: amp.via, mode: "teknisi-start-foto", ...fs }, "photo");
+        // Bukti lokasi diambil dari foto REPORT (325, keputusan user 16 Nov 2026), jadi foto susulan
+        // ditautkan ke kunjungan #REPORT terakhir dulu (caption = nomor blok / ekor SN). Baru bila tak ada
+        // report dalam jendela, foto dianggap foto #START. (Urutan lama "start dulu" salah menaut foto
+        // report No. 2 ke start No. 3 pada uji 16 Nov 15:43.)
         const tf = await tempelFotoTeknisi({
           teknisiId: amp.am_id, mediaPath: row.media_path, caption: row.body,
           waMessageId: row.message_id, receivedAt: row.received_at,
         });
         if (tf) return finish({ via: amp.via, mode: "teknisi", ...tf }, "photo");
+        const fs = await tempelFotoStart({
+          teknisiId: amp.am_id, mediaPath: row.media_path, receivedAt: row.received_at,
+          geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
+        });
+        if (fs) return finish({ via: amp.via, mode: "teknisi-start-foto", ...fs }, "photo");
       }
       const r = await photoFollowup(row, amp);
       return finish({ via: amp.via, ...r }, "photo");
