@@ -206,6 +206,7 @@ Untuk Service bertiket: SLA respon = tiket masuk → #START, SLA selesai = tiket
 #START RS Al Irsyad | DxH 560 | Service   ← kerja di luar plan → item baru No. 51, 52, …
 ```
 
+- `#START <nama faskes>` (mis. `#START RSUD Trenggalek`) = mulai SEMUA pekerjaan di plan hari ini untuk faskes itu yang belum di-start; faskes tak ada di plan → bot memberi format kerja di luar plan.
 - **Bukti lokasi** = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM); koordinat dibaca dari OCR wa-bridge (`wa_message.geo_lat/geo_lon/geo_address`).
   Foto boleh caption `#START n` atau dikirim terpisah ±10 menit sebelum/sesudah teks. Tanpa foto/cap lokasi → start
   tetap diterima, ditandai **tanpa lokasi**.

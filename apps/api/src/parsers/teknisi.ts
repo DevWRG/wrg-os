@@ -388,6 +388,8 @@ export interface TeknisiStartParse {
   nomor: number[];
   /** Kerja di luar plan: `#START RS A | SN 0832 | Service` → item plan baru. */
   baru: Omit<TeknisiPlanItem, "urut"> | null;
+  /** `#START RSUD Trenggalek` → semua item plan hari ini untuk faskes itu yang belum di-start. */
+  faskes: string | null;
   errors: string[];
 }
 
@@ -397,7 +399,7 @@ const LABEL_FASKES = /^\s*(rs|faskes|customer|cust)\s*:\s*/i;
 export function parseTeknisiStart(body: string): TeknisiStartParse {
   const lines = barisPesan(body);
   const h = lines.findIndex((l) => START_LINE.test(l));
-  const out: TeknisiStartParse = { nomor: [], baru: null, errors: [] };
+  const out: TeknisiStartParse = { nomor: [], baru: null, faskes: null, errors: [] };
   if (h < 0) return out;
   // Isi = sisa baris hashtag; kalau kosong, baris berisi pertama sesudahnya.
   let isi = lines[h].replace(START_LINE, "").trim();
@@ -421,13 +423,19 @@ export function parseTeknisiStart(body: string): TeknisiStartParse {
     out.baru = { faskes: seg[0], sn, alat, jenis, tiket };
     return out;
   }
-  // Hanya nomor (pemisah koma/spasi/"dan"); kata lain = format salah, bukan ditebak.
+  // Nomor (pemisah koma/spasi/"dan") → item plan; selain itu dibaca sebagai NAMA FASKES
+  // (semua item plan hari ini di faskes itu). Pencocokan faskes dilakukan di repo.
   const sisa = isi.replace(/\b(no|nomor|dan)\b\.?/gi, " ").replace(/[#,;&+]/g, " ").trim();
-  if (!/^\d{1,2}(\s+\d{1,2})*$/.test(sisa)) {
-    out.errors.push("Tulis nomor plan, mis. `#START 1` atau `#START 1, 2`. Pekerjaan di luar plan: `#START RS | SN/alat | jenis`.");
+  if (/^\d{1,2}(\s+\d{1,2})*$/.test(sisa)) {
+    out.nomor = [...new Set(sisa.split(/\s+/).map(Number))];
     return out;
   }
-  out.nomor = [...new Set(sisa.split(/\s+/).map(Number))];
+  const faskes = isi.replace(LABEL_FASKES, "").trim();
+  if (!/[A-Za-z]{2,}/.test(faskes)) {
+    out.errors.push("Tulis nomor plan (`#START 1`), nama faskes (`#START RSUD Trenggalek`), atau pekerjaan di luar plan (`#START RS | SN/alat | jenis`).");
+    return out;
+  }
+  out.faskes = faskes;
   return out;
 }
 
@@ -444,6 +452,7 @@ export const CONTOH_START_TEKNISI = [
   "(kirim sebagai caption foto Geo-Tagging Camera di lokasi — sama seperti foto kunjungan AM)",
   "",
   "beberapa pekerjaan sekaligus: #START 1, 2",
+  "semua pekerjaan di satu faskes: #START RSUD Trenggalek",
   "pekerjaan di luar plan: #START RS Al Irsyad | DxH 560 | Service",
 ].join("\n");
 
@@ -452,8 +461,11 @@ export function balasanStartTeknisi(input: {
   jam: string;
   mulai: { urut: number; diLuarPlan: boolean; berlokasi: boolean }[];
   ditolak: { urut: number; alasan: string }[];
+  /** Pesan umum (mis. faskes tak ada di plan hari ini). */
+  pesan?: string[];
 }): string {
   const baris: string[] = [];
+  for (const p of input.pesan ?? []) baris.push(`⚠️ ${p}`);
   if (input.mulai.length) {
     baris.push(`▶️ Mulai tercatat ${input.jam}, ${input.nama}`);
     for (const m of input.mulai) {
@@ -462,7 +474,7 @@ export function balasanStartTeknisi(input: {
   }
   for (const d of input.ditolak) baris.push(`⚠️ No. ${d.urut}: ${d.alasan}`);
   if (input.mulai.some((m) => !m.berlokasi)) {
-    baris.push("", "Supaya lokasi tercatat, kirim foto Geo-Tagging Camera (seperti foto kunjungan AM) dengan caption #START nomornya.");
+    baris.push("", "Supaya lokasi tercatat, kirim foto Geo-Tagging Camera (seperti foto kunjungan AM) dengan caption #START (nomor atau nama faskes).");
   }
   const lapor = input.mulai.map((m) => m.urut);
   if (lapor.length) baris.push("", `Selesai → #REPORT ${lapor.join(" / ")}`);

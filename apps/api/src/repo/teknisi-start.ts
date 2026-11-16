@@ -41,6 +41,7 @@ export interface HasilStart {
   jam: string;
   mulai: { urut: number; diLuarPlan: boolean; berlokasi: boolean }[];
   ditolak: { urut: number; alasan: string }[];
+  pesan: string[];
 }
 
 export async function simpanStartTeknisi(input: {
@@ -83,7 +84,7 @@ export async function simpanStartTeknisi(input: {
     }
   }
 
-  const out: HasilStart = { jam: jamWib(mulaiAt), mulai: [], ditolak: [] };
+  const out: HasilStart = { jam: jamWib(mulaiAt), mulai: [], ditolak: [], pesan: [] };
   const kolomStart = {
     started_at: mulaiAt, start_wa_message_id: input.waMessageId, start_group_jid: input.groupJid,
     start_lat: geo?.lat ?? null, start_lon: geo?.lon ?? null, start_geo_ts: geo?.ts ?? null,
@@ -117,7 +118,28 @@ export async function simpanStartTeknisi(input: {
     return out;
   }
 
-  for (const n of input.parse.nomor) {
+  let nomor = input.parse.nomor;
+  if (input.parse.faskes) {
+    // #START <faskes> → semua item plan hari ini di faskes itu (account_id, atau tulisan faskes yang sama).
+    const acc = await accountIdDariTulisan(input.parse.faskes);
+    const kunci = (t: unknown) => String(t ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const items = await sql`
+      SELECT urut, account_id, faskes_teks, started_at, reported_at FROM teknisi_plan_item
+      WHERE teknisi_id = ${input.teknisiId} AND tanggal = ${input.tanggal} ORDER BY urut`;
+    const cocok = items.filter((p) =>
+      (acc != null && p.account_id != null && Number(p.account_id) === acc) || kunci(p.faskes_teks) === kunci(input.parse.faskes));
+    if (cocok.length === 0) {
+      out.pesan.push(`Tak ada #PLAN hari ini untuk "${input.parse.faskes}". Kerja di luar plan: #START ${input.parse.faskes} | SN/alat | jenis`);
+      return out;
+    }
+    const terbuka = cocok.filter((p) => !p.started_at && !p.reported_at);
+    if (terbuka.length === 0) {
+      out.pesan.push(`Semua pekerjaan di "${input.parse.faskes}" hari ini sudah dimulai/dilaporkan.`);
+      return out;
+    }
+    nomor = terbuka.map((p) => Number(p.urut));
+  }
+  for (const n of nomor) {
     const [p] = await sql`
       SELECT id, started_at, reported_at FROM teknisi_plan_item
       WHERE teknisi_id = ${input.teknisiId} AND tanggal = ${input.tanggal} AND urut = ${n}`;
