@@ -79,6 +79,7 @@ import { canViewAuditFindings } from "@/lib/audit-finding-access";
 import { canViewOvertime } from "@/lib/overtime-access";
 import { canViewKasStation } from "@/lib/kas-station-access";
 import { canViewKinerjaTeknisi } from "@/lib/kinerja-teknisi-access";
+import { canViewRiwayatAlat } from "@/lib/riwayat-alat-access";
 import { canViewBuktiPembayaran } from "@/lib/bukti-pembayaran-access";
 import { canViewProfitabilitasArea } from "@/lib/profitabilitas-area-access";
 import { canViewHppKonversi, FITUR_HPP_KONVERSI } from "@/lib/hpp-konversi-access";
@@ -376,6 +377,9 @@ export const NAV: NavGroup[] = [
       // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
       { title: "Kinerja Teknisi", url: "/kinerja-teknisi", icon: Gauge, badge: "NEW", show: canViewKinerjaTeknisi,
         features: [{ key: "kinerja-teknisi-semua", name: "Kinerja Teknisi — lihat semua teknisi" }] },
+      // F176 Riwayat Alat — riwayat PM/servis per alat (SN), ikut alat ke faskes mana pun. Kunci "riwayat-alat":
+      // pemegangnya melihat SEMUA alat; default tertutup, fallback direktur/admin/superuser.
+      { title: "Riwayat Alat", url: "/riwayat-alat", icon: History, badge: "NEW", show: canViewRiwayatAlat },
     ],
   },
   {
