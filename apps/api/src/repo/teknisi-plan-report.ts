@@ -266,7 +266,11 @@ export async function simpanReportTeknisi(input: {
     let label: string | null = p ? (p.asset_nama ?? p.alat_teks ?? p.sn_teks ?? null) : null;
     let snTampil: string | null = p ? (p.asset_sn ?? p.sn_teks ?? null) : null;
     let planId: number | null = p ? Number(p.id) : null;
-    const accBlok = acc ?? (p?.account_id != null ? Number(p.account_id) : null);
+    // Faskes di judul blok (format #PLAN "RS A | SN | jenis") didahulukan dari `RS:` kunjungan.
+    const accJudul = b.faskes ? await accountIdDariTulisan(b.faskes) : null;
+    if (b.faskes && !accJudul) masalah.push(`faskes "${b.faskes}" tak dikenali`);
+    const accBlok = accJudul ?? acc ?? (p?.account_id != null ? Number(p.account_id) : null);
+    if (!faskesLabel && b.faskes) faskesLabel = b.faskes;
     if (!faskesLabel && p) faskesLabel = String(p.faskes_teks);
 
     if (b.sn || b.alat) {
@@ -298,7 +302,10 @@ export async function simpanReportTeknisi(input: {
     }
     baris.push({
       b, planId, assetId, unitId, label, snTampil,
-      jenis: (b.jenis ?? (p?.jenis as JenisTeknisi | undefined) ?? null) as JenisTeknisi | null,
+      // Jenis: tulisan blok > plan via nomor > plan yang tertaut otomatis lewat SN/alat.
+      jenis: (b.jenis ?? (p?.jenis as JenisTeknisi | undefined)
+        ?? (planId ? (plan.find((x) => Number(x.id) === planId)?.jenis as JenisTeknisi | undefined) : undefined)
+        ?? null) as JenisTeknisi | null,
       masalah: masalah.length ? masalah.join("; ") : null,
     });
   }
