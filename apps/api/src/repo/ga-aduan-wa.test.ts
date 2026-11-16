@@ -73,6 +73,21 @@ test("putusan ragu: status tak diubah (komentar), aduan ragu diabaikan", () => {
   assert.equal(r.get("M2")?.op, "abaikan");
 });
 
+test("pelapor membatalkan permintaan; batal ragu cukup komentar", () => {
+  const r = rencanakan(
+    [pesan("M1", false), pesan("M2", false), pesan("M3", false)],
+    [aksi("M1", "aduan_baru"), aksi("M2", "batal", { tiket: "M1" }), aksi("M3", "batal", { tiket: "TKT-1", yakin: 0.3 })],
+    new Set(["TKT-1"]),
+  );
+  assert.deepEqual(r.get("M2"), { op: "batal", target: { ref: "M1" } });
+  assert.equal(r.get("M3")?.op, "komentar");
+});
+
+test("pesan staf GA tidak pernah membuka tiket baru", () => {
+  const r = rencanakan([pesan("M1", true)], [aksi("M1", "aduan_baru")], new Set());
+  assert.equal(r.get("M1")?.op, "abaikan");
+});
+
 test("pesan yang tak diputus LLM ditandai tanpa-putusan", () => {
   const r = rencanakan([pesan("M1", false)], [], new Set());
   assert.equal(r.get("M1")?.op, "tanpa-putusan");

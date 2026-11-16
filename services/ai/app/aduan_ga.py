@@ -10,7 +10,7 @@ hanya membangun prompt dan memvalidasi keluaran LLM.
 import json
 from typing import Any, Dict, List, Optional
 
-JENIS = ("aduan_baru", "progres", "selesai", "komentar", "abaikan")
+JENIS = ("aduan_baru", "progres", "selesai", "batal", "komentar", "abaikan")
 PRIORITAS = ("low", "medium", "high", "critical")
 
 
@@ -26,16 +26,22 @@ def build_aduan_system(kategori: List[str]) -> str:
         "- aduan_baru: laporan kendala atau permintaan tolong yang BELUM tercatat di daftar tiket "
         "terbuka maupun di pesan baru sebelumnya. Permintaan rutin yang diulang di hari lain "
         "(mis. \"hari ini minta tolong ke bank\" lagi) = aduan_baru tersendiri.\n"
-        "- progres: balasan [GA] yang menyanggupi, sedang/akan mengerjakan, menunggu vendor/dana, "
-        "atau memberi kabar perkembangan (\"ya mbak\", \"tak sampaikan ke vendor\", \"teknisi OTW\").\n"
-        "- selesai: balasan [GA] yang menyatakan pekerjaan SUDAH beres (\"sudah diganti\", "
-        "\"sudah dicuci\", \"diterima satpam\"), ATAU pelapor mengonfirmasi masalahnya sudah teratasi "
-        "(\"wah iya nyala, terima kasih\"). Ucapan terima kasih atas JANJI yang belum dikerjakan "
-        "(\"makasih mas\" sesudah \"nanti saya ganti\") BUKAN selesai — itu abaikan.\n"
+        "- progres: balasan [GA] yang menyanggupi, sedang/akan mengerjakan, menunggu vendor/teknisi/dana, "
+        "atau memberi kabar perkembangan (\"tak sampaikan ke vendor\", \"teknisi OTW\", \"sudah dibuatkan "
+        "laporan, nanti teknisi datang\"). PENTING: jawaban singkat [GA] seperti \"ya mbak\", \"baik\", "
+        "\"oke siap\", \"siap mas\" yang menanggapi aduan/permintaan = progres untuk aduan itu, BUKAN abaikan.\n"
+        "- selesai: HANYA bila masalahnya SUDAH teratasi atau tugasnya SUDAH dikerjakan: balasan [GA] "
+        "(\"sudah diganti\", \"sudah dicuci\", \"diterima satpam\", \"sudah saya antar\") ATAU pelapor "
+        "mengonfirmasi sudah beres (\"wah iya nyala, terima kasih\"). Masih menunggu teknisi/vendor = progres. "
+        "Ucapan terima kasih atas JANJI yang belum dikerjakan (\"makasih mas\" sesudah \"nanti saya ganti\") "
+        "BUKAN selesai — itu abaikan.\n"
+        "- batal: pelapor menarik aduan/permintaannya (\"gajadi\", \"tidak usah\", \"sudah bisa sendiri\" "
+        "sebelum GA mengerjakan).\n"
         "- komentar: tambahan info atau tagihan kabar dari pelapor tentang tiket yang sudah ada "
         "(\"sudah ada update?\", \"dijadwalkan dulu saja\").\n"
-        "- abaikan: obrolan basa-basi, salam, \"oke\"/\"iya\" dari pelapor, pesan tanpa isi.\n\n"
-        "Untuk progres/selesai/komentar, isi \"tiket\" dengan nomor tiket terbuka (TKT-...) ATAU ref "
+        "- abaikan: obrolan basa-basi, salam, terima kasih, \"oke\"/\"iya\" dari pelapor, pesan tanpa isi, "
+        "<media:image> tanpa teks.\n\n"
+        "Untuk progres/selesai/batal/komentar, isi \"tiket\" dengan nomor tiket terbuka (TKT-...) ATAU ref "
         "pesan aduan_baru di kumpulan yang sama (mis. \"M2\"). Cocokkan lewat isi dan urutan: balasan "
         "GA biasanya menjawab aduan terakhir yang belum dijawab, atau menyebut barang/tempat yang sama. "
         "Kalau tidak yakin tiket mana, isi tiket=null dan beri yakin rendah.\n\n"
@@ -45,10 +51,11 @@ def build_aduan_system(kategori: List[str]) -> str:
         "prioritas (low|medium|high|critical; critical hanya bila mengancam barang/pasien, mis. "
         "cold storage mati).\n\n"
         "Kembalikan JSON SAJA (tanpa markdown):\n"
-        '{"aksi": [{"ref": "M1", "jenis": "aduan_baru|progres|selesai|komentar|abaikan", '
+        '{"aksi": [{"ref": "M1", "jenis": "aduan_baru|progres|selesai|batal|komentar|abaikan", '
         '"tiket": "TKT-2026-00012" | "M1" | null, "judul": str|null, "kategori": str|null, '
         '"lokasi": str|null, "prioritas": str|null, "yakin": 0.0-1.0}]}\n'
-        "Satu objek per pesan BARU, urut sesuai ref."
+        "Keluarkan SATU objek JSON saja dengan satu array \"aksi\" berisi satu entri per pesan BARU, "
+        "urut sesuai ref — jangan satu objek per baris."
     )
 
 
@@ -83,6 +90,35 @@ def _bersihkan_json(text: str) -> str:
     return cleaned
 
 
+def _muat_json(text: str) -> Any:
+    """json.loads, plus toleransi bentuk yang sering keluar dari flash-lite:
+    beberapa objek berturut-turut (JSON Lines, satu {"aksi": [...]} per baris).
+    Semua daftar "aksi" digabung. Gagal total → ValueError."""
+    cleaned = _bersihkan_json(text)
+    try:
+        return json.loads(cleaned)
+    except ValueError:
+        pass
+    dec = json.JSONDecoder()
+    i, gabung, ketemu = 0, [], False
+    while i < len(cleaned):
+        while i < len(cleaned) and cleaned[i] in " \t\r\n,":
+            i += 1
+        if i >= len(cleaned):
+            break
+        obj, i = dec.raw_decode(cleaned, i)
+        ketemu = True
+        if isinstance(obj, dict) and isinstance(obj.get("aksi"), list):
+            gabung.extend(obj["aksi"])
+        elif isinstance(obj, dict) and "ref" in obj:
+            gabung.append(obj)
+        elif isinstance(obj, list):
+            gabung.extend(obj)
+    if not ketemu:
+        raise ValueError("kosong")
+    return {"aksi": gabung}
+
+
 def _teks(v: Any, maks: int) -> Optional[str]:
     if v is None:
         return None
@@ -97,7 +133,7 @@ def parse_aduan(text: str, refs: List[str], kategori: List[str]) -> Optional[Lis
     apps/api membiarkannya untuk dipindai ulang.
     """
     try:
-        d = json.loads(_bersihkan_json(text))
+        d = _muat_json(text)
     except (ValueError, TypeError):
         return None
     daftar = d.get("aksi") if isinstance(d, dict) else d
