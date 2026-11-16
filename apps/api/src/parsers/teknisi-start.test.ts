@@ -23,7 +23,7 @@ test("#START di luar plan: RS | SN/alat | jenis (label RS: boleh)", () => {
 
 test("#START format salah → galat, bukan tebakan", () => {
   assert.ok(parseTeknisiStart("#START").errors.length);
-  assert.ok(parseTeknisiStart("#START RSUD Trenggalek").errors.length);
+  assert.ok(parseTeknisiStart("#START 12a").errors.length);
   assert.ok(parseTeknisiStart("#START RS A | 0832").errors.length);
   assert.match(parseTeknisiStart("#START RS A | 0832 | Bongkar").errors[0], /Jenis "Bongkar" tak dikenal/);
 });
@@ -44,7 +44,7 @@ test("balasan #START: ringkas, tanda lokasi, ajakan foto bila tanpa lokasi", () 
   });
   assert.match(t, /^▶️ Mulai tercatat 09:05, Budi\nNo\. 1 · 📍 lokasi tercatat\nNo\. 51 \(di luar plan\) · ⚠️ tanpa lokasi/);
   assert.match(t, /⚠️ No\. 3: tak ada di #PLAN hari ini/);
-  assert.match(t, /kirim foto Geo-Tagging Camera \(seperti foto kunjungan AM\) dengan caption #START/);
+  assert.match(t, /kirim foto Geo-Tagging Camera \(seperti foto kunjungan AM\) dengan caption #START \(nomor atau nama faskes\)/);
   assert.match(t, /Selesai → #REPORT 1 \/ 51$/);
   const semuaLokasi = balasanStartTeknisi({ nama: "Budi", jam: "09:05", mulai: [{ urut: 1, diLuarPlan: false, berlokasi: true }], ditolak: [] });
   assert.doesNotMatch(semuaLokasi, /Geo-Tagging Camera/);
@@ -64,4 +64,18 @@ test("balasan report: durasi & tanda tanpa #START", () => {
 
 test("format salah #START memuat contoh", () => {
   assert.match(balasanFormatSalah("start", "Budi", ["x"]), /Start teknisi belum tersimpan, Budi[\s\S]*#START 1/);
+});
+
+test("#START <nama faskes> → semua pekerjaan di faskes itu", () => {
+  const a = parseTeknisiStart("#START RSUD Trenggalek");
+  assert.deepEqual(a.errors, []);
+  assert.equal(a.faskes, "RSUD Trenggalek");
+  assert.deepEqual(a.nomor, []);
+  assert.equal(parseTeknisiStart("#START RS: RS Ujif175 Alfa").faskes, "RS Ujif175 Alfa");
+  assert.equal(parseTeknisiStart("#start\nPKM Bakunase").faskes, "PKM Bakunase");
+});
+
+test("balasan #START: pesan umum (faskes tak ada di plan)", () => {
+  const t = balasanStartTeknisi({ nama: "Budi", jam: "09:05", mulai: [], ditolak: [], pesan: ['Tak ada #PLAN hari ini untuk "RS X".'] });
+  assert.equal(t, '⚠️ Tak ada #PLAN hari ini untuk "RS X".');
 });

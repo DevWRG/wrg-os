@@ -1609,7 +1609,7 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     if (!tek) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
     if (!tek.aktif || !isTeknisi(tek.role)) return finish({ skipped: "bukan-teknisi", am_id: tek.am_id });
     const ps = parseTeknisiStart(row.body ?? "");
-    if (ps.errors.length || (!ps.baru && ps.nomor.length === 0)) {
+    if (ps.errors.length || (!ps.baru && !ps.faskes && ps.nomor.length === 0)) {
       const errors = ps.errors.length ? ps.errors : ["Tulis nomor plan, mis. `#START 1`."];
       const reply = await sendViaWaGateway(row.group_jid, balasanFormatSalah("start", tek.nama, errors));
       return finish({ error: "teknisi-start-format", errors, reply });
