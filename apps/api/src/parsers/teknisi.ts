@@ -438,8 +438,11 @@ export function parseTeknisiStart(body: string): TeknisiStartParse {
     out.nomor = [...new Set(sisa.split(/\s+/).map(Number))];
     return out;
   }
+  const berlabel = LABEL_FASKES.test(isi);
   const faskes = isi.replace(LABEL_FASKES, "").trim();
-  if (!/[A-Za-z]{2,}/.test(faskes)) {
+  // Tanpa label `RS:`, teks hanya dibaca sebagai faskes bila diawali RS/RSUD/PKM/Klinik/Lab/… — uji 16 Nov
+  // 2026: `#START besok saja` sempat dicari sebagai nama faskes.
+  if (!/[A-Za-z]{2,}/.test(faskes) || (!berlabel && !AWAL_FASKES.test(faskes))) {
     out.errors.push("Tulis nomor plan (`#START 1`), nama faskes (`#START RSUD Trenggalek`), atau pekerjaan di luar plan (`#START RS | SN/alat | jenis`).");
     return out;
   }
@@ -563,6 +566,8 @@ export function balasanReportTeknisi(input: {
     durasiMenit?: number | null;
     /** true = pekerjaan ini tak pernah di-#START (ditandai, tetap diterima). */
     tanpaStart?: boolean;
+    /** Item plan sudah di-#REPORT sebelumnya (ditandai, tetap diterima). */
+    sudahDilaporkan?: { planNo: number; jam: string } | null;
   }[];
   foto?: number;
   /** Bukti lokasi dari foto report: ada geotag / ada foto tanpa geotag / belum ada foto. */
@@ -576,7 +581,9 @@ export function balasanReportTeknisi(input: {
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
     const durasi = fmtDurasi(a.durasiMenit);
     const out = [`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`];
-    if (a.tanpaStart) out.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
+    if (a.sudahDilaporkan) {
+      out.push(`   ⚠️ No. ${a.sudahDilaporkan.planNo} sudah dilaporkan sebelumnya (${a.sudahDilaporkan.jam}) — dicatat sebagai laporan tambahan`);
+    } else if (a.tanpaStart) out.push("   ⚠️ tanpa #START — waktu kerja tak terhitung");
     if (a.masalah) out.push(`   ⚠️ perlu cek: ${a.masalah}`);
     if (a.efek) out.push(`   ↳ ${a.efek}`);
     return out;

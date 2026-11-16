@@ -14,6 +14,7 @@ import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { parseTeknisiPlan, parseTeknisiReport, parseTeknisiStart, balasanStartTeknisi, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
 import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi, tempelFotoTeknisi } from "./teknisi-plan-report.js";
 import { simpanStartTeknisi, tempelFotoStart } from "./teknisi-start.js";
+import { lampiranGagalAktif, peringatkanLampiranGagal, PENANDA_LAMPIRAN_GAGAL } from "./lampiran-gagal.js";
 import type { JenisTeknisi } from "../parsers/teknisi.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -2761,7 +2762,10 @@ export async function processUnprocessed(
                    AND k.received_at BETWEEN wa_message.received_at - make_interval(mins => ${KSO_JENDELA_MENIT})
                                          AND wa_message.received_at + make_interval(mins => ${KSO_JENDELA_MENIT})
                ))
-           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()}))
+           OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()})
+           -- Foto/lampiran gagal diunduh openclaw (tanpa hashtag pun) → pengirim diminta kirim ulang.
+           OR (${lampiranGagalAktif()} AND media_path IS NULL
+               AND strpos(lower(coalesce(body, '')), ${PENANDA_LAMPIRAN_GAGAL}) > 0))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
   const results: Record<string, unknown>[] = [];
@@ -2801,6 +2805,17 @@ export async function processUnprocessed(
       `;
       results.push({ id: String(r.id), kind: "error", error: pesan });
       continue;
+    }
+    // Teks pesannya sudah diproses jalur biasa; peringatan lampiran gagal menyusul (tak membatalkan apa pun).
+    try {
+      const lg = await peringatkanLampiranGagal(r as unknown as WaRow);
+      if (lg) {
+        await sql`UPDATE wa_message SET processed_result = coalesce(processed_result, '{}'::jsonb) || ${sql.json(lg as Parameters<typeof sql.json>[0])} WHERE id = ${r.id}`;
+        Object.assign(out, lg);
+        if ((lg.lampiran_gagal_reply as WaSendResult | undefined)?.sent) replied += 1;
+      }
+    } catch (e) {
+      console.error(`[inbound] peringatan lampiran gagal baris ${r.id}:`, (e as Error).message);
     }
     results.push(out);
     processed += 1;
