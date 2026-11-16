@@ -24,6 +24,7 @@ const LABEL_STATUS: Record<string, string> = {
   "aduan-baru": "Aduan baru",
   progres: "Progres",
   selesai: "Selesai",
+  batal: "Dibatalkan",
   komentar: "Komentar",
   abaikan: "Diabaikan",
   "tak-tertaut": "Tak tertaut ke tiket",

@@ -58,7 +58,7 @@ export type Target = { ticketNo: string } | { ref: string };
 
 export type Rencana =
   | { op: "buat"; aksi: AksiLlm }
-  | { op: "progres" | "selesai" | "komentar"; target: Target }
+  | { op: "progres" | "selesai" | "batal" | "komentar"; target: Target }
   | { op: "abaikan" | "tak-tertaut" | "tanpa-putusan"; catatan: string };
 
 // Bersihkan isi pesan sebelum ke LLM / komentar tiket.
@@ -98,6 +98,12 @@ export function rencanakan(pesan: PesanAduan[], aksi: AksiLlm[], tiketTerbuka: R
       continue;
     }
     if (a.jenis === "aduan_baru") {
+      // Staf GA tidak melapor ke dirinya sendiri — pertanyaan diagnosa GA
+      // ("di ruternya ada nyala merah?") sempat dianggap aduan baru (uji dev 16 Nov).
+      if (p.stafGa) {
+        out.set(p.ref, { op: "abaikan", catatan: "pesan staf GA tak membuka tiket" });
+        continue;
+      }
       if (a.yakin < YAKIN_ADUAN) {
         out.set(p.ref, { op: "abaikan", catatan: `aduan ragu (yakin ${a.yakin.toFixed(2)})` });
         continue;
@@ -122,7 +128,8 @@ export function rencanakan(pesan: PesanAduan[], aksi: AksiLlm[], tiketTerbuka: R
       });
       continue;
     }
-    let op: "progres" | "selesai" | "komentar" = a.jenis === "selesai" ? "selesai" : a.jenis === "progres" ? "progres" : "komentar";
+    let op: "progres" | "selesai" | "batal" | "komentar" =
+      a.jenis === "selesai" ? "selesai" : a.jenis === "progres" ? "progres" : a.jenis === "batal" ? "batal" : "komentar";
     // Kabar progres hanya sah dari staf GA; pelapor boleh menyatakan selesai
     // ("wah iya nyala, terima kasih"). Putusan ragu → komentar saja.
     if (op === "progres" && !p.stafGa) op = "komentar";
@@ -218,6 +225,7 @@ export interface GaAduanScanResult {
   dibuat: number;
   progres: number;
   selesai: number;
+  batal: number;
   komentar: number;
   abaikan: number;
   tak_tertaut: number;
@@ -290,7 +298,7 @@ async function majukanStatus(ticketId: string, tujuan: "in_progress" | "complete
 export async function runGaAduanScan(opts: { dryRun?: boolean } = {}): Promise<GaAduanScanResult> {
   const sql = db();
   const res: GaAduanScanResult = {
-    dipindai: 0, kelompok: 0, dibuat: 0, progres: 0, selesai: 0, komentar: 0, abaikan: 0, tak_tertaut: 0,
+    dipindai: 0, kelompok: 0, dibuat: 0, progres: 0, selesai: 0, batal: 0, komentar: 0, abaikan: 0, tak_tertaut: 0,
     tokens_in: 0, tokens_out: 0, model: null,
   };
   const cfg = await getGaAduanConfig();
@@ -397,11 +405,15 @@ export async function runGaAduanScan(opts: { dryRun?: boolean } = {}): Promise<G
       }
       if (r.op === "progres") res.progres += 1;
       else if (r.op === "selesai") res.selesai += 1;
+      else if (r.op === "batal") res.batal += 1;
       else res.komentar += 1;
       if (opts.dryRun) continue;
       await addComment(ticketId, { comment: teksKomentar(p), at: p.at });
       let catatan: string | null = null;
-      if (r.op !== "komentar") {
+      if (r.op === "batal") {
+        const b = await transitionTicket(ticketId, "cancelled", { note: `Dibatalkan pelapor lewat WA — ${p.pengirim}`, at: p.at });
+        if (!b.ok) catatan = `tak bisa dibatalkan: ${b.error ?? "?"} — dicatat sebagai komentar`;
+      } else if (r.op !== "komentar") {
         const ok = await majukanStatus(ticketId, r.op === "selesai" ? "completed" : "in_progress", p);
         if (!ok) catatan = "status tak bisa dimajukan (sudah selesai/dibatalkan?) — dicatat sebagai komentar";
       }
