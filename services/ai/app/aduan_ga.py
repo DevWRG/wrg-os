@@ -42,7 +42,8 @@ def build_aduan_system(kategori: List[str]) -> str:
         "- abaikan: obrolan basa-basi, salam, terima kasih, \"oke\"/\"iya\" dari pelapor, pesan tanpa isi, "
         "<media:image> tanpa teks.\n\n"
         "Untuk progres/selesai/batal/komentar, isi \"tiket\" dengan nomor tiket terbuka (TKT-...) ATAU ref "
-        "pesan aduan_baru di kumpulan yang sama (mis. \"M2\"). Cocokkan lewat isi dan urutan: balasan "
+        "pesan aduan_baru di kumpulan yang sama (mis. \"M2\"). Pesan KONTEKS yang sudah menjadi/terkait tiket "
+        "diberi tanda (→ TKT-...): balasan atas pesan itu memakai nomor tiket tersebut, jangan ref K. Cocokkan lewat isi dan urutan: balasan "
         "GA biasanya menjawab aduan terakhir yang belum dijawab, atau menyebut barang/tempat yang sama. "
         "Kalau tidak yakin tiket mana, isi tiket=null dan beri yakin rendah.\n\n"
         "Untuk aduan_baru isi: judul (≤80 karakter, bahasa Indonesia ringkas, sebut barang & tempat), "
@@ -62,7 +63,8 @@ def build_aduan_system(kategori: List[str]) -> str:
 def _baris_pesan(p: Dict[str, Any]) -> str:
     tanda = "[GA]" if p.get("staf_ga") else "[PELAPOR]"
     isi = " ".join(str(p.get("isi") or "").split())
-    return f"{p.get('ref', '-')} | {p.get('waktu', '')} | {tanda} {p.get('pengirim') or '?'}: {isi}"
+    tiket = f" (→ {p['tiket']})" if p.get("tiket") else ""
+    return f"{p.get('ref', '-')} | {p.get('waktu', '')} | {tanda} {p.get('pengirim') or '?'}: {isi}{tiket}"
 
 
 def build_aduan_user(pesan: List[Dict[str, Any]], konteks: List[Dict[str, Any]], tiket: List[Dict[str, Any]]) -> str:

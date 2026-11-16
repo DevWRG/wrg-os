@@ -31,6 +31,16 @@ class TestPrompt(unittest.TestCase):
         self.assertIn("TKT-2026-00001 | open", u)
         self.assertLess(u.index("TIKET TERBUKA"), u.index("PESAN BARU"))
 
+    def test_konteks_membawa_nomor_tiket(self):
+        u = build_aduan_user(
+            [{"ref": "M1", "pengirim": "Staf", "staf_ga": True, "isi": "ya mas"}],
+            [{"ref": "K1", "pengirim": "Pelapor", "isi": "cold storage mati", "tiket": "TKT-2026-00054"},
+             {"ref": "K2", "pengirim": "Pelapor", "isi": "oke", "tiket": None}],
+            [],
+        )
+        self.assertIn("cold storage mati (→ TKT-2026-00054)", u)
+        self.assertIn("[PELAPOR] Pelapor: oke\n", u)
+
     def test_user_tanpa_tiket(self):
         u = build_aduan_user([{"ref": "M1", "isi": "x"}], [], [])
         self.assertIn("TIKET TERBUKA: (tidak ada)", u)

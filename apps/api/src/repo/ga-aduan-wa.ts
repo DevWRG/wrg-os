@@ -26,7 +26,10 @@ const ukuranKelompok = (): number => Math.max(1, Math.min(50, Number(process.env
 // Batas kelompok per jalan — backfill ~230 pesan selesai dalam satu jalan,
 // tapi kekeliruan (mis. loop) tak bisa menghabiskan kuota LLM mingguan.
 const maksKelompok = (): number => Math.max(1, Number(process.env.GA_ADUAN_MAX_BATCH) || 12);
-const JUMLAH_KONTEKS = 8;
+// Konteks membawa nomor tiket pesan yang sudah jadi tiket (lihat query di
+// runGaAduanScan) — tanpa itu balasan GA atas aduan dari kelompok sebelumnya
+// tak bisa ditautkan (uji dev 16 Nov: 19 dari 226 pesan "tiket tidak ditentukan").
+const JUMLAH_KONTEKS = 15;
 // Di bawah ini progres/selesai tak mengubah status — cukup dicatat sebagai
 // komentar (tiket tetap di status sekarang). Aduan di bawah YAKIN_ADUAN diabaikan.
 const YAKIN_STATUS = 0.6;
@@ -346,9 +349,12 @@ export async function runGaAduanScan(opts: { dryRun?: boolean } = {}): Promise<G
     if (pesan.length === 0) continue;
 
     const konteks = await sql`
-      SELECT sender_name, body, received_at FROM wa_message
-      WHERE group_jid = ANY(${grup}) AND received_at < ${pesan[0].at.toISOString()} AND coalesce(body, '') <> ''
-      ORDER BY received_at DESC LIMIT ${JUMLAH_KONTEKS}
+      SELECT m.sender_name, m.body, m.received_at, t.ticket_no
+      FROM wa_message m
+      LEFT JOIN ga_aduan_wa_seen s ON s.message_id = COALESCE(m.message_id, m.id::text)
+      LEFT JOIN ga_tickets t ON t.id = s.ticket_id
+      WHERE m.group_jid = ANY(${grup}) AND m.received_at < ${pesan[0].at.toISOString()} AND coalesce(m.body, '') <> ''
+      ORDER BY m.received_at DESC LIMIT ${JUMLAH_KONTEKS}
     `;
     const terbuka = await sql`
       SELECT id, ticket_no, title, status, opened_at, reporter_name_override FROM ga_tickets
@@ -362,6 +368,7 @@ export async function runGaAduanScan(opts: { dryRun?: boolean } = {}): Promise<G
       konteks: [...konteks].reverse().map((r, i) => ({
         ref: `K${i + 1}`, waktu: fmtWib(new Date(r.received_at as string)), pengirim: String(r.sender_name ?? ""),
         staf_ga: isStafGa(String(r.sender_name ?? ""), cfg.staf_ga_names), isi: bersihkanIsi(String(r.body ?? "")),
+        tiket: r.ticket_no ? String(r.ticket_no) : null,
       })),
       tiket: terbuka.map((t) => ({
         no: String(t.ticket_no), status: String(t.status), dibuka: fmtWib(new Date(t.opened_at as string)),
