@@ -11,8 +11,9 @@ import { balasanOrder } from "./order-wa.js";
 import { balasanBonTeknisi, balasanOpnameWa } from "./bon-sparepart.js";
 import { detectCek, handleCekQuery } from "./inbound-cek.js";
 import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
-import { parseTeknisiPlan, parseTeknisiReport, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
+import { parseTeknisiPlan, parseTeknisiReport, parseTeknisiStart, balasanStartTeknisi, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
 import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi, tempelFotoTeknisi } from "./teknisi-plan-report.js";
+import { simpanStartTeknisi, tempelFotoStart } from "./teknisi-start.js";
 import type { JenisTeknisi } from "../parsers/teknisi.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -147,6 +148,7 @@ export const INBOUND_HASHTAGS = [
   "bon",
   "opname",
   "revisi",
+  "start",
 ] as const;
 
 export type InboundKind = (typeof INBOUND_HASHTAGS)[number] | "none";
@@ -172,6 +174,8 @@ const KORAN_LINE = /^\s*#\s*koran\b/i;
 // tanda tangan, SETELAH bast (lihat docs/features/F93-*.md).
 const SHIPPING_LINE = /^\s*#\s*(kirim|terima|bast|bukti)\b\s*(.*)$/i;
 const READINESS_LINE = /^\s*#\s*(install|servis|training|kalibrasi)\b/i;
+// F175 #START — jam mulai pekerjaan teknisi (323).
+const START_LINE = /^\s*[*_~]*#\s*start\b/i;
 // F139 — HANYA #HELPDESK diaktifkan (brief sebut #TICKET juga, sengaja
 // didiamkan dulu, bukan dihapus dari brief — lihat docs/features/F139-*.md).
 const HELPDESK_LINE = /^\s*#\s*helpdesk\b/i;
@@ -232,6 +236,7 @@ export function detectKind(body: string | null): InboundKind {
       if (KORAN_LINE.test(line)) return "koran";
       const s = line.match(SHIPPING_LINE);
       if (s) return s[1].toLowerCase() as "kirim" | "terima" | "bast" | "bukti";
+      if (START_LINE.test(line)) return "start";
       const r = line.match(READINESS_LINE);
       if (r) return r[1].toLowerCase() as "install" | "servis" | "training" | "kalibrasi";
       if (HELPDESK_LINE.test(line)) return "helpdesk";
@@ -1595,6 +1600,32 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
     return finish({ report_id: report.id, teknisi: teknisi.nama, reply });
   }
 
+  // F175 #START — jam mulai pekerjaan teknisi (waktu servis = #REPORT − #START). Hanya role
+  // Teknisi dan hanya saat jalur F175 nyala; selain itu diam. Bukti lokasi = foto geotag (Geo-Tagging Camera, pola foto kunjungan AM)
+  // (caption #START n, atau foto terpisah ±10 menit) → koordinat hasil OCR wa-bridge.
+  if (kind === "start") {
+    if (!teknisiPlanReportAktif()) return finish({ skipped: "teknisi-start-off" });
+    const tek = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name });
+    if (!tek) return finish({ skipped: "unknown-sender", sender_name: row.sender_name });
+    if (!tek.aktif || !isTeknisi(tek.role)) return finish({ skipped: "bukan-teknisi", am_id: tek.am_id });
+    const ps = parseTeknisiStart(row.body ?? "");
+    if (ps.errors.length || (!ps.baru && ps.nomor.length === 0)) {
+      const errors = ps.errors.length ? ps.errors : ["Tulis nomor plan, mis. `#START 1`."];
+      const reply = await sendViaWaGateway(row.group_jid, balasanFormatSalah("start", tek.nama, errors));
+      return finish({ error: "teknisi-start-format", errors, reply });
+    }
+    const [{ tgl }] = await sql<{ tgl: string }[]>`
+      SELECT (COALESCE(${row.received_at}::timestamptz, now()) AT TIME ZONE 'Asia/Jakarta')::date::text AS tgl`;
+    const r = await simpanStartTeknisi({
+      teknisiId: tek.am_id, tanggal: String(tgl), parse: ps, waMessageId: row.message_id,
+      receivedAt: row.received_at, groupJid: row.group_jid, senderName: row.sender_name,
+      mediaPath: /^image/i.test(row.message_type ?? "") && row.media_path ? row.media_path : null,
+      geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
+    });
+    const reply = await sendViaWaGateway(row.group_jid, balasanStartTeknisi({ nama: tek.nama, ...r }));
+    return finish({ am_id: tek.am_id, via: tek.via, mode: "teknisi", tanggal: String(tgl), ...r, reply });
+  }
+
   if (kind === "none") {
     // Lampiran rekening koran yang dikirim sebagai pesan TERPISAH dari
     // hashtagnya. WhatsApp mengirim dokumen + teks sebagai dua pesan, dan admin
@@ -1620,6 +1651,12 @@ export async function processInboundMessage(row: WaRow): Promise<Record<string, 
       // blok / ekor SN). Tanpa kunjungan dalam jendela → jalur foto lama. Diam (tanpa
       // balasan): satu kunjungan bisa berbelas foto.
       if (teknisiPlanReportAktif() && isTeknisi(amp.role)) {
+        // Foto sesudah teks #START (bukti lokasi) didahulukan dari foto report.
+        const fs = await tempelFotoStart({
+          teknisiId: amp.am_id, mediaPath: row.media_path, receivedAt: row.received_at,
+          geo: { lat: row.geo_lat ?? null, lon: row.geo_lon ?? null, ts: row.geo_ts ?? null, alamat: row.geo_address ?? null },
+        });
+        if (fs) return finish({ via: amp.via, mode: "teknisi-start-foto", ...fs }, "photo");
         const tf = await tempelFotoTeknisi({
           teknisiId: amp.am_id, mediaPath: row.media_path, caption: row.body,
           waMessageId: row.message_id, receivedAt: row.received_at,
