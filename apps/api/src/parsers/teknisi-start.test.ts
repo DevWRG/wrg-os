@@ -59,7 +59,7 @@ test("balasan report: durasi & tanda tanpa #START", () => {
     ],
   });
   assert.match(t, /1\. EXC200 \(…0832\) · PM · Selesai · ⏱ 1 j 35 m/);
-  assert.match(t, /2\. Z3 · Service · Selesai\n   ⚠️ tanpa #START — waktu kerja tak terhitung/);
+  assert.match(t, /2\. Z3 · Service · Selesai\n {3}⚠️ tanpa #START — waktu kerja tak terhitung/);
 });
 
 test("format salah #START memuat contoh", () => {
