@@ -177,10 +177,17 @@ function TabJadwal({ query, filter, dari }: { query: string; filter: ReactNode; 
       </Button>
     </div>
   );
-  return tampil === null ? <p className="text-muted-foreground text-sm">Memuat…</p> : (
-    <DataTable columns={kolom} data={tampil} getKey={(r) => `${r.jenis}-${r.ref_id}`} pageSize={20}
-      initialSort={{ id: "teknisi", dir: "asc" }} searchPlaceholder="Cari teknisi / faskes / alat…" toolbar={toolbar}
-      empty={lihatTunggakan ? "Tidak ada jadwal." : "Tidak ada jadwal di rentang ini."} />
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base font-semibold">Jadwal teknisi</CardTitle></CardHeader>
+      <CardContent>
+        {tampil === null ? <p className="text-muted-foreground text-sm">Memuat…</p> : (
+          <DataTable columns={kolom} data={tampil} getKey={(r) => `${r.jenis}-${r.ref_id}`} pageSize={20}
+            initialSort={{ id: "teknisi", dir: "asc" }} searchPlaceholder="Cari teknisi / faskes / alat…" toolbar={toolbar}
+            empty={lihatTunggakan ? "Tidak ada jadwal." : "Tidak ada jadwal di rentang ini."} />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -238,7 +245,7 @@ function TabKerja({ query, filter }: { query: string; filter: ReactNode }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><CardTitle className="text-base">Ringkasan per teknisi</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base font-semibold">Ringkasan per teknisi</CardTitle></CardHeader>
         <CardContent>
           <DataTable columns={kolomRingkas} data={data.ringkasan} getKey={(r) => r.teknisi_id} pageSize={10}
             initialSort={{ id: "nama", dir: "asc" }} searchPlaceholder="Cari teknisi…" toolbar={filter}
@@ -250,7 +257,7 @@ function TabKerja({ query, filter }: { query: string; filter: ReactNode }) {
         </CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-base">Detail pekerjaan</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base font-semibold">Detail pekerjaan</CardTitle></CardHeader>
         <CardContent>
           <DataTable columns={kolom} data={data.rows} getKey={(r) => String(r.plan_item_id)} pageSize={20}
             initialSort={{ id: "tanggal", dir: "desc" }} searchPlaceholder="Cari teknisi / faskes…"
