@@ -246,12 +246,13 @@ async function buatTiket(p: PesanAduan, a: AksiLlm, kat: Map<string, Kategori>):
   // Pesan lama (backfill) yang SLA-nya sudah lewat ditandai sudah dialert —
   // alert overdue (ke assignee + HoD) tak boleh meledak untuk aduan lama. Pola 306.
   const alertLama = slaDue.getTime() < Date.now() ? new Date().toISOString() : null;
+  const deskripsi = `Dari grup WA Aduan GA (${fmtWib(p.at)}):\n${p.isi}`;
   const [ins] = await sql`
     INSERT INTO ga_tickets (
       ticket_no, title, description, category_id, priority, reporter_name_override, location,
       sla_due_at, opened_at, created_at, source_wa_message_id, sla_alert_sent_at
     ) VALUES (
-      ${await generateTicketNo()}, ${judul}, ${`Dari grup WA Aduan GA (${fmtWib(p.at)}):\n${p.isi}`}, ${k.id}, ${prioritas},
+      ${await generateTicketNo()}, ${judul}, ${deskripsi}, ${k.id}, ${prioritas},
       ${p.pengirim || "Pelapor WA"}, ${a.lokasi}, ${slaDue.toISOString()}, ${p.at.toISOString()}, ${p.at.toISOString()},
       ${p.mid}, ${alertLama}
     )
