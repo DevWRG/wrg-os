@@ -310,6 +310,13 @@ export async function simpanReportTeknisi(input: {
     });
   }
 
+  // Report merujuk plan tanpa `RS:` → faskes kunjungan dari item plan yang dirujuk (bila semuanya satu faskes).
+  if (!acc) {
+    const akunPlan = new Set(baris.map((x) => (x.planId ? plan.find((p) => Number(p.id) === x.planId)?.account_id : null))
+      .filter((v) => v != null).map(Number));
+    if (akunPlan.size === 1) acc = [...akunPlan][0];
+  }
+
   const hasil = await sql.begin(async (tx) => {
     const k = await tx`
       INSERT INTO teknisi_kunjungan (teknisi_id, tanggal, account_id, faskes_teks, catatan, wa_message_id, reported_at)
