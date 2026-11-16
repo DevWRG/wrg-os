@@ -117,7 +117,9 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
         {bolehMargin && mg && <TabsContent value="margin_wrg" className="pt-4"><TabMargin v={mg} set={setMg} /></TabsContent>}
       </Tabs>
 
-      {param && <ParamDialog open api="/api/hd-simulator/param" onClose={() => { setParam(false); setVersi((x) => x + 1); }} />}
+      {param && <ParamDialog open api="/api/hd-simulator/param" judul="Parameter Simulator KSO HD"
+        keterangan="Nilai awal simulator. Kosong = belum diisi (dihitung 0 dan muncul peringatan). Parameter Margin WRG hanya terlihat oleh pemegang izin Margin WRG."
+        onClose={() => { setParam(false); setVersi((x) => x + 1); }} />}
 
       {proyek ? (
         <KartuSimpan key={tab} proyekId={proyek.id} jenis={tab} input={tab === "proyeksi_rs" ? px : mg} saved={saved.filter((s) => s.jenis === tab)}

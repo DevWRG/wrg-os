@@ -9,14 +9,17 @@ import { Input } from "@/components/ui/input";
 import { kirim, type Param } from "./types";
 
 const KELOMPOK = [
-  { judul: "Tracker", cocok: (k: string) => !/^(rs|margin)_/.test(k) },
+  { judul: "Dashboard Proyek HD", cocok: (k: string) => !/^(rs|margin)_/.test(k) },
   { judul: "Simulator — Proyeksi RS", cocok: (k: string) => k.startsWith("rs_") },
   { judul: "Simulator — Margin WRG", cocok: (k: string) => k.startsWith("margin_") },
 ];
 
 // Nilai default tracker & simulator (tabel hd_param). Harga/tarif sengaja tidak ada di kode
 // (repo publik) — diisi di sini. Kunci margin_* hanya terkirim ke pemegang Margin WRG.
-export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param" }: { open: boolean; onClose: () => void; api?: string }) {
+export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param", judul = "Pengaturan Proyek HD",
+  keterangan = "Dipakai KPI dashboard: tarif per tindakan untuk Proyeksi omset / bln, dan target rasio running : idle. Parameter simulator diatur dari menu Simulator KSO HD." }: {
+  open: boolean; onClose: () => void; api?: string; judul?: string; keterangan?: string;
+}) {
   const [items, setItems] = useState<Param[] | null>(null);
   const [boleh, setBoleh] = useState(false);
   const [ubah, setUbah] = useState<Record<string, string>>({});
@@ -55,8 +58,8 @@ export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param" }: { o
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Parameter Proyek HD</DialogTitle>
-          <DialogDescription>Nilai awal simulator & rumus tracker. Kosong = belum diisi (simulator memakai 0 dan memberi peringatan).</DialogDescription>
+          <DialogTitle>{judul}</DialogTitle>
+          <DialogDescription>{keterangan}</DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
           {err && <p className="text-destructive text-sm">{err}</p>}

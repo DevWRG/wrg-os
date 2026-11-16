@@ -27,7 +27,6 @@ export default async function ProyekHdPage() {
       <ProyekView
         bolehBuat={featureAllowed(me, "/proyek-hd", "create")}
         bolehParam
-        bolehSimulator={featureAllowed(me, "/hd-simulator", "view")}
       />
     </>
   );
