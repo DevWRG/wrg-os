@@ -14,7 +14,7 @@ import { resolveSender, normalizeWa, bolehAksesHargaWa } from "./master.js";
 import { parseTeknisiPlan, parseTeknisiReport, parseTeknisiStart, balasanStartTeknisi, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah } from "../parsers/teknisi.js";
 import { teknisiPlanReportAktif, isTeknisi, simpanPlanTeknisi, simpanReportTeknisi, tempelFotoTeknisi } from "./teknisi-plan-report.js";
 import { simpanStartTeknisi, tempelFotoStart } from "./teknisi-start.js";
-import { lampiranGagalAktif, peringatkanLampiranGagal, PENANDA_LAMPIRAN_GAGAL } from "./lampiran-gagal.js";
+import { lampiranGagalAktif, peringatkanLampiranGagal, PENANDA_LAMPIRAN_GAGAL, UMUR_MAKS_MENIT } from "./lampiran-gagal.js";
 import type { JenisTeknisi } from "../parsers/teknisi.js";
 import { upsertDailyTodo, computeIsLate } from "./todo.js";
 import { createReminder } from "./reminder.js";
@@ -2765,6 +2765,7 @@ export async function processUnprocessed(
            OR (${complaintGroupJid()} <> '' AND group_jid = ${complaintGroupJid()})
            -- Foto/lampiran gagal diunduh openclaw (tanpa hashtag pun) → pengirim diminta kirim ulang.
            OR (${lampiranGagalAktif()} AND media_path IS NULL
+               AND received_at > now() - make_interval(mins => ${UMUR_MAKS_MENIT})
                AND strpos(lower(coalesce(body, '')), ${PENANDA_LAMPIRAN_GAGAL}) > 0))
     ORDER BY received_at ASC LIMIT ${limit}
   `;
