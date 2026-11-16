@@ -8,6 +8,16 @@ import { resolveSender } from "./master.js";
 // tahu supaya mengirim ulang. Saklar default MATI: WA_LAMPIRAN_GAGAL_NOTIF_ENABLED=true.
 export const PENANDA_LAMPIRAN_GAGAL = "[whatsapp attachment unavailable]";
 export const JEDA_PERINGATAN_MENIT = 3;
+// Hanya pesan SEGAR yang diperingatkan. Uji dev 16 Nov 2026 19:05: saklar baru nyala → dua foto gagal
+// pukul 15:56 & 16:12 ikut tersapu dan dibalas 3 jam kemudian. Di prod, tanpa batas ini semua foto gagal
+// lama (processed_at NULL) akan dibalas serentak begitu saklar dinyalakan.
+export const UMUR_MAKS_MENIT = 15;
+
+export function lampiranMasihSegar(receivedAt: string | Date | null | undefined, now: Date = new Date()): boolean {
+  if (!receivedAt) return false;
+  const t = new Date(receivedAt).getTime();
+  return Number.isFinite(t) && now.getTime() - t <= UMUR_MAKS_MENIT * 60_000;
+}
 
 export function lampiranGagalAktif(): boolean {
   return /^(1|true|yes|on)$/i.test(process.env.WA_LAMPIRAN_GAGAL_NOTIF_ENABLED?.trim() ?? "");
@@ -37,6 +47,7 @@ type BarisWa = {
 // (10 foto gagal sekaligus = satu balasan).
 export async function peringatkanLampiranGagal(row: BarisWa): Promise<Record<string, unknown> | null> {
   if (!lampiranGagalAktif() || !adaLampiranGagal(row)) return null;
+  if (!lampiranMasihSegar(row.received_at)) return { lampiran_gagal: "basi" };
   const sql = db();
   const p = await resolveSender({ senderJid: row.sender_jid, groupJid: row.group_jid, pushname: row.sender_name, ketat: true });
   if (!p) return { lampiran_gagal: "pengirim-tak-dikenal" };
