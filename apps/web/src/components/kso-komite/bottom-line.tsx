@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -287,12 +289,14 @@ function Parameter({ p, boleh, onBerubah }: { p: Param; boleh: boolean; onBeruba
   );
 }
 
-// 281 — Finance: biaya reagen hematologi dari rumus Simulator KSO × HPP Price Book terbaru. Reagen per tes +
+// 281 — Finance: biaya reagen dari rumus Simulator KSO × harga beli (330: rata-rata beli 12 bulan, fallback HPP
+// Price Book). Reagen per tes +
 // reagen harian (startup/shutdown) disimpan; bottom per tes lalu ikut test/bulan, hari kerja, dan masa KSO.
 // Model yang biayanya diisi tangan Finance tidak ditimpa (API).
 function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
   const [sibuk, setSibuk] = useState(false);
   const [pesan, setPesan] = useState<string | null>(null);
+  const [rincian, setRincian] = useState(false);
   const jalan = async () => {
     setSibuk(true); setPesan(null);
     try {
@@ -302,17 +306,70 @@ function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
       setPesan([
         `${r.disimpan.length} model diperbarui`,
         r.dilewati.length ? `${r.dilewati.length} dilewati (biaya diisi tangan Finance)` : null,
-        kurang.length ? `HPP Price Book belum lengkap: ${kurang.map((k) => `${k.alat} (${k.reagen.join(", ")})`).join("; ")}` : null,
+        kurang.length ? `Harga beli belum lengkap: ${kurang.map((k) => `${k.alat} (${k.reagen.join(", ")})`).join("; ")}` : null,
       ].filter(Boolean).join(" · "));
       onBerubah();
     } catch (e) { setPesan((e as Error).message); } finally { setSibuk(false); }
   };
   return (
     <div className="bg-card flex flex-wrap items-center gap-3 rounded-lg border p-3 text-xs">
-      <span className="text-muted-foreground">Biaya reagen = rumus Simulator KSO × HPP Price Book terbaru — hematologi (reagen per tes + harian), kimia klinik (campuran tes riil dari kiriman reagen 12 bulan + detergent), blood gas (cartridge, residu terbuang dihitung), elektrolit DN-X6 (paket cartridge). Imunologi (CLIA) diisi manual — sebagian besar reagennya belum ada di Price Book.</span>
-      <Button size="sm" variant="outline" onClick={jalan} disabled={sibuk}>{sibuk ? "Menghitung…" : "Hitung ulang dari Price Book"}</Button>
+      <span className="text-muted-foreground">Biaya reagen = rumus Simulator KSO × HPP rata-rata pembelian 12 bulan (faktur pembelian Accurate; barang yang tak dibeli 12 bulan terakhir memakai HPP Price Book) — hematologi (reagen per tes + harian), kimia klinik (campuran tes riil dari kiriman reagen 12 bulan + detergent), blood gas (cartridge, residu terbuang dihitung), elektrolit DN-X6 (paket cartridge). Imunologi (CLIA) diisi manual — sebagian besar reagennya belum ada di Price Book.</span>
+      <Button size="sm" onClick={jalan} disabled={sibuk}>{sibuk ? "Menghitung…" : "Hitung ulang biaya"}</Button>
+      <Button size="sm" variant="soft" onClick={() => setRincian((x) => !x)}>{rincian ? "Tutup rincian harga beli" : "Rincian harga beli"}</Button>
       {pesan && <span>{pesan}</span>}
+      {rincian && <div className="w-full"><RincianHargaBeli /></div>}
     </div>
+  );
+}
+
+// 330 — rincian harga beli per barang yang dipakai tombol di atas: HPP rata-rata pembelian 12 bulan (faktur
+// pembelian Accurate) atau fallback HPP Price Book bila barang tak dibeli 12 bulan terakhir. Selisih terhadap
+// Price Book ditampilkan supaya satuan yang keliru (mis. beli per set, Price Book per botol) cepat ketahuan.
+interface BarisHargaBeli {
+  kunci: string; alat: string; barang: string | null; nama: string; hpp: number | null; hpp_pb: number | null;
+  sumber: string | null; n_faktur: number | null; dari: string | null; sampai: string | null;
+}
+type RincianApi = {
+  reagen: { analyzer: string; nama: string; barang: string | null; hpp: number | null; hpp_pb: number | null; sumber: string | null; n_faktur: number | null; dari: string | null; sampai: string | null }[];
+  kk: { analyzer: string; parameter: string; barang: string; hpp: number | null; hpp_pb: number | null; sumber: string | null; n_faktur: number | null; dari: string | null; sampai: string | null; kit_12bln: number }[];
+};
+
+function RincianHargaBeli() {
+  const [d, setD] = useState<BarisHargaBeli[] | null>(null);
+  const [galat, setGalat] = useState<string | null>(null);
+  useEffect(() => {
+    kirim<RincianApi>("/api/kso-komite/bottom-line/harga-beli")
+      .then((r) => setD([
+        ...r.reagen.map((x, i) => ({ kunci: `r${i}`, alat: x.analyzer, barang: x.barang, nama: x.nama, hpp: x.hpp, hpp_pb: x.hpp_pb, sumber: x.sumber, n_faktur: x.n_faktur, dari: x.dari, sampai: x.sampai })),
+        ...r.kk.map((x, i) => ({ kunci: `k${i}`, alat: x.analyzer, barang: x.barang, nama: `Reagen ${x.parameter}`, hpp: x.hpp, hpp_pb: x.hpp_pb, sumber: x.sumber, n_faktur: x.n_faktur, dari: x.dari, sampai: x.sampai })),
+      ]))
+      .catch((e) => setGalat((e as Error).message));
+  }, []);
+  const selisih = (b: BarisHargaBeli) => (b.hpp != null && b.hpp_pb ? b.hpp / b.hpp_pb - 1 : null);
+  const kolom: DataColumn<BarisHargaBeli>[] = [
+    { id: "alat", header: "Alat", sortable: true, accessor: (b) => b.alat },
+    { id: "nama", header: "Barang", sortable: true, accessor: (b) => `${b.nama} ${b.barang ?? ""}`,
+      cell: (b) => <div><div>{b.nama}</div>{b.barang && <div className="text-muted-foreground text-xs">{b.barang}</div>}</div> },
+    { id: "hpp", header: "HPP dipakai", align: "right", sortable: true, searchable: false, accessor: (b) => b.hpp, cell: (b) => <span className="tabular-nums">{rp(b.hpp)}</span> },
+    { id: "sumber", header: "Sumber", sortable: true, accessor: (b) => b.sumber ?? "—",
+      cell: (b) => <div><div>{b.sumber ?? "—"}</div>{b.n_faktur != null && b.sumber?.startsWith("rata-rata") && <div className="text-muted-foreground text-xs">{b.n_faktur} faktur · {b.dari} s/d {b.sampai}</div>}</div> },
+    { id: "pb", header: "HPP Price Book", align: "right", sortable: true, searchable: false, accessor: (b) => b.hpp_pb, cell: (b) => <span className="tabular-nums">{rp(b.hpp_pb)}</span> },
+    { id: "selisih", header: "Selisih", align: "right", sortable: true, searchable: false, accessor: (b) => selisih(b),
+      cell: (b) => { const s = selisih(b); return s == null || Math.abs(s) < 0.0005 ? "—" : (
+        <span className={cn("tabular-nums", Math.abs(s) >= 0.3 && "text-destructive font-medium")}>{s > 0 ? "+" : ""}{(s * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%</span>); } },
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Rincian harga beli</CardTitle>
+        <CardDescription>HPP per kemasan yang dipakai hitung ulang. Rata-rata tertimbang faktur pembelian Accurate 12 bulan (sesudah diskon, tanpa baris harga titipan Rp1); barang yang tak dibeli memakai HPP Price Book. Selisih ≥ 30% ditandai merah — periksa satuannya.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {galat ? <p className="text-destructive text-sm">{galat}</p>
+          : d == null ? <p className="text-muted-foreground text-sm">Memuat…</p>
+          : <DataTable columns={kolom} data={d} getKey={(b) => b.kunci} pageSize={10} searchPlaceholder="Cari alat / barang…" empty="Belum ada barang tertaut." />}
+      </CardContent>
+    </Card>
   );
 }
 

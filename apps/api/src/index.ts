@@ -18,7 +18,7 @@ import { matchCustomer, type PlanCandidate } from "./parsers/fuzzy.js";
 import { isDbEnabled, pingDb } from "./db.js";
 import { waPreflight, sendViaWaGateway, type WaSendResult } from "./wasend.js";
 import { processUnprocessed, isInboundEnabled } from "./repo/inbound.js";
-import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, refreshOpenInvoices, openRefreshBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy, syncPurchaseInvoices, purchaseInvoiceSyncBusy } from "./repo/accurateSync.js";
+import { syncAccurateInvoices, syncVendors, syncItems, syncSalesOrders, syncDeliveryOrders, syncCustomers, syncSalesOrderItems, syncDeliveryOrderItems, syncItemStockBranch, getDeliveryOrderItems, getSalesOrderItems, getVendorDetail, accurateConfigured, syncFixedAssets, fixedAssetSyncBusy, refreshOpenInvoices, openRefreshBusy, syncPurchaseOrders, purchaseOrderSyncBusy, syncReceiveItems, receiveItemSyncBusy, syncPurchaseInvoices, purchaseInvoiceSyncBusy, syncPurchaseInvoiceRiwayat, riwayatBeliSyncBusy } from "./repo/accurateSync.js";
 import { ApError, getFaktur as getFakturAp, listFaktur as listFakturAp } from "./repo/ap-three-way.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
@@ -323,7 +323,7 @@ import { BuktiError, bacaBukti, daftarBukti, MAKS_BUKTI, unggahBukti } from "./r
 import { GalatKso, berkasLampiran, berkasSph, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { namaFileSphKso, sphKsoPdf } from "./repo/kso-sph-pdf.js";
-import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
+import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, bacaRincianHargaBeli, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
 import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
@@ -1658,6 +1658,20 @@ app.post("/accurate/sync/purchase-invoices", async (c) => {
     .then((r) => console.log(`[accurate-sync] purchase-invoice manual: ${JSON.stringify(r)}`))
     .catch((e) => console.error("[accurate-sync] purchase-invoice manual gagal:", e));
   return c.json({ ok: true, started: true }, 202);
+});
+
+// F172 (330) — riwayat faktur pembelian SEBELUM cakupan F152 → bahan HPP rata-rata beli 12 bulan (harga_beli_rata_v).
+// Latar (202); hasil di accurate_sync_state entity 'purchase-invoice-riwayat'. ?bulan=N (1–24, default 12).
+app.post("/accurate/sync/purchase-invoice-riwayat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  if (!accurateConfigured()) return c.json({ error: "kredensial Accurate tak tersedia" }, 503);
+  if (riwayatBeliSyncBusy()) return c.json({ ok: false, error: "sinkron riwayat faktur pembelian sedang berjalan" }, 409);
+  const b = Number(c.req.query("bulan") ?? 12);
+  const bulan = Number.isInteger(b) && b >= 1 && b <= 24 ? b : 12;
+  void syncPurchaseInvoiceRiwayat({ bulan })
+    .then((r) => console.log(`[accurate-sync] purchase-invoice riwayat: ${JSON.stringify(r)}`))
+    .catch((e) => console.error("[accurate-sync] purchase-invoice riwayat gagal:", e));
+  return c.json({ ok: true, started: true, bulan }, 202);
 });
 
 // Sinkron full katalog item + stok Accurate → accurate_item (menu Inventory & Products).
@@ -3020,12 +3034,19 @@ app.get("/kso-komite/portofolio", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaPortofolio(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
-// 281: bahan tombol "Hitung ulang dari Price Book" (izin ubah angka Bottom Line).
+// 281: bahan tombol "Hitung ulang biaya" (izin ubah angka Bottom Line; 330: harga = rata-rata beli 12 bln).
 app.get("/kso-komite/bottom-line/bahan-otomatis", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const u = ksoUser(c);
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaBahanOtomatis(u)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// 330: rincian harga beli per barang (rata-rata beli 12 bulan / fallback Price Book) — izin ubah angka Bottom Line.
+app.get("/kso-komite/bottom-line/harga-beli", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  try { return c.json(await bacaRincianHargaBeli(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
 app.post("/kso-komite/bottom-line/:jenis", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
