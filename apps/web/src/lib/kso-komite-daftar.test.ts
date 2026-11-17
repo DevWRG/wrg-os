@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  FORMAT_KSO, hargaBersih, keadaanBerkas, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran, teksDiunggah,
+  FORMAT_KSO, hargaBersih, keadaanBerkas, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran, teksDiunggah, gabungTabSekretariat,
 } from "./kso-komite-daftar";
 
 test("pilihTabDaftar: cakupan terluas dulu, teknik tak pernah, admin sales hanya untuk Lolos", () => {
@@ -107,4 +107,16 @@ test("keadaanBerkas & teksDiunggah (305): berkas ada → tombol; sudah dibaca & 
   assert.equal(teksDiunggah({ dibaca_at: "B", diunggah_at: "U" }, fmt), "Lampiran simulator sudah diunggah · dibaca <B>");
   assert.equal(teksDiunggah({ diunggah_at: "U" }, fmt), "Lampiran simulator sudah diunggah · dibaca <U>");
   assert.equal(teksDiunggah({}, fmt), "Lampiran simulator sudah diunggah");
+});
+
+test("gabungTabSekretariat: Penawaran disembunyikan bila Sekretariat ada; tanpa Sekretariat tetap tampil", () => {
+  const t = (tab: string) => ({ tab }) as { tab: never };
+  assert.deepEqual(gabungTabSekretariat([t("agenda"), t("sekretariat"), t("penawaran")]).map((x) => x.tab), ["agenda", "sekretariat"]);
+  assert.deepEqual(gabungTabSekretariat([t("penawaran"), t("teknik")]).map((x) => x.tab), ["penawaran", "teknik"]);
+});
+
+test("pilihTabDaftar riwayat: cakupan terluas dulu, AM tetap dapat riwayat usulannya sendiri", () => {
+  const t = (tab: string) => ({ tab }) as { tab: never };
+  assert.equal(pilihTabDaftar([t("saya"), t("agenda")], "riwayat")?.tab.tab, "agenda");
+  assert.equal(pilihTabDaftar([t("saya")], "riwayat")?.cakupan, "rencana Anda");
 });

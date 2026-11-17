@@ -7,7 +7,7 @@
 
 import type { TabKso } from "./kso-komite-access";
 
-export type FilterDaftar = "belum-lengkap" | "lolos-tanpa-forum";
+export type FilterDaftar = "belum-lengkap" | "lolos-tanpa-forum" | "riwayat";
 
 /**
  * Tab yang dipakai untuk meminta daftar. Daftar di API disaring RLS peran tab (kso.boleh_lihat):
@@ -18,11 +18,19 @@ export type FilterDaftar = "belum-lengkap" | "lolos-tanpa-forum";
 const URUTAN: Record<FilterDaftar, TabKso[]> = {
   "belum-lengkap": ["agenda", "sekretariat", "direksi", "kpi", "hod", "saya"],
   "lolos-tanpa-forum": ["agenda", "sekretariat", "direksi", "kpi", "hod", "saya", "penawaran"],
+  // 17 Nov 2026: riwayat forum — semua peran yang bisa melihat usulan (RLS menyaring isinya)
+  riwayat: ["agenda", "sekretariat", "direksi", "kpi", "hod", "saya", "penawaran"],
 };
 const CAKUPAN: Record<TabKso, string> = {
   agenda: "semua rencana", sekretariat: "semua rencana", direksi: "semua rencana", kpi: "semua rencana",
   hod: "rencana di wilayah HOD Anda", saya: "rencana Anda", penawaran: "yang diputus HOD (jalur cepat)", teknik: "—",
 };
+
+/** Sekretariat & Penawaran dipegang satu orang (17 Nov 2026): tab Penawaran disembunyikan bila tab Sekretariat ada — isinya
+ *  (mandat siap diterbitkan) sudah ada di Sekretariat. Hak akses tidak berubah. */
+export function gabungTabSekretariat<T extends { tab: TabKso }>(tabs: T[]): T[] {
+  return tabs.some((t) => t.tab === "sekretariat") ? tabs.filter((t) => t.tab !== "penawaran") : tabs;
+}
 
 export function pilihTabDaftar<T extends { tab: TabKso }>(tabs: T[], filter: FilterDaftar): { tab: T; cakupan: string } | null {
   for (const k of URUTAN[filter]) {
