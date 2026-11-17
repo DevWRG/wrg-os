@@ -25,8 +25,8 @@ select uji.harus_gagal('Aplikasi tak bisa memanggil fungsi inti langsung',
 
 -- 3. Komite meloloskan
 select set_config('wrg.kso_user', 'u-kom', false), set_config('wrg.kso_peran', 'komite', false), set_config('wrg.kso_ref', '', false);
-select uji.harus_gagal('Alasan > 500 huruf ditolak',
-   format($q$select kso.app_loloskan_ke_forum(%s, repeat('x', 501))$q$, (select v from uji.d924 where k = 'd')), 'ALASAN_TERLALU_PANJANG');
+select uji.harus_gagal('Catatan > 5.000 huruf ditolak (331)',
+   format($q$select kso.app_loloskan_ke_forum(%s, repeat('x', 5001))$q$, (select v from uji.d924 where k = 'd')), 'ALASAN_TERLALU_PANJANG');
 insert into uji.d924 select 'n', kso.app_loloskan_ke_forum((select v::bigint from uji.d924 where k = 'd'), '  Putusan Direktur: lengkapi di forum  ');
 reset role;
 select uji.cek('Diloloskan: JALUR_FORUM, jalur FORUM, nomor KSO terbit, zona minimal Forum, jejak siapa/kapan/alasan',

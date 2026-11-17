@@ -534,7 +534,7 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
       if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
       return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
     case "loloskan-forum":
-      return b.alasan == null || (typeof b.alasan === "string" && b.alasan.length <= 500) ? null : "Alasan paling panjang 500 huruf.";
+      return b.alasan == null || (typeof b.alasan === "string" && b.alasan.length <= 5000) ? null : "Catatan paling panjang 5.000 huruf.";
     case "tautkan-faskes":
       return typeof b.akun === "string" && /^[0-9A-Za-z_-]{1,40}$/.test(b.akun.trim()) && !/^BARU-/i.test(b.akun.trim())
         ? null : "Pilih akun master faskes yang akan ditautkan.";
@@ -567,7 +567,7 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
     [/TIDAK_BISA_DILOLOSKAN/, 409, "Hanya draft atau usulan Ditahan yang bisa diloloskan ke agenda forum."],
-    [/ALASAN_TERLALU_PANJANG/, 400, "Alasan paling panjang 500 huruf."],
+    [/ALASAN_TERLALU_PANJANG/, 400, "Catatan paling panjang 5.000 huruf."],
     [/HOD_TIDAK_BERWENANG/, 403, "Rencana ini bukan wewenang kursi HOD Anda."],
     [/BUKAN_JALUR_CEPAT/, 409, "Rencana sudah tidak di jalur cepat — putusan HOD tidak berlaku lagi."],
     [/BUKAN_JALUR_FORUM/, 409, "Rencana tidak sedang menunggu forum."],
