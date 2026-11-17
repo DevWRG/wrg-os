@@ -23,6 +23,7 @@ import {
   upsertAccurateInvoices, pendingInvoiceDetails, countPendingInvoiceDetails, replaceInvoiceLines, petakanBarisDetail, pruneInvoices, AP_SYNC_ENTITY,
   type AccurateInvoiceHeader,
 } from "./ap-three-way.js";
+import { awalJendela, perluDetail, riwayatTersimpan, gantiBarisRiwayat, catatSinkronRiwayat, type FakturRiwayat } from "./harga-beli-riwayat.js";
 
 // Puller Accurate Online (pengganti legacy sync_accurate.sh). Tarik sales-invoice
 // header+items dari zeus.accurate.id → mirror penuh accurate_* + refresh ar_aging.
@@ -1649,6 +1650,101 @@ async function syncPurchaseInvoicesInner(
     since,
     ...(pruned ? { pruned } : {}),
     ...(pruneSkipped ? { prune_skipped: true } : {}),
+    ...(capped ? { cappedByPages: true } : {}),
+  };
+}
+
+// ── F172 (329) Riwayat faktur pembelian → HPP rata-rata beli 12 bulan ───────
+//
+// Faktur pembelian bertanggal [hari ini − `bulan` bulan, AP_ACCURATE_SINCE) → accurate_purchase_line_riwayat.
+// Yang ≥ AP_ACCURATE_SINCE sudah dipegang cermin F152. list.do tak bisa difilter tanggal (filter.transDate
+// ditolak), jadi seluruh daftar disapu lalu disaring di sini; detail hanya untuk faktur di jendela yang belum
+// tersimpan / lastUpdate-nya berubah. Dijalankan manual (POST /accurate/sync/purchase-invoice-riwayat).
+
+export interface RiwayatBeliSyncResult {
+  ok: boolean;
+  error?: string;
+  dari: string;
+  sampai: string;
+  halaman: number;
+  di_jendela: number;
+  details: number;
+  detail_failed: number;
+  lines: number;
+  sisa: number;
+  cappedByPages?: boolean;
+}
+
+let riwayatSyncRunning = false;
+export const riwayatBeliSyncBusy = () => riwayatSyncRunning;
+
+export async function syncPurchaseInvoiceRiwayat(opts: { bulan?: number; detailLimit?: number; maxPages?: number } = {}): Promise<RiwayatBeliSyncResult> {
+  const sampai = invoiceSince();
+  const dari = awalJendela(new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" }), opts.bulan ?? 12);
+  const empty = { dari, sampai, halaman: 0, di_jendela: 0, details: 0, detail_failed: 0, lines: 0, sisa: 0 };
+  if (riwayatSyncRunning) return { ok: false, error: "sinkron riwayat faktur pembelian sedang berjalan", ...empty };
+  const creds = loadCreds();
+  if (!creds) return { ok: false, error: "kredensial Accurate tak tersedia", ...empty };
+  riwayatSyncRunning = true;
+  try {
+    const res = dari >= sampai ? { ok: true, ...empty } : await syncRiwayatInner(creds, dari, sampai, opts);
+    await catatSinkronRiwayat(res, res.ok);
+    return res;
+  } catch (e) {
+    const res = { ok: false, error: String((e as Error)?.message ?? e), ...empty };
+    await catatSinkronRiwayat(res, false).catch(() => {});
+    return res;
+  } finally {
+    riwayatSyncRunning = false;
+  }
+}
+
+async function syncRiwayatInner(
+  creds: Creds, dari: string, sampai: string, opts: { detailLimit?: number; maxPages?: number },
+): Promise<RiwayatBeliSyncResult> {
+  const maxPages = opts.maxPages ?? 100;
+  const detailLimit = opts.detailLimit ?? 5000;
+  const jendela: FakturRiwayat[] = [];
+  let halaman = 0;
+  let capped = false;
+  for (let page = 1; page <= maxPages; page++) {
+    const list = await accGet(
+      creds,
+      "/accurate/api/purchase-invoice/list.do",
+      `sp.page=${page}&sp.pageSize=100&sp.sort=lastUpdate|desc&fields=id,number,transDate,lastUpdate,vendor`,
+    );
+    if (list.s !== true) throw new Error(`purchase-invoice/list.do gagal di halaman ${page}`);
+    const rows = Array.isArray(list.d) ? (list.d as Array<Record<string, unknown>>) : [];
+    halaman = page;
+    for (const v of rows) {
+      const trans = accDate(v.transDate);
+      if (!trans || trans < dari || trans >= sampai) continue;
+      const vendor = v.vendor && typeof v.vendor === "object" ? (v.vendor as { name?: unknown }) : null;
+      jendela.push({
+        accurate_id: Number(v.id), number: String(v.number ?? `PI-${v.id}`), trans_date: trans,
+        vendor_name: vendor?.name != null ? String(vendor.name) : null, last_update: accDateTime(v.lastUpdate),
+      });
+    }
+    if (rows.length < 100) break;
+    if (page >= maxPages) capped = laporBatasHalaman("purchase-invoice riwayat", page, maxPages, 100);
+    await sleep(150);
+  }
+
+  const tersimpan = await riwayatTersimpan(jendela.map((f) => f.accurate_id));
+  const antre = jendela.filter((f) => perluDetail(f, dari, sampai, tersimpan));
+  let details = 0;
+  let detailFailed = 0;
+  let lines = 0;
+  for (const f of antre.slice(0, detailLimit)) {
+    const det = await accGet(creds, "/accurate/api/purchase-invoice/detail.do", `id=${f.accurate_id}`);
+    if (det?.s !== true) { detailFailed++; await sleep(150); continue; }
+    lines += await gantiBarisRiwayat(f, petakanBarisDetail(det.d as Detail));
+    details++;
+    await sleep(150);
+  }
+  return {
+    ok: true, dari, sampai, halaman, di_jendela: jendela.length, details, detail_failed: detailFailed, lines,
+    sisa: Math.max(0, antre.length - details),
     ...(capped ? { cappedByPages: true } : {}),
   };
 }

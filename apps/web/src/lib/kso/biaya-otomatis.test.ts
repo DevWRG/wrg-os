@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { biayaOtomatis, biayaOtomatisBg, biayaOtomatisElektro, biayaOtomatisHemato, biayaOtomatisKk, type MixKk } from "./biaya-otomatis";
+import { biayaOtomatis, biayaOtomatisBg, biayaOtomatisElektro, biayaOtomatisHemato, biayaOtomatisKk, ringkasSumber, type MixKk } from "./biaya-otomatis";
 import type { KsoAnalyzer, KsoReagent } from "./types";
 
 // angka FIKTIF (repo publik)
@@ -110,4 +110,20 @@ test("Elektrolit DN-X6: paket cartridge → reagen/tes = 0,8 mL × harga/mL, har
   assert.equal(baris[0].biaya_tetap_harian, 2100);   // 21 × 100
   const tanpa = z3({ kategori: "ELEKTRO", kode: "DNX6", label: "DN-X6", modelKey: "m-dn", reagents: [] });
   assert.equal(biayaOtomatisElektro([tanpa], 25).kurang[0].alat, "DN-X6");
+});
+
+// ── 329: sumber harga beli ikut tercatat di rincian ──
+test("ringkas sumber: dihitung per jenis, terbanyak dulu; kosong = string kosong", () => {
+  assert.equal(ringkasSumber(["Price Book", "rata-rata beli 12 bln", "rata-rata beli 12 bln", null]),
+    "HPP: 2 rata-rata beli 12 bln, 1 Price Book, 1 tanpa sumber");
+  assert.equal(ringkasSumber([]), "");
+});
+
+test("rincian KK & hemato menyebut sumber harga beli (SKU + detergent / reagen yang dipakai)", () => {
+  const beli = "rata-rata beli 12 bln";
+  const a = exc({ reagents: exc().reagents.map((r) => ({ ...r, hargaBeliSumber: r.kode === "conc" ? beli : "Price Book" })) });
+  const { baris } = biayaOtomatisKk([a], [mix({ sumber: beli }), mix({ parameter: "SGOT", sku: "S2", sumber: "Price Book" })], 25);
+  assert.match(baris[0].rincian ?? "", /campuran tes riil: 2 SKU, 200 tes terkirim 12 bln · HPP: 2 rata-rata beli 12 bln, 2 Price Book$/);
+  const h = biayaOtomatisHemato([z3({ reagents: z3().reagents.map((r) => ({ ...r, hargaBeliSumber: beli })) })], 25);
+  assert.equal(h.baris[0].rincian, `HPP: 3 ${beli}`);
 });

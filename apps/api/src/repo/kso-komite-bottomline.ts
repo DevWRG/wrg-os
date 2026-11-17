@@ -566,30 +566,60 @@ export async function bacaPortofolio(userId: string) {
   };
 }
 
-// ---------------------------------------------------------------- biaya otomatis dari Price Book (281)
+// ---------------------------------------------------------------- biaya otomatis (281; sumber harga 329)
 //
-// Tombol "Hitung ulang dari Price Book" di tab Bottom Line: layar menjalankan rumus Simulator KSO (apps/web/src/lib/kso)
-// dengan harga beli = HPP Price Book (kso_reagent_hpp_v), lalu mengirim per model reagen/tes + reagen harian.
-// Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan "otomatis") — isian Finance tak ditimpa.
-export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP Price Book";
+// Tombol "Hitung ulang biaya" di tab Bottom Line: layar menjalankan rumus Simulator KSO (apps/web/src/lib/kso)
+// dengan harga beli = rata-rata beli 12 bulan, fallback HPP Price Book (kso_reagent_hpp_v, 329), lalu mengirim per
+// model reagen/tes + reagen harian. Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan
+// "otomatis") — isian Finance tak ditimpa.
+export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP rata-rata beli 12 bln";
 
 const KATEGORI_OTOMATIS = new Set(["HEMATO", "CC", "BG", "ELEKTRO"]);
 
 /** Bahan tombol: master Simulator (alat hematologi, kimia klinik, blood gas, elektrolit yang tertaut model Bottom Line) + hari kerja
- *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit, HPP Price Book per SKU). Izin = ubah angka. */
+ *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit; 329: HPP rata-rata beli 12 bulan per SKU,
+ *  fallback Price Book). Izin = ubah angka. */
 export async function bacaBahanOtomatis(userId: string) {
   await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
   const sql = db();
   const [m, p, mix] = await Promise.all([
     ksoMaster(), bacaParam(),
-    sql`SELECT analyzer, parameter, sku_kode, tes_per_kemasan::float8 AS tes_per_kemasan, kit_12bln::float8 AS kit_12bln, hpp::float8 AS hpp
+    sql`SELECT analyzer, parameter, sku_kode, tes_per_kemasan::float8 AS tes_per_kemasan, kit_12bln::float8 AS kit_12bln, hpp::float8 AS hpp,
+               hpp_sumber
           FROM kso_parameter_mix_v ORDER BY analyzer, parameter, sku_kode`.catch(() => []),
   ]);
   return {
     hariKerja: p.hariKerja,
     analyzers: m.analyzers.filter((a) => KATEGORI_OTOMATIS.has(a.kategori) && a.modelKey),
     mixKk: mix.map((r) => ({ analyzer: String(r.analyzer), parameter: String(r.parameter), sku: String(r.sku_kode),
-      tesPerKemasan: n(r.tes_per_kemasan) ?? 0, kit12bln: n(r.kit_12bln) ?? 0, hpp: n(r.hpp) })),
+      tesPerKemasan: n(r.tes_per_kemasan) ?? 0, kit12bln: n(r.kit_12bln) ?? 0, hpp: n(r.hpp),
+      sumber: (r.hpp_sumber as string | null) ?? null })),
+  };
+}
+
+/** 329: rincian harga beli per barang yang dipakai tombol hitung ulang — angka & sumbernya (rata-rata beli 12 bulan
+ *  atau fallback Price Book), supaya Finance bisa memeriksa satu per satu. Izin = ubah angka (sama dengan tombol). */
+export async function bacaRincianHargaBeli(userId: string) {
+  await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang melihat rincian harga beli.");
+  const sql = db();
+  const [reagen, kk] = await Promise.all([
+    sql`SELECT a.kode AS analyzer, a.kategori, r.nama, h.beli_item_no AS barang, h.beli_faktor::float8 AS faktor,
+               COALESCE(r.harga_beli, h.hpp)::float8 AS hpp, h.hpp_pb::float8 AS hpp_pb,
+               CASE WHEN r.harga_beli IS NOT NULL THEN COALESCE(r.harga_beli_sumber, 'isian Finance') ELSE h.hpp_sumber END AS sumber,
+               h.beli_n_faktur AS n_faktur, h.beli_dari::text AS dari, h.beli_sampai::text AS sampai
+          FROM kso_reagent r JOIN kso_analyzer a ON a.id = r.analyzer_id
+          JOIN kso_reagent_hpp_v h ON h.reagent_id = r.id
+         WHERE a.aktif AND a.model_key IS NOT NULL
+         ORDER BY a.urutan, a.kode, r.urutan, r.kode`,
+    sql`SELECT m.analyzer, m.parameter, m.sku_kode AS barang, m.hpp::float8 AS hpp, m.hpp_pb::float8 AS hpp_pb, m.hpp_sumber AS sumber,
+               m.kit_12bln::float8 AS kit_12bln, b.n_faktur, b.dari::text AS dari, b.sampai::text AS sampai
+          FROM kso_parameter_mix_v m LEFT JOIN harga_beli_rata_v b ON b.item_no = m.sku_kode
+         ORDER BY m.analyzer, m.parameter, m.sku_kode`.catch(() => []),
+  ]);
+  const rapi = (r: Record<string, unknown>) => ({ ...r, hpp: n(r.hpp), hpp_pb: n(r.hpp_pb), n_faktur: r.n_faktur == null ? null : Number(r.n_faktur) });
+  return {
+    reagen: reagen.map((r) => ({ ...rapi(r), faktor: n(r.faktor) })),
+    kk: kk.map((r) => ({ ...rapi(r), kit_12bln: n(r.kit_12bln) ?? 0 })),
   };
 }
 
