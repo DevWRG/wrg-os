@@ -10,6 +10,10 @@ import {
   balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah, CONTOH_PLAN_TEKNISI, CONTOH_REPORT_TEKNISI,
 } from "./teknisi.js";
 
+// Tes format di bawah menguji cara parser MEMBACA pesan; isian wajib (Kegiatan / Jumlah Tes / Sparepart,
+// 17 Nov 2026) diuji tersendiri di tes "isian wajib" — galat itu disaring di sini.
+const galatFormat = (r: { errors: string[] }) => r.errors.filter((e) => !/wajib diisi \(tulis/.test(e));
+
 const NOW = Date.parse("2026-11-07T01:00:00Z"); // 7 Nov 2026 08:00 WIB
 
 test("plan: contoh spesifikasi — 4 item, SN vs nama alat, tiket", () => {
@@ -17,7 +21,7 @@ test("plan: contoh spesifikasi — 4 item, SN vs nama alat, tiket", () => {
     "#PLAN 7 Nov\n1. RSUD Trenggalek | 0832 | PM\n2. RS PTP Jember | CM250 | Service T-123\n3. PKM Bakunase | Z360 | Install\n4. RS Al Irsyad | DxH 560 | Call",
     NOW,
   );
-  assert.deepEqual(p.errors, []);
+  assert.deepEqual(galatFormat(p), []);
   assert.equal(p.tanggal, "2026-11-07");
   assert.equal(p.items.length, 4);
   assert.deepEqual(p.items[0], { urut: 1, faskes: "RSUD Trenggalek", sn: "0832", alat: null, jenis: "PM", tiket: null });
@@ -64,7 +68,7 @@ test("report: satu alat merujuk plan (#REPORT 1)", () => {
   const r = parseTeknisiReport(
     "#REPORT 1\nStatus: Selesai\nKegiatan: bersihkan probe, kalibrasi\nJumlah Tes: 2.150\nPergantian Sparepart: lampu halogen 1\nCatatan: -",
   );
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok.length, 1);
   const b = r.blok[0];
   assert.equal(b.planNo, 1);
@@ -78,7 +82,7 @@ test("report: satu alat tanpa plan (RS/Alat/SN/Jenis)", () => {
   const r = parseTeknisiReport(
     "#REPORT\nRS: RS Al Irsyad\nAlat: DxH 560\nSN: 4471\nJenis: Service\nStatus: Selesai\nKegiatan: reset sensor",
   );
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.faskes, "RS Al Irsyad");
   const b = r.blok[0];
   assert.equal(b.planNo, null);
@@ -107,7 +111,7 @@ test("report: banyak alat satu faskes — blok bernomor, Catatan di luar blok", 
       "Catatan: analis Bu Rina",
     ].join("\n"),
   );
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.faskes, "RSUD Trenggalek");
   assert.equal(r.catatan, "analis Bu Rina");
   assert.equal(r.blok.length, 2);
@@ -123,7 +127,7 @@ test("report: banyak alat satu faskes — blok bernomor, Catatan di luar blok", 
 
 test("report: label tak peka huruf + alias + kegiatan multi-baris", () => {
   const r = parseTeknisiReport("#report 2\nSTATUS: ok\ntindakan: ganti lampu\nlalu kalibrasi ulang\ntes: 1,200");
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok[0].kegiatan, "ganti lampu\nlalu kalibrasi ulang");
   assert.equal(r.blok[0].jumlahTes, 1200);
 });
@@ -132,7 +136,7 @@ test("report: Pending tanpa alasan ditolak; alasan dari Catatan diterima", () =>
   const tolak = parseTeknisiReport("#REPORT 1\nStatus: Pending");
   assert.match(tolak.errors.join(" "), /status Pending perlu alasan/);
   const ok = parseTeknisiReport("#REPORT 1\nStatus: Pending\nCatatan: nunggu reagen");
-  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(galatFormat(ok), []);
   assert.equal(ok.blok[0].alasan, "nunggu reagen");
 });
 
@@ -194,7 +198,7 @@ test("balasan plan & format salah", () => {
 
 test("report: jenis default dari shortcut (#servis) bila blok tak menulis jenis", () => {
   const r = parseTeknisiReport("#REPORT\nRS: RS A\nSN: 1234\nStatus: Selesai", undefined, { jenisDefault: "Service" });
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok[0].jenis, "Service");
   const tulis = parseTeknisiReport("#REPORT\nRS: RS A\nSN: 1234\nJenis: PM\nStatus: Selesai", undefined, { jenisDefault: "Service" });
   assert.equal(tulis.blok[0].jenis, "PM");
@@ -218,11 +222,11 @@ test("teks galat tanpa kurung sudut — WhatsApp membuang <...>", () => {
 
 test("report: label bertanda tebal WA (*Status:*) terbaca", () => {
   const r = parseTeknisiReport("#REPORT 1\n*Status:* Selesai\n*Kegiatan:* _cek_ tray\n~Catatan:~ -");
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok[0].status, "Selesai");
   assert.equal(r.blok[0].kegiatan, "cek tray");
   const p = parseTeknisiPlan("#PLAN\n1. *RSUD A* | 0832 | *PM*");
-  assert.deepEqual(p.errors, []);
+  assert.deepEqual(galatFormat(p), []);
   assert.deepEqual([p.items[0].faskes, p.items[0].jenis], ["RSUD A", "PM"]);
 });
 
@@ -230,7 +234,7 @@ test("report: baris kosong antara judul blok dan isinya tak memutus blok", () =>
   const r = parseTeknisiReport(
     "#REPORT\nRS: RSUD A\n\n1) SN 0832 | EXC200 | PM\n\nStatus: Selesai\n\nKegiatan: bersihkan probe\n\n2) #2\n\nStatus: Pending reagen\n\nCatatan: analis Bu Rina",
   );
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok.length, 2);
   assert.deepEqual([r.blok[0].status, r.blok[0].kegiatan], ["Selesai", "bersihkan probe"]);
   assert.deepEqual([r.blok[1].planNo, r.blok[1].status, r.blok[1].alasan], [2, "Pending", "reagen"]);
@@ -241,14 +245,14 @@ test("report: baris kosong antara judul blok dan isinya tak memutus blok", () =>
 
 test("report: Catatan tepat di bawah isian blok = catatan alat itu", () => {
   const r = parseTeknisiReport("#REPORT\nRS: RSUD A\n\n1) SN 0832 | EXC200 | PM\nStatus: Selesai\nCatatan: tray retak");
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok[0].catatan, "tray retak");
   assert.equal(r.catatan, null);
 });
 
 test("report: Kegiatan berupa daftar bernomor + paragraf kedua", () => {
   const r = parseTeknisiReport("#REPORT 1\nStatus: Selesai\nKegiatan:\n1. bersihkan probe\n2. kalibrasi\n\nlanjut cek QC");
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok.length, 1);
   assert.equal(r.blok[0].kegiatan, "1. bersihkan probe\n2. kalibrasi\nlanjut cek QC");
 });
@@ -257,7 +261,7 @@ test("report: daftar kegiatan di blok, lalu blok berikutnya tetap terbaca", () =
   const r = parseTeknisiReport(
     "#REPORT\nRS: RSUD A\n\n1) SN 0832 | EXC200 | PM\nStatus: Selesai\nKegiatan:\n1. bersihkan probe\n2. kalibrasi\n2) SN 1194 | BS-240 | Service\nStatus: Selesai\nPergantian Sparepart: -\n\n3) Z360\nStatus: Revisit",
   );
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.blok.length, 3);
   assert.equal(r.blok[0].kegiatan, "1. bersihkan probe\n2. kalibrasi");
   assert.deepEqual([r.blok[1].sn, r.blok[1].jenis], ["1194", "Service"]);
@@ -290,7 +294,7 @@ test("report: judul blok format #PLAN (RS | SN), nomor tanpa titik, label kecil 
     "status : selesai",
   ].join("\n");
   const r = parseTeknisiReport(body);
-  assert.deepEqual(r.errors, []);
+  assert.deepEqual(galatFormat(r), []);
   assert.equal(r.faskes, "RS Ujif175 Alfa");
   assert.equal(r.blok.length, 3);
   assert.deepEqual(r.blok.map((b) => [b.faskes, b.sn ?? b.alat, b.status]), [
@@ -303,12 +307,36 @@ test("report: judul blok format #PLAN (RS | SN), nomor tanpa titik, label kecil 
 
 test("report: judul RS | alat | jenis → faskes + jenis; format SN | alat | jenis tetap jalan", () => {
   const a = parseTeknisiReport("#REPORT\n1) PKM Bakunase | Z360 | Install\nStatus: Selesai");
-  assert.deepEqual(a.errors, []);
+  assert.deepEqual(galatFormat(a), []);
   assert.equal(a.blok[0].faskes, "PKM Bakunase");
   assert.equal(a.blok[0].jenis, "Install");
   const b = parseTeknisiReport("#REPORT\nRS: RS A\n1) SN 0832 | Zybio EXC200 | PM\nStatus: Selesai");
-  assert.deepEqual(b.errors, []);
+  assert.deepEqual(galatFormat(b), []);
   assert.equal(b.blok[0].faskes ?? null, null);
   assert.equal(b.blok[0].sn, "0832");
   assert.equal(b.blok[0].jenis, "PM");
+});
+
+
+test("report: Kegiatan, Jumlah Tes, Pergantian Sparepart wajib (\"-\" boleh), kecuali Batal", () => {
+  const kurang = parseTeknisiReport("#REPORT 1\nStatus: Selesai\nKegiatan: cek");
+  assert.match(kurang.errors.join(" "), /Blok 1: `Jumlah Tes:`, `Pergantian Sparepart:` wajib diisi/);
+  const kosong = parseTeknisiReport("#REPORT 1\nStatus: Selesai\nKegiatan:\nJumlah Tes: -\nPergantian Sparepart: -");
+  assert.match(kosong.errors.join(" "), /Blok 1: `Kegiatan:` wajib diisi/);
+  const lengkap = parseTeknisiReport("#REPORT 1\nStatus: Pending sparepart\nKegiatan: cek tray\nJumlah Tes: -\nPergantian Sparepart: tidak ada");
+  assert.deepEqual(lengkap.errors, []);
+  assert.equal(lengkap.blok[0].jumlahTes, null);
+  assert.equal(lengkap.blok[0].sparepart, null);
+  const batal = parseTeknisiReport("#REPORT 1\nStatus: Batal customer tutup");
+  assert.deepEqual(batal.errors, []);
+  const blok = parseTeknisiReport("#REPORT\nRS: RS A\n1) #1\nStatus: Selesai\nKegiatan: PM\nJumlah Tes: 10\nPergantian Sparepart: -\n2) #2\nStatus: Selesai\nKegiatan: PM");
+  assert.deepEqual(blok.errors, ["Blok 2: `Jumlah Tes:`, `Pergantian Sparepart:` wajib diisi (tulis `-` bila tidak ada)."]);
+});
+
+test("contoh #REPORT di balasan bot sendiri lolos validasi", () => {
+  const blokContoh = CONTOH_REPORT_TEKNISI.split("\n\n").filter((x) => x.includes("#REPORT"));
+  for (const t of blokContoh) {
+    const teks = t.slice(t.indexOf("#REPORT"));
+    assert.deepEqual(parseTeknisiReport(teks).errors.filter((e) => !/RS:|identitas/.test(e)), [], teks);
+  }
 });

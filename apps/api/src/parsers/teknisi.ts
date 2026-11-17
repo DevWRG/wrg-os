@@ -273,7 +273,11 @@ export function parseTeknisiReport(
   let last: { b: TeknisiReportBlok | null; f: Field } | null = null;
   const tambah = (prev: string | null, v: string) => (prev ? `${prev}\n${v}` : v);
 
+  // Label yang DITULIS per blok (nilai "-" tetap terhitung ditulis) — untuk isian wajib di bawah.
+  const dilabel = new Map<TeknisiReportBlok, Set<Field>>();
   const isi = (b: TeknisiReportBlok, f: Field, v: string, visit: boolean) => {
+    if (!dilabel.has(b)) dilabel.set(b, new Set());
+    dilabel.get(b)!.add(f);
     switch (f) {
       case "faskes": if (v) out.faskes = v; return;
       case "catatan":
@@ -380,6 +384,20 @@ export function parseTeknisiReport(
       const alasan = b.catatan ?? (out.blok.length === 1 ? out.catatan : null);
       if (alasan) b.alasan = alasan;
       else out.errors.push(`Blok ${b.nomor}: status ${b.status} perlu alasan (mis. \`Status: ${b.status} sparepart belum datang\`).`);
+    }
+    // Isian wajib (keputusan user 17 Nov 2026): Kegiatan, Jumlah Tes, Pergantian Sparepart. Jumlah Tes &
+    // Sparepart boleh "-" (tak ada / alat tanpa penghitung) asal labelnya ditulis. Batal dikecualikan —
+    // pekerjaannya tidak dikerjakan, cukup alasannya.
+    if (b.status && b.status !== "Batal") {
+      const ada = dilabel.get(b) ?? new Set<Field>();
+      const kurang = [
+        !b.kegiatan?.trim() ? "Kegiatan" : null,
+        !ada.has("tes") ? "Jumlah Tes" : null,
+        !ada.has("sparepart") ? "Pergantian Sparepart" : null,
+      ].filter(Boolean);
+      if (kurang.length) {
+        out.errors.push(`Blok ${b.nomor}: ${kurang.map((k) => `\`${k}:\``).join(", ")} wajib diisi (tulis \`-\` bila tidak ada).`);
+      }
     }
   }
   // Galat dari label yang sama bisa tercatat dua kali (mis. jenis di judul & baris).
@@ -516,14 +534,24 @@ export const CONTOH_REPORT_TEKNISI = [
   "Jenis: Service",
   "Status: Selesai",
   "Kegiatan: reset sensor",
+  "Jumlah Tes: 980",
+  "Pergantian Sparepart: sensor HGB",
   "",
   "beberapa alat di satu RS:",
   "#REPORT",
   "RS: RSUD Trenggalek",
   "1) SN 0832 | EXC200 | PM",
   "Status: Selesai",
+  "Kegiatan: PM bulanan",
+  "Jumlah Tes: 1200",
+  "Pergantian Sparepart: -",
   "2) #2",
   "Status: Pending sparepart",
+  "Kegiatan: cek error tray",
+  "Jumlah Tes: -",
+  "Pergantian Sparepart: -",
+  "",
+  "Kegiatan, Jumlah Tes, Pergantian Sparepart wajib (tulis - bila tidak ada).",
 ].join("\n");
 
 // ---------------------------------------------------------------------------
