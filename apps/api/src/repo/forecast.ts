@@ -1447,6 +1447,10 @@ export interface RekapBarang {
   cabang: RekapCabang[];
   /** Baris yang masih bisa ditautkan ke PO (belum tertaut, atau PO-nya mati). */
   belumPo: number;
+  /** Stok di gudang pusat (GUDANG_PUSAT) saat rekap dibuka. */
+  stokPusat: number;
+  /** Yang perlu dibeli: total usulan semua cabang − stok pusat, minimal 0. */
+  kebutuhanBersih: number;
 }
 
 export interface RekapResult {
@@ -1454,6 +1458,18 @@ export interface RekapResult {
   barang: RekapBarang[];
   /** Dokumen bulan itu yang masih menunggu review HoD Sales — belum masuk rekap. */
   menungguReview: number;
+  gudangPusat: { kode: string; nama: string };
+}
+
+// Stok di Accurate praktis hanya tercatat di Gudang Surabaya (cek prod 17 Nov
+// 2026: 1.181 barang di SBY, gudang cabang lain kosong) — Purchasing membeli
+// terpusat. Rekap memotong total usulan semua cabang dengan stok gudang ini
+// (keputusan user 17 Nov 2026).
+export const GUDANG_PUSAT = "SBY";
+
+/** Kebutuhan bersih = total usulan semua cabang − stok pusat, minimal 0. */
+export function kebutuhanBersih(totalQty: number, stokPusat: number): number {
+  return Math.max(0, Math.round(totalQty - stokPusat));
 }
 
 /** Baris bisa (ulang) ditautkan ke PO: disetujui & belum tertaut, atau PO-nya mati. */
@@ -1469,7 +1485,10 @@ export function kelompokkanRekap(
   for (const r of rows) {
     let b = map.get(r.itemId);
     if (!b) {
-      b = { itemId: r.itemId, itemNo: r.itemNo, itemName: r.itemName, kategori: r.kategori, totalQty: 0, cabang: [], belumPo: 0 };
+      b = {
+        itemId: r.itemId, itemNo: r.itemNo, itemName: r.itemName, kategori: r.kategori, totalQty: 0, cabang: [], belumPo: 0,
+        stokPusat: 0, kebutuhanBersih: 0,
+      };
       map.set(r.itemId, b);
     }
     b.cabang.push({
@@ -1477,6 +1496,7 @@ export function kelompokkanRekap(
       qty: r.qty, status: r.status, poNumber: r.poNumber, poMati: r.poMati, notes: r.notes,
     });
     b.totalQty += r.qty;
+    b.kebutuhanBersih = kebutuhanBersih(b.totalQty, b.stokPusat);
     if (bisaTautPo(r)) b.belumPo++;
   }
   return [...map.values()].sort(
@@ -1524,7 +1544,22 @@ export async function rekapPurchasing(bulan: string, brandFilter?: string): Prom
       notes: r.notes ? String(r.notes) : null,
     })),
   );
-  return { bulan: periode.slice(0, 7), barang, menungguReview: Number(n) };
+  const ids = barang.map((b) => b.itemId);
+  const [stokRows, pusat] = await Promise.all([
+    ids.length
+      ? sql`SELECT item_id, quantity FROM item_stock_branch WHERE warehouse_kode = ${GUDANG_PUSAT} AND item_id = ANY(${ids}::bigint[])`
+      : Promise.resolve([] as { item_id: unknown; quantity: unknown }[]),
+    sql`SELECT nama FROM warehouse WHERE kode = ${GUDANG_PUSAT}`,
+  ]);
+  const stok = new Map(stokRows.map((r) => [Number(r.item_id), Number(r.quantity)]));
+  for (const b of barang) {
+    b.stokPusat = stok.get(b.itemId) ?? 0;
+    b.kebutuhanBersih = kebutuhanBersih(b.totalQty, b.stokPusat);
+  }
+  return {
+    bulan: periode.slice(0, 7), barang, menungguReview: Number(n),
+    gudangPusat: { kode: GUDANG_PUSAT, nama: pusat[0]?.nama ? String(pusat[0].nama) : GUDANG_PUSAT },
+  };
 }
 
 export interface LinkPoRekapResult {
@@ -1590,11 +1625,14 @@ export async function rekapXlsx(bulan: string, brand?: string): Promise<Buffer |
     { header: "Kategori", key: "kategori", width: 10 },
     ...cabang.map(([kode, nama]) => ({ header: nama.replace(/^Gudang /, ""), key: `c_${kode}`, width: 12, style: { numFmt: "#,##0" } })),
     { header: "Total", key: "total", width: 12, style: { numFmt: "#,##0" } },
+    { header: `Stok ${rekap.gudangPusat.nama.replace(/^Gudang /, "")} (pusat)`, key: "stok_pusat", width: 16, style: { numFmt: "#,##0" } },
+    { header: "Kebutuhan Bersih", key: "bersih", width: 16, style: { numFmt: "#,##0" } },
     { header: "No. PO", key: "po", width: 24 },
   ];
   rekap.barang.forEach((b, i) => {
     const row: Record<string, unknown> = {
       no: i + 1, item_no: b.itemNo ?? "", item_name: b.itemName, kategori: b.kategori ?? "", total: b.totalQty,
+      stok_pusat: b.stokPusat, bersih: b.kebutuhanBersih,
       po: [...new Set(b.cabang.map((c) => c.poNumber).filter(Boolean))].join(", "),
     };
     for (const c of b.cabang) row[`c_${c.warehouseKode}`] = (Number(row[`c_${c.warehouseKode}`] ?? 0) + c.qty);
