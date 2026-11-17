@@ -243,7 +243,11 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
     const agenda = tab === "agenda"
       ? await tx`select forum_id::int, tanggal::text, hari, mode::text, jenis, urut, rencana_id::int, nomor, am_nama, faskes_nama,
                         alat_nama, capex::float8 as capex, pola_gerbang, gerbang_merah, status, pendapat_hod_masuk::int
-                   from kso.v_agenda where tanggal >= kso.hari_ini() - 14 order by tanggal desc, jenis, urut`
+                   from kso.v_agenda
+                  -- 17 Nov 2026 (permintaan user): Agenda Forum hanya yang SIAP dibahas — Agenda A yang belum dirumuskan
+                  -- Komite (DIAGENDAKAN) dan Agenda B (laporan jalur cepat) forum hari ini/mendatang. Sisanya di tab Riwayat.
+                  where (jenis = 'A' and status = 'DIAGENDAKAN') or (jenis = 'B' and tanggal >= kso.hari_ini())
+                  order by tanggal desc, jenis, urut`
       : [];
     // F170 v2 (Pedoman): bukti volume zona Forum & Direktur menunggu verifikasi Sekretaris
     const verifikasi = tab === "sekretariat"
@@ -445,6 +449,28 @@ export async function berkasSph(userId: string, tab: TabKso, id: number, sphId: 
     const [s] = await tx.unsafe(`select ${KOLOM_SPH_KSO} from kso.sph where id = $1 and rencana_id = $2`, [sphId, id]);
     if (!s) throw new GalatKso(404, "SPH tidak ada, atau di luar akses tab ini.");
     return s as unknown as SphKso;
+  });
+}
+
+/**
+ * Riwayat forum (17 Nov 2026, permintaan user): semua forum terbaru dulu, tiap usulan dengan status sekarang, usulan Komite
+ * di forum itu, dan putusan Direksi terakhir. RLS boleh_lihat menentukan usulan yang tampil; capex disaring untuk tab
+ * tanpa hak angka.
+ */
+export async function riwayatForum(userId: string, tab: TabKso): Promise<Record<string, unknown>> {
+  return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
+    const mode = await modeUntuk(u, eff, tab);
+    const baris = await tx`
+      select a.forum_id::int, a.tanggal::text, a.hari, a.mode::text, a.jenis, a.urut, a.rencana_id::int, a.nomor, a.am_nama,
+             a.faskes_nama, a.alat_nama, a.capex::float8 as capex, a.pola_gerbang, a.status,
+             (select uk.usulan::text from kso.usulan_komite_catatan uk
+               where uk.rencana_id = a.rencana_id and uk.forum_id = a.forum_id order by uk.at desc limit 1) as usulan,
+             (select pd.putusan::text from kso.putusan_direksi_catatan pd
+               where pd.rencana_id = a.rencana_id order by pd.at desc limit 1) as putusan
+        from kso.v_agenda a
+       where a.rencana_id is not null
+       order by a.tanggal desc, a.jenis, a.urut`;
+    return { tab, baris: mode ? baris.map((b) => ({ ...b, capex: null })) : baris };
   });
 }
 
