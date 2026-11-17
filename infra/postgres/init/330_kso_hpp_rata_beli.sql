@@ -1,4 +1,4 @@
--- 329 — F172: biaya reagen KSO dari HPP rata-rata PEMBELIAN 12 bulan, bukan HPP Price Book (#2382).
+-- 330 — F172: biaya reagen KSO dari HPP rata-rata PEMBELIAN 12 bulan, bukan HPP Price Book (#2382).
 --
 -- Keputusan user 17 Nov 2026: HPP Price Book = harga principal terbaru; untuk KSO yang dipakai HPP rata-rata
 -- dari pembelian sebelumnya. Sumbernya faktur pembelian Accurate:
@@ -46,7 +46,7 @@ create table if not exists public.accurate_purchase_line_riwayat (
 create index if not exists accurate_purchase_line_riwayat_item_idx on public.accurate_purchase_line_riwayat (item_no, trans_date desc);
 create index if not exists accurate_purchase_line_riwayat_invoice_idx on public.accurate_purchase_line_riwayat (invoice_id);
 comment on table public.accurate_purchase_line_riwayat is
-  '329: baris faktur pembelian Accurate yang lebih tua dari cakupan cermin F152 — bahan HPP rata-rata beli 12 bulan (harga_beli_rata_v). Diisi POST /accurate/sync/purchase-invoice-riwayat.';
+  '330: baris faktur pembelian Accurate yang lebih tua dari cakupan cermin F152 — bahan HPP rata-rata beli 12 bulan (harga_beli_rata_v). Diisi POST /accurate/sync/purchase-invoice-riwayat.';
 
 create or replace view public.harga_beli_rata_v as
 with baris as (
@@ -72,14 +72,14 @@ select item_no, sum(qty_satuan) as qty, sum(nilai) as nilai,
  group by item_no
 having sum(qty_satuan) > 0;
 comment on view public.harga_beli_rata_v is
-  '329: HPP rata-rata tertimbang pembelian 12 bulan per kode barang Accurate (sesudah diskon, dikurangi retur; satuan barang Accurate).';
+  '330: HPP rata-rata tertimbang pembelian 12 bulan per kode barang Accurate (sesudah diskon, dikurangi retur; satuan barang Accurate).';
 
 do $do$
 begin
   if to_regclass('public.kso_reagent') is null then return; end if;
   alter table public.kso_reagent add column if not exists beli_faktor numeric check (beli_faktor is null or beli_faktor > 0);
   comment on column public.kso_reagent.beli_faktor is
-    '329: jumlah satuan beli Accurate per kemasan Simulator; NULL = sama dengan pricebook_faktor.';
+    '330: jumlah satuan beli Accurate per kemasan Simulator; NULL = sama dengan pricebook_faktor.';
   -- Conc Detergent kimia klinik: Price Book per jeriken 5L (faktor 4 → kemasan Simulator 4×5L), tetapi barang
   -- Accurate-nya satu SET isi 4×5L → satu satuan beli = satu kemasan Simulator.
   if to_regclass('public.kso_analyzer') is not null then
@@ -118,7 +118,7 @@ begin
    where r.pricebook_kode is not null or r.pricebook_nama is not null or r.accurate_item_no is not null
   $v$;
   comment on view public.kso_reagent_hpp_v is
-    '329: HPP per reagen Simulator KSO = rata-rata beli 12 bulan × faktor beli; fallback HPP Price Book (periode terbaru) × faktor kemasan.';
+    '330: HPP per reagen Simulator KSO = rata-rata beli 12 bulan × faktor beli; fallback HPP Price Book (periode terbaru) × faktor kemasan.';
 end $do$;
 
 -- ---------- campuran tes riil KK: HPP per SKU = rata-rata beli 12 bulan → fallback Price Book ----------
@@ -157,7 +157,7 @@ begin
    where a.kategori = 'CC' and a.model_key is not null
   $v$;
   comment on view public.kso_parameter_mix_v is
-    '329: campuran tes riil Kimia Klinik per alat (DO 12 bulan × tes per kit) + HPP per SKU (rata-rata beli 12 bulan, fallback Price Book).';
+    '330: campuran tes riil Kimia Klinik per alat (DO 12 bulan × tes per kit) + HPP per SKU (rata-rata beli 12 bulan, fallback Price Book).';
 end $do$;
 
 do $do$

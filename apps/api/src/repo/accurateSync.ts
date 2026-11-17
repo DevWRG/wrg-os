@@ -1654,7 +1654,7 @@ async function syncPurchaseInvoicesInner(
   };
 }
 
-// ── F172 (329) Riwayat faktur pembelian → HPP rata-rata beli 12 bulan ───────
+// ── F172 (330) Riwayat faktur pembelian → HPP rata-rata beli 12 bulan ───────
 //
 // Faktur pembelian bertanggal [hari ini − `bulan` bulan, AP_ACCURATE_SINCE) → accurate_purchase_line_riwayat.
 // Yang ≥ AP_ACCURATE_SINCE sudah dipegang cermin F152. list.do tak bisa difilter tanggal (filter.transDate

@@ -1,4 +1,4 @@
-// F172 (329, #2382) — riwayat faktur pembelian Accurate untuk HPP rata-rata beli 12 bulan.
+// F172 (330, #2382) — riwayat faktur pembelian Accurate untuk HPP rata-rata beli 12 bulan.
 //
 // Cermin F152 (accurate_purchase_invoice) baru mulai AP_ACCURATE_SINCE (1 Okt 2026). Faktur yang lebih tua
 // ditarik ke tabel terpisah accurate_purchase_line_riwayat — HANYA sebagai bahan harga (harga_beli_rata_v),

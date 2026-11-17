@@ -23,7 +23,7 @@ export interface KsoReagent {
   hargaPl: number | null;
   /** Harga beli WRG per kemasan (Finance, migrasi 264). null = belum diisi. */
   hargaBeli: number | null;
-  /** 329: asal hargaBeli — isian Finance / 'rata-rata beli 12 bln' / 'Price Book'. */
+  /** 330: asal hargaBeli — isian Finance / 'rata-rata beli 12 bln' / 'Price Book'. */
   hargaBeliSumber?: string | null;
   flags: Record<string, unknown>;
 }
@@ -96,7 +96,7 @@ export async function master(): Promise<KsoMaster> {
              COALESCE(r.harga_beli, h.hpp) AS harga_beli, r.flags,
              CASE WHEN r.harga_beli IS NOT NULL THEN COALESCE(r.harga_beli_sumber, 'isian Finance') ELSE h.hpp_sumber END AS harga_beli_sumber
         FROM kso_reagent r
-        -- 329: harga beli = rata-rata beli 12 bulan (fallback HPP Price Book) bila tak diisi manual
+        -- 330: harga beli = rata-rata beli 12 bulan (fallback HPP Price Book) bila tak diisi manual
         LEFT JOIN kso_reagent_hpp_v h ON h.reagent_id = r.id
        ORDER BY r.analyzer_id, r.urutan, r.kode`,
     sql<Record<string, unknown>[]>`

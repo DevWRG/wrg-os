@@ -17,7 +17,7 @@ export interface BarisOtomatis {
 }
 export interface HasilOtomatis { baris: BarisOtomatis[]; kurang: { alat: string; reagen: string[] }[] }
 
-/** 329: ringkasan asal harga beli yang ikut dihitung, mis. "HPP: 3 rata-rata beli 12 bln, 1 Price Book". */
+/** 330: ringkasan asal harga beli yang ikut dihitung, mis. "HPP: 3 rata-rata beli 12 bln, 1 Price Book". */
 export function ringkasSumber(sumber: (string | null | undefined)[]): string {
   const hit = new Map<string, number>();
   for (const s of sumber) hit.set(s ?? "tanpa sumber", (hit.get(s ?? "tanpa sumber") ?? 0) + 1);
@@ -62,7 +62,7 @@ export function biayaOtomatisHemato(analyzers: KsoAnalyzer[], hariKerja: number)
 /** Baris campuran tes riil per SKU (API kso_parameter_mix_v): kit reagen terkirim 12 bulan ke faskes yang memakai alat ini. */
 export interface MixKk {
   analyzer: string; parameter: string; sku: string; tesPerKemasan: number; kit12bln: number; hpp: number | null;
-  /** 329: 'rata-rata beli 12 bln' / 'Price Book'. */
+  /** 330: 'rata-rata beli 12 bln' / 'Price Book'. */
   sumber?: string | null;
 }
 

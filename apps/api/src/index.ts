@@ -1660,7 +1660,7 @@ app.post("/accurate/sync/purchase-invoices", async (c) => {
   return c.json({ ok: true, started: true }, 202);
 });
 
-// F172 (329) — riwayat faktur pembelian SEBELUM cakupan F152 → bahan HPP rata-rata beli 12 bulan (harga_beli_rata_v).
+// F172 (330) — riwayat faktur pembelian SEBELUM cakupan F152 → bahan HPP rata-rata beli 12 bulan (harga_beli_rata_v).
 // Latar (202); hasil di accurate_sync_state entity 'purchase-invoice-riwayat'. ?bulan=N (1–24, default 12).
 app.post("/accurate/sync/purchase-invoice-riwayat", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
@@ -3034,14 +3034,14 @@ app.get("/kso-komite/portofolio", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaPortofolio(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
-// 281: bahan tombol "Hitung ulang biaya" (izin ubah angka Bottom Line; 329: harga = rata-rata beli 12 bln).
+// 281: bahan tombol "Hitung ulang biaya" (izin ubah angka Bottom Line; 330: harga = rata-rata beli 12 bln).
 app.get("/kso-komite/bottom-line/bahan-otomatis", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const u = ksoUser(c);
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   try { return c.json(await bacaBahanOtomatis(u)); } catch (e) { return ksoKomiteErr(c, e); }
 });
-// 329: rincian harga beli per barang (rata-rata beli 12 bulan / fallback Price Book) — izin ubah angka Bottom Line.
+// 330: rincian harga beli per barang (rata-rata beli 12 bulan / fallback Price Book) — izin ubah angka Bottom Line.
 app.get("/kso-komite/bottom-line/harga-beli", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const u = ksoUser(c);

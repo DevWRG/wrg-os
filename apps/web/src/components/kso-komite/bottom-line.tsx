@@ -289,7 +289,7 @@ function Parameter({ p, boleh, onBerubah }: { p: Param; boleh: boolean; onBeruba
   );
 }
 
-// 281 — Finance: biaya reagen dari rumus Simulator KSO × harga beli (329: rata-rata beli 12 bulan, fallback HPP
+// 281 — Finance: biaya reagen dari rumus Simulator KSO × harga beli (330: rata-rata beli 12 bulan, fallback HPP
 // Price Book). Reagen per tes +
 // reagen harian (startup/shutdown) disimpan; bottom per tes lalu ikut test/bulan, hari kerja, dan masa KSO.
 // Model yang biayanya diisi tangan Finance tidak ditimpa (API).
@@ -322,7 +322,7 @@ function HitungPriceBook({ onBerubah }: { onBerubah: () => void }) {
   );
 }
 
-// 329 — rincian harga beli per barang yang dipakai tombol di atas: HPP rata-rata pembelian 12 bulan (faktur
+// 330 — rincian harga beli per barang yang dipakai tombol di atas: HPP rata-rata pembelian 12 bulan (faktur
 // pembelian Accurate) atau fallback HPP Price Book bila barang tak dibeli 12 bulan terakhir. Selisih terhadap
 // Price Book ditampilkan supaya satuan yang keliru (mis. beli per set, Price Book per botol) cepat ketahuan.
 interface BarisHargaBeli {

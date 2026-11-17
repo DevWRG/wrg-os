@@ -566,10 +566,10 @@ export async function bacaPortofolio(userId: string) {
   };
 }
 
-// ---------------------------------------------------------------- biaya otomatis (281; sumber harga 329)
+// ---------------------------------------------------------------- biaya otomatis (281; sumber harga 330)
 //
 // Tombol "Hitung ulang biaya" di tab Bottom Line: layar menjalankan rumus Simulator KSO (apps/web/src/lib/kso)
-// dengan harga beli = rata-rata beli 12 bulan, fallback HPP Price Book (kso_reagent_hpp_v, 329), lalu mengirim per
+// dengan harga beli = rata-rata beli 12 bulan, fallback HPP Price Book (kso_reagent_hpp_v, 330), lalu mengirim per
 // model reagen/tes + reagen harian. Disimpan HANYA ke model yang belum diisi manual (sumber kosong / berawalan
 // "otomatis") — isian Finance tak ditimpa.
 export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP rata-rata beli 12 bln";
@@ -577,7 +577,7 @@ export const SUMBER_OTOMATIS = "otomatis: rumus Simulator × HPP rata-rata beli 
 const KATEGORI_OTOMATIS = new Set(["HEMATO", "CC", "BG", "ELEKTRO"]);
 
 /** Bahan tombol: master Simulator (alat hematologi, kimia klinik, blood gas, elektrolit yang tertaut model Bottom Line) + hari kerja
- *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit; 329: HPP rata-rata beli 12 bulan per SKU,
+ *  default + campuran tes riil Kimia Klinik (284: kit reagen DO 12 bulan × tes per kit; 330: HPP rata-rata beli 12 bulan per SKU,
  *  fallback Price Book). Izin = ubah angka. */
 export async function bacaBahanOtomatis(userId: string) {
   await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang menghitung ulang biaya.");
@@ -597,7 +597,7 @@ export async function bacaBahanOtomatis(userId: string) {
   };
 }
 
-/** 329: rincian harga beli per barang yang dipakai tombol hitung ulang — angka & sumbernya (rata-rata beli 12 bulan
+/** 330: rincian harga beli per barang yang dipakai tombol hitung ulang — angka & sumbernya (rata-rata beli 12 bulan
  *  atau fallback Price Book), supaya Finance bisa memeriksa satu per satu. Izin = ubah angka (sama dengan tombol). */
 export async function bacaRincianHargaBeli(userId: string) {
   await wajib(userId, "angka", "Hanya Finance (centang ubah angka Bottom Line) yang melihat rincian harga beli.");

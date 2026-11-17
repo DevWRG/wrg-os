@@ -20,7 +20,7 @@ export interface KsoReagent {
   hargaPl: number | null;
   /** Harga beli WRG (Finance, migrasi 264), satuan sama dengan hargaDp. null = belum diisi. */
   hargaBeli: number | null;
-  /** 329: asal hargaBeli — isian Finance / 'rata-rata beli 12 bln' / 'Price Book'. */
+  /** 330: asal hargaBeli — isian Finance / 'rata-rata beli 12 bln' / 'Price Book'. */
   hargaBeliSumber?: string | null;
   flags: Record<string, unknown>;
 }

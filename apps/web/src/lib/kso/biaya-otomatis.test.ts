@@ -112,7 +112,7 @@ test("Elektrolit DN-X6: paket cartridge → reagen/tes = 0,8 mL × harga/mL, har
   assert.equal(biayaOtomatisElektro([tanpa], 25).kurang[0].alat, "DN-X6");
 });
 
-// ── 329: sumber harga beli ikut tercatat di rincian ──
+// ── 330: sumber harga beli ikut tercatat di rincian ──
 test("ringkas sumber: dihitung per jenis, terbanyak dulu; kosong = string kosong", () => {
   assert.equal(ringkasSumber(["Price Book", "rata-rata beli 12 bln", "rata-rata beli 12 bln", null]),
     "HPP: 2 rata-rata beli 12 bln, 1 Price Book, 1 tanpa sumber");
