@@ -94,6 +94,9 @@ interface RekapBarang {
   totalQty: number;
   cabang: RekapCabang[];
   belumPo: number;
+  /** Stok gudang pusat (Surabaya) — dasar kebutuhan bersih. */
+  stokPusat: number;
+  kebutuhanBersih: number;
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -813,6 +816,7 @@ function RekapTab({
   const [bulan, setBulan] = useState(bulanIni);
   const [barang, setBarang] = useState<RekapBarang[]>([]);
   const [menunggu, setMenunggu] = useState(0);
+  const [pusat, setPusat] = useState("Gudang pusat");
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const [po, setPo] = useState<Record<number, string>>({});
@@ -829,6 +833,7 @@ function RekapTab({
         if (!active) return;
         setBarang(data.barang ?? []);
         setMenunggu(Number(data.menungguReview ?? 0));
+        if (data.gudangPusat?.nama) setPusat(String(data.gudangPusat.nama));
       } catch (e) {
         if (active) onError(String(e instanceof Error ? e.message : e));
       } finally {
@@ -863,13 +868,16 @@ function RekapTab({
   }
 
   const totalQty = barang.reduce((a, b) => a + b.totalQty, 0);
+  const totalBersih = barang.reduce((a, b) => a + b.kebutuhanBersih, 0);
   const header = (
     <TableHeader>
       <TableRow>
         <TableHead>Barang</TableHead>
         <TableHead>Kategori</TableHead>
         <TableHead>Rincian cabang</TableHead>
-        <TableHead className="text-right">Total</TableHead>
+        <TableHead className="text-right">Total usulan</TableHead>
+        <TableHead className="text-right">Stok pusat</TableHead>
+        <TableHead className="text-right">Kebutuhan bersih</TableHead>
         <TableHead className="w-72">PO Accurate</TableHead>
       </TableRow>
     </TableHeader>
@@ -892,7 +900,9 @@ function RekapTab({
             ))}
           </div>
         </TableCell>
-        <TableCell className="text-right font-semibold tabular-nums">{angka(b.totalQty)}</TableCell>
+        <TableCell className="text-right tabular-nums">{angka(b.totalQty)}</TableCell>
+        <TableCell className="text-muted-foreground text-right tabular-nums">{angka(b.stokPusat)}</TableCell>
+        <TableCell className="text-right font-semibold tabular-nums">{angka(b.kebutuhanBersih)}</TableCell>
         <TableCell>
           {poAda.length > 0 && (
             <div className="mb-1 flex flex-wrap gap-x-2 text-xs">
@@ -946,8 +956,9 @@ function RekapTab({
               {brand ? ` · ${brand}` : ""}
             </CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
-              Gabungan dokumen semua cabang yang sudah disetujui HoD Sales · {barang.length} barang · total qty {angka(totalQty)}.
-              Buat PO di Accurate, lalu tautkan nomornya per barang (berlaku untuk semua cabang barang itu).
+              Gabungan dokumen semua cabang yang sudah disetujui HoD Sales · {barang.length} barang · total usulan{" "}
+              {angka(totalQty)} · kebutuhan bersih {angka(totalBersih)}. Kebutuhan bersih = total usulan semua cabang − stok{" "}
+              {pusat} (stok di Accurate tercatat di gudang pusat). Buat PO di Accurate, lalu tautkan nomornya per barang.
             </p>
           </div>
           <Button
@@ -967,7 +978,7 @@ function RekapTab({
             <PagedTable
               header={header}
               rows={rows}
-              colSpan={5}
+              colSpan={7}
               empty={`Belum ada dokumen yang disetujui untuk ${namaBulan(bulan)}.`}
               label="barang"
               resetKey={bulan}
