@@ -17,6 +17,14 @@ export interface BarisOtomatis {
 }
 export interface HasilOtomatis { baris: BarisOtomatis[]; kurang: { alat: string; reagen: string[] }[] }
 
+/** 330: ringkasan asal harga beli yang ikut dihitung, mis. "HPP: 3 rata-rata beli 12 bln, 1 Price Book". */
+export function ringkasSumber(sumber: (string | null | undefined)[]): string {
+  const hit = new Map<string, number>();
+  for (const s of sumber) hit.set(s ?? "tanpa sumber", (hit.get(s ?? "tanpa sumber") ?? 0) + 1);
+  return hit.size ? `HPP: ${[...hit].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${n} ${s}`).join(", ")}` : "";
+}
+const gabung = (...xs: string[]) => xs.filter(Boolean).join(" · ");
+
 /** Reagen yang ikut rumus alat ini (kontribusi ≠ 0 saat semua harga = 1). */
 function reagenDipakai(a: KsoAnalyzer, hariKerja: number): string[] {
   const satu: Record<string, HargaInput> = Object.fromEntries(a.reagents.map((r) => [r.kode, { price: 1, disc: 0 }]));
@@ -25,7 +33,7 @@ function reagenDipakai(a: KsoAnalyzer, hariKerja: number): string[] {
 }
 
 /**
- * Hitung biaya per model Bottom Line. Alat yang salah satu reagennya belum punya harga beli (HPP Price Book)
+ * Hitung biaya per model Bottom Line. Alat yang salah satu reagennya belum punya harga beli (rata-rata beli / HPP Price Book)
  * TIDAK dihitung — harga daftar akan membuat bottom 2–4× terlalu tinggi. Dua alat satu model → ambil yang
  * lebih mahal (bottom tak boleh terlalu rendah).
  */
@@ -41,7 +49,8 @@ export function biayaOtomatisHemato(analyzers: KsoAnalyzer[], hariKerja: number)
     const harga: Record<string, HargaInput> = Object.fromEntries(a.reagents.map((r) => [r.kode, { price: r.hargaBeli ?? 0, disc: 0 }]));
     const h = hematoCost(a.kode, VOL_ACUAN, hariKerja, perUnitOf(a, harga));
     if (!h) continue;
-    const b = { model_key: a.modelKey, biaya_per_tes: Math.round(h.cyc * 100) / 100, biaya_tetap_harian: Math.round((h.fix * VOL_ACUAN) / hariKerja) };
+    const b = { model_key: a.modelKey, biaya_per_tes: Math.round(h.cyc * 100) / 100, biaya_tetap_harian: Math.round((h.fix * VOL_ACUAN) / hariKerja),
+      rincian: ringkasSumber(pakai.map((k) => byKode.get(k)?.hargaBeliSumber)) };
     const lama = per.get(a.modelKey);
     if (!lama || b.biaya_per_tes + b.biaya_tetap_harian > lama.biaya_per_tes + lama.biaya_tetap_harian) per.set(a.modelKey, b);
   }
@@ -51,7 +60,11 @@ export function biayaOtomatisHemato(analyzers: KsoAnalyzer[], hariKerja: number)
 // ── Kimia Klinik (284) ──────────────────────────────────────────────────────
 
 /** Baris campuran tes riil per SKU (API kso_parameter_mix_v): kit reagen terkirim 12 bulan ke faskes yang memakai alat ini. */
-export interface MixKk { analyzer: string; parameter: string; sku: string; tesPerKemasan: number; kit12bln: number; hpp: number | null }
+export interface MixKk {
+  analyzer: string; parameter: string; sku: string; tesPerKemasan: number; kit12bln: number; hpp: number | null;
+  /** 330: 'rata-rata beli 12 bln' / 'Price Book'. */
+  sumber?: string | null;
+}
 
 /** Batch per hari bawaan Simulator (kk-panel: kosong = 5 sesi). */
 const BATCH_KK = 5;
@@ -100,7 +113,10 @@ export function biayaOtomatisKk(analyzers: KsoAnalyzer[], mix: MixKk[], hariKerj
       model_key: a.modelKey,
       biaya_per_tes: Math.round((rupiah / tes + perTesDet) * 100) / 100,
       biaya_tetap_harian: Math.round(harianDet),
-      rincian: `campuran tes riil${sejenis.length ? ` alat sejenis (${sejenis.join(", ")})` : ""}: ${terkirim.length} SKU, ${Math.round(tes).toLocaleString("id-ID")} tes terkirim 12 bln`,
+      rincian: gabung(
+        `campuran tes riil${sejenis.length ? ` alat sejenis (${sejenis.join(", ")})` : ""}: ${terkirim.length} SKU, ${Math.round(tes).toLocaleString("id-ID")} tes terkirim 12 bln`,
+        ringkasSumber([...terkirim.map((m) => m.sumber), ...["conc", "probe_d"].map((k) => byKode.get(k)?.hargaBeliSumber)]),
+      ),
     });
   }
   return { baris, kurang };
@@ -134,7 +150,7 @@ export function biayaOtomatisBg(analyzers: KsoAnalyzer[]): HasilOtomatis {
       biaya_per_tes: Math.min(...tangga.map((t) => t.per_tes)),
       biaya_tetap_harian: 0,
       biaya_tangga: tangga,
-      rincian: `${tangga.length} ukuran cartridge, masa pakai ${stab} hari (residu dihitung)`,
+      rincian: gabung(`${tangga.length} ukuran cartridge, masa pakai ${stab} hari (residu dihitung)`, ringkasSumber(ada.map((r) => r.hargaBeliSumber))),
     });
   }
   return { baris, kurang };
@@ -163,7 +179,7 @@ export function biayaOtomatisElektro(analyzers: KsoAnalyzer[], hariKerja: number
       model_key: a.modelKey,
       biaya_per_tes: Math.round(perTes * 100) / 100,
       biaya_tetap_harian: Math.round(harian),
-      rincian: `paket cartridge ${Number(r.vol).toLocaleString("id-ID")} mL Cal A (21 mL/hari + 0,8 mL/tes)`,
+      rincian: gabung(`paket cartridge ${Number(r.vol).toLocaleString("id-ID")} mL Cal A (21 mL/hari + 0,8 mL/tes)`, ringkasSumber([r.hargaBeliSumber])),
     });
   }
   return { baris, kurang };
