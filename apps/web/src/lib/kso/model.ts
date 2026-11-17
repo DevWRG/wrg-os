@@ -232,6 +232,8 @@ export interface BarisParamKk {
   panel: string;
   pack: string | null;
   testsPerKit: number;
+  /** Biaya reagen parameter ini per test (nett ÷ test per kit), sebelum beban tetap & markup. */
+  reagenTest: number;
   /** Harga jual per test, dibulatkan ke atas kelipatan Rp 100. */
   sellTest: number;
   sellKit: number;
@@ -350,6 +352,7 @@ export function hitungKk(
         panel: p.panel,
         pack: p.pack,
         testsPerKit: p.testsPerKit,
+        reagenTest: cptOf(p),
         sellTest,
         sellKit: sellTest * p.testsPerKit,
       };

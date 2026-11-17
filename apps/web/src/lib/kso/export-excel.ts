@@ -215,6 +215,8 @@ export interface BarisExcelKk {
   panel: string;
   pack: string | null;
   testsPerKit: number;
+  /** Biaya reagen per test (dipakai PDF); Excel belum menampilkannya. */
+  reagenTest?: number;
   sellTest: number;
   sellKit: number;
 }

@@ -184,12 +184,21 @@ export interface AsumsiPdf {
 const nettHarga = (h: HargaInput | undefined): number =>
   !h || !(h.price > 0) ? 0 : h.price * (1 - (Number(h.disc) || 0) / 100);
 
+// Baris tabel asumsi — dipakai Hematologi & Kimia Klinik.
+const grup = (judul: string) => `<tr class="grp"><td colspan="4">${esc(judul)}</td></tr>`;
+const harga = (label: string, h: HargaInput | undefined) =>
+  `<tr><td>${esc(label)}</td><td class="r">${h && h.price > 0 ? Rp(h.price) : "—"}</td>` +
+  `<td class="r">${h && h.price > 0 ? `${Number(h.disc) || 0}%` : "—"}</td><td class="r">${h && h.price > 0 ? Rp(nettHarga(h)) : "—"}</td></tr>`;
+const nilai = (label: string, v: string) => `<tr><td>${esc(label)}</td><td class="r" colspan="3">${esc(v)}</td></tr>`;
+const tabelAsumsi = (baris: string, catatan: string): string =>
+  sec(
+    "navy",
+    "Asumsi & kondisi perhitungan",
+    `<table class="asumsi"><thead><tr><th>Komponen</th><th class="r">Harga list / nilai</th><th class="r">Diskon</th><th class="r">Nett</th></tr></thead>` +
+      `<tbody>${baris}</tbody></table><div class="catatan">${esc(catatan)}</div>`,
+  );
+
 function secAsumsi(a: AsumsiPdf): string {
-  const grup = (judul: string) => `<tr class="grp"><td colspan="4">${esc(judul)}</td></tr>`;
-  const harga = (label: string, h: HargaInput | undefined) =>
-    `<tr><td>${esc(label)}</td><td class="r">${h && h.price > 0 ? Rp(h.price) : "—"}</td>` +
-    `<td class="r">${h && h.price > 0 ? `${Number(h.disc) || 0}%` : "—"}</td><td class="r">${h && h.price > 0 ? Rp(nettHarga(h)) : "—"}</td></tr>`;
-  const nilai = (label: string, v: string) => `<tr><td>${esc(label)}</td><td class="r" colspan="3">${esc(v)}</td></tr>`;
   const k = a.kontrol;
   const hari = k.exz8000 ? 25 : a.workDays;
   const baris = [
@@ -222,12 +231,68 @@ function secAsumsi(a: AsumsiPdf): string {
   const catatan = k.free
     ? "Material kontrol ditanggung vendor, tetapi tiap run QC dan kalibrasi tetap menghabiskan reagen — itu yang masuk ke biaya per test."
     : "Kontrol dan kalibrator dibeli faskes sesuai price list — tidak dibebankan ke biaya per test.";
-  return sec(
-    "navy",
-    "Asumsi & kondisi perhitungan",
-    `<table class="asumsi"><thead><tr><th>Komponen</th><th class="r">Harga list / nilai</th><th class="r">Diskon</th><th class="r">Nett</th></tr></thead>` +
-      `<tbody>${baris}</tbody></table><div class="catatan">${esc(catatan)}</div>`,
-  );
+  return tabelAsumsi(baris, catatan);
+}
+
+export interface AsumsiKkPdf {
+  alat: { nama: string; harga: HargaInput };
+  backup?: { nama: string; harga: HargaInput } | null;
+  ups: number;
+  lis: number;
+  kso: number;
+  tests: number;
+  workDays: number;
+  batch: number;
+  markup: number;
+  /** Reagen parameter reguler (bukan Control / Consumable). */
+  reagen: { nama: string; harga: HargaInput }[];
+  /** Detergent — Conc & Probe. */
+  consumable: { nama: string; harga: HargaInput }[];
+  /** Material kontrol & kalibrator; free = ditanggung vendor. */
+  kontrol: { nama: string; harga: HargaInput; free: boolean }[];
+  nQc: number;
+  nCal: number;
+  /** Hasil perhitungan panel (sama dengan baris CPRR). */
+  overheadPerTest: number;
+}
+
+// Label di sini sengaja tidak memakai "Consumable / test", "QC ... / test", "Kalibrasi / test" — parser OCR
+// #KSO membaca kemunculan pertama, dan nilai yang benar ada di blok CPRR di atas.
+function secAsumsiKk(a: AsumsiKkPdf): string {
+  const adaFree = a.kontrol.some((k) => k.free);
+  const baris = [
+    grup("Alat & CAPEX"),
+    harga(`Harga alat — ${a.alat.nama}`, a.alat.harga),
+    ...(a.backup ? [harga(`Backup — ${a.backup.nama}`, a.backup.harga)] : []),
+    nilai("UPS", Rp(a.ups)),
+    nilai("LIS", Rp(a.lis)),
+    grup("Skema KSO"),
+    nilai("Masa KSO", `${F(a.kso)} bulan`),
+    nilai("Sampel / bulan", `${F(a.tests)} sampel`),
+    nilai("Hari kerja / bulan", `${F(a.workDays)} hari`),
+    nilai("Batch pemeriksaan / hari", `${F(a.batch)} batch`),
+    nilai("Margin / markup", `${a.markup}%`),
+    ...(a.reagen.length ? [grup("Reagen parameter (harga list & diskon)"), ...a.reagen.map((r) => harga(r.nama, r.harga))] : []),
+    ...(a.consumable.length ? [grup("Detergent (harga list & diskon)"), ...a.consumable.map((r) => harga(r.nama, r.harga))] : []),
+    ...(a.kontrol.length
+      ? [
+          grup("Kontrol & kalibrator"),
+          ...a.kontrol.map((k) => harga(`${k.nama} — ${k.free ? "free (vendor)" : "beli"}`, k.harga)),
+          ...(adaFree
+            ? [
+                nilai("Run QC / hari", `${F(a.nQc)} run`),
+                nilai("Run QC / bulan", `${F(a.nQc * a.workDays)} run (${a.workDays} hari)`),
+                nilai("Kalibrasi / bulan", `${F(a.nCal)} kali`),
+                nilai("Overhead kontrol per test", Rp(a.overheadPerTest)),
+              ]
+            : []),
+        ]
+      : []),
+  ].join("");
+  const catatan = adaFree
+    ? "Material kontrol free ditanggung vendor, tetapi tiap run QC dan kalibrasi tetap menghabiskan reagen semua parameter — itu yang masuk ke beban per test. Sell / test tiap parameter = (beban tetap + reagen parameter) ÷ (1 − markup), dibulatkan ke atas kelipatan Rp 100."
+    : "Sell / test tiap parameter = (beban tetap + reagen parameter) ÷ (1 − markup), dibulatkan ke atas kelipatan Rp 100.";
+  return tabelAsumsi(baris, catatan);
 }
 
 // ── Hematologi ──────────────────────────────────────────────────────────────
@@ -317,16 +382,22 @@ export function printKk(arg: {
   qcPerTest: number;
   calPerTest: number;
   avgSellPerTest: number;
+  avgReagenPerTest?: number;
+  avgBaseCost?: number;
   rows: BarisExcelKk[];
   consumable: { nama: string; perTest: number }[];
+  /** Semua input panel — opsional supaya pemanggil lama tetap jalan. */
+  asumsi?: AsumsiKkPdf;
 }) {
   const { ringkas: r, info } = arg;
+  const adaReagen = arg.rows.some((x) => x.reagenTest !== undefined);
 
   const param = arg.rows
     .map(
       (x, i) => `<tr><td class="r">${i + 1}</td><td>${esc(x.nama)}</td><td class="muted">${esc(x.panel)}</td>
         <td class="muted">${esc(x.pack)}</td>
         <td class="r">${x.testsPerKit ? `${F(x.testsPerKit)}T` : "—"}</td>
+        ${adaReagen ? `<td class="r">${x.reagenTest && x.reagenTest > 0 ? Rp(x.reagenTest) : "—"}</td>` : ""}
         <td class="r">${Rp(x.sellTest)}</td><td class="r">${Rp(x.sellKit)}</td></tr>`,
     )
     .join("");
@@ -341,6 +412,13 @@ export function printKk(arg: {
           `<div class="cprr-row"><span class="cl">Kalibrasi / test</span><span class="cv">${Rp(arg.calPerTest)}</span></div>`,
         ]
       : []),
+    ...(arg.avgReagenPerTest !== undefined && arg.avgBaseCost !== undefined
+      ? [
+          `<div class="cprr-row"><span class="cl">Rata-rata reagen / test</span><span class="cv">${Rp(arg.avgReagenPerTest)}</span></div>`,
+          `<div class="cprr-row"><span class="cl">Base cost rata-rata / test</span><span class="cv">${Rp(arg.avgBaseCost)}</span></div>`,
+          `<div class="cprr-row"><span class="cl">Markup ${r.markup}%</span><span class="cv">${Rp(arg.avgSellPerTest - arg.avgBaseCost)}</span></div>`,
+        ]
+      : []),
     `<div class="cprr-row hi"><span class="cl">CPRR rata-rata (harga jual / test)</span><span class="cv">${Rp(arg.avgSellPerTest)}</span></div>`,
   ].join("");
 
@@ -351,9 +429,10 @@ export function printKk(arg: {
       "amber",
       "Rincian parameter",
       `<table><thead><tr><th class="r">No</th><th>Parameter</th><th>Panel</th><th>Kemasan</th>
-        <th class="r">Test/kit</th><th class="r">Sell / test</th><th class="r">Sell / kit</th></tr></thead>
+        <th class="r">Test/kit</th>${adaReagen ? `<th class="r">Reagen/test</th>` : ""}<th class="r">Sell / test</th><th class="r">Sell / kit</th></tr></thead>
         <tbody>${param}</tbody></table>`,
     ),
+    arg.asumsi ? secAsumsiKk(arg.asumsi) : "",
   ].join("");
 
   buka(
