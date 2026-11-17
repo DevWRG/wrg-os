@@ -93,7 +93,9 @@ jobs:
 
   ai-check:
     name: services/ai import + unit test
-    runs-on: ubuntu-latest
+    # Dikunci ke 24.04: ubuntu-latest pindah ke 26.04 (17 Nov 2026) yang tak lagi menyediakan Python 3.9
+    # untuk setup-python ("version '3.9' ... not found for Ubuntu 26.04"). Naikkan bersama interpreter prod.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
