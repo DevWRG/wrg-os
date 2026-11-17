@@ -138,7 +138,7 @@ export function EditorTeks({ value, onChange, id, placeholder, className, minTin
   }, [editor, value]);
 
   return (
-    <div className={cn("bg-background focus-within:ring-ring/40 rounded-md border shadow-xs focus-within:ring-2", className)}>
+    <div className={cn("rounded-md border bg-white shadow-xs focus-within:ring-2 focus-within:ring-ring/40 dark:bg-card", className)}>
       {editor && <Toolbar editor={editor} />}
       <div className="relative">
         {kosong && placeholder && (
