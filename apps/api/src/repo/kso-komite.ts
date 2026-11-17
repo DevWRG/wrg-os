@@ -273,7 +273,8 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
                                   volume_terverifikasi, volume_verifikasi_catatan, volume_verifikasi_at::text as volume_verifikasi_at,
                                   hari_kerja, coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
                                   fee_persen::float8 as fee_persen, klausul_ada, klausul_detail, kompetitor_alat,
-                                  (harga_per_test * (1 - coalesce(fee_persen, 0) / 100))::float8 as harga_bersih
+                                  (harga_per_test * (1 - coalesce(fee_persen, 0) / 100))::float8 as harga_bersih,
+                                  diloloskan_at::text as diloloskan_at, diloloskan_alasan
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
     // 303: faskes baru (calon customer) — penanda + kota; Sekretariat/Komite mendapat saran akun master untuk ditautkan
@@ -451,7 +452,7 @@ export async function berkasSph(userId: string, tab: TabKso, id: number, sphId: 
 
 export type AksiKso =
   | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima"
-  | "verifikasi-volume" | "tautkan-faskes";
+  | "verifikasi-volume" | "tautkan-faskes" | "loloskan-forum";
 
 /**
  * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
@@ -472,6 +473,8 @@ export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
   "verifikasi-volume": ["sekretariat"],
   // 303: faskes baru (calon customer) → akun master begitu customer terdaftar di Accurate/CRM
   "tautkan-faskes": ["sekretariat", "agenda"],
+  // 329: putusan Direktur 17 Nov — usulan belum lengkap boleh diloloskan ke agenda forum
+  "loloskan-forum": ["agenda", "sekretariat", "direksi"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -530,6 +533,8 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
     case "verifikasi-volume":
       if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
       return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
+    case "loloskan-forum":
+      return b.alasan == null || (typeof b.alasan === "string" && b.alasan.length <= 500) ? null : "Alasan paling panjang 500 huruf.";
     case "tautkan-faskes":
       return typeof b.akun === "string" && /^[0-9A-Za-z_-]{1,40}$/.test(b.akun.trim()) && !/^BARU-/i.test(b.akun.trim())
         ? null : "Pilih akun master faskes yang akan ditautkan.";
@@ -561,6 +566,8 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
+    [/TIDAK_BISA_DILOLOSKAN/, 409, "Hanya draft atau usulan Ditahan yang bisa diloloskan ke agenda forum."],
+    [/ALASAN_TERLALU_PANJANG/, 400, "Alasan paling panjang 500 huruf."],
     [/HOD_TIDAK_BERWENANG/, 403, "Rencana ini bukan wewenang kursi HOD Anda."],
     [/BUKAN_JALUR_CEPAT/, 409, "Rencana sudah tidak di jalur cepat — putusan HOD tidak berlaku lagi."],
     [/BUKAN_JALUR_FORUM/, 409, "Rencana tidak sedang menunggu forum."],
@@ -650,6 +657,10 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
         case "verifikasi-volume":
           await tx`select kso.app_verifikasi_volume(${id}, ${b.sah === true}, ${teks(b.catatan)})`;
           return { ok: true };
+        case "loloskan-forum": {
+          const [r] = await tx`select kso.app_loloskan_ke_forum(${id}, ${teks(b.alasan)}) as nomor`;
+          return { ok: true, nomor: r.nomor };
+        }
         case "tautkan-faskes": {
           const [r] = await tx`select kso.app_tautkan_faskes(${id}, ${String(b.akun).trim()}) as n`;
           return { ok: true, rencana_dipindah: Number(r.n) };

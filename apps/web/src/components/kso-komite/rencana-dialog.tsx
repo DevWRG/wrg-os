@@ -93,6 +93,12 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       <AngkaKunci d={d} />
       <Peringatan d={d} />
       <BagianKurang d={d} />
+      {r.diloloskan_at && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <b>Diloloskan ke forum</b> walau isian belum lengkap · {waktu(r.diloloskan_at)}
+          {r.diloloskan_alasan ? <> — {r.diloloskan_alasan}</> : null}
+        </p>
+      )}
       {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
       <Gerbang d={d} />
       <BagianLampiran tab={tab} d={d} />
@@ -304,6 +310,9 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   const s = d.rencana.status;
   const hariIni = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
   const mandatLewat = !!d.mandat && d.mandat.berlaku_sampai < hariIni;
+  // 329: putusan Direktur 17 Nov — usulan belum lengkap boleh langsung ke agenda forum
+  if ((tab === "agenda" || tab === "sekretariat" || tab === "direksi") && (s === "DRAFT" || s === "DITAHAN"))
+    return <FormLoloskanForum ditahan={s === "DITAHAN"} jalankan={jalankan} />;
   if (tab === "hod" && s === "JALUR_CEPAT") return <FormPutusHod jalankan={jalankan} />;
   if (tab === "hod" && (s === "JALUR_FORUM" || s === "DIAGENDAKAN")) return <FormTeks judul="Beri pendapat" nada="amber" label="Pendapat untuk komite (bukan putusan)" aksi="pendapat-hod" kunci="catatan" jalankan={jalankan} />;
   if (tab === "agenda" && s === "DIAGENDAKAN") return <FormUsulan jalankan={jalankan} />;
@@ -396,6 +405,28 @@ function FormTautkanFaskes({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button disabled={!akun.trim() || sibuk} onClick={() => go("tautkan-faskes", { akun: akun.trim() })}>Tautkan</Button>
+    </Kotak>
+  );
+}
+
+const ALASAN_LOLOS = "Putusan Direktur: kelengkapan data dilengkapi saat forum.";
+
+function FormLoloskanForum({ ditahan, jalankan }: { ditahan: boolean; jalankan: Jalankan }) {
+  const { sibuk, err, go } = useKirim(jalankan);
+  const [alasan, setAlasan] = useState(ALASAN_LOLOS);
+  return (
+    <Kotak judul="Loloskan ke agenda forum">
+      <p className="text-muted-foreground text-sm">
+        {ditahan ? "Usulan ditahan forum" : "Isian #KSO belum lengkap"} — sesuai putusan Direktur, usulan boleh langsung masuk
+        jalur forum dan kelengkapannya dibahas di forum. Usulan didahulukan di agenda forum berikutnya (Selasa/Kamis, batas
+        14.00); zona minimal Forum, jadi diputus Komite dan Direksi.
+      </p>
+      <div className="space-y-1">
+        <Label htmlFor="alasan-lolos">Catatan (opsional)</Label>
+        <Textarea id="alasan-lolos" value={alasan} maxLength={500} onChange={(e) => setAlasan(e.target.value)} />
+      </div>
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      <Button disabled={sibuk} onClick={() => go("loloskan-forum", { alasan: alasan.trim() || null })}>Loloskan ke agenda forum</Button>
     </Kotak>
   );
 }
