@@ -130,8 +130,36 @@ export function KkPanel({
     qcPerTest: hasil.qcPerTest,
     calPerTest: hasil.calPerTest,
     avgSellPerTest: hasil.avgSellPerTest,
+    avgReagenPerTest: hasil.avgReagenPerTest,
+    avgBaseCost: hasil.avgBaseCost,
     rows: hasil.rows,
     consumable: hasil.consumable,
+    asumsi: {
+      alat: { nama: analyzer.label, harga: { price: s.price, disc: s.disc } },
+      backup:
+        umum.backupOn && backupAnalyzer
+          ? { nama: backupAnalyzer.label, harga: { price: umum.backupPrice, disc: umum.backupDisc } }
+          : null,
+      ups: umum.ups,
+      lis: umum.lis,
+      kso: s.kso,
+      tests: s.tests,
+      workDays: umum.workDays,
+      batch: s.batch,
+      markup: s.markup,
+      reagen: params
+        .filter((p) => p.panel !== PANEL_CONTROL && p.panel !== PANEL_CONSUMABLE)
+        .map((p) => ({ nama: p.nama, harga: { price: p.price, disc: p.disc } })),
+      consumable: params
+        .filter((p) => p.panel === PANEL_CONSUMABLE)
+        .map((p) => ({ nama: p.nama, harga: { price: p.price, disc: p.disc } })),
+      kontrol: params
+        .filter((p) => p.panel === PANEL_CONTROL)
+        .map((p) => ({ nama: p.nama, harga: { price: p.price, disc: p.disc }, free: p.free })),
+      nQc: qc.nCtrl,
+      nCal: qc.nCal,
+      overheadPerTest: hasil.overheadTotal,
+    },
   };
 
   if (halaman === "hasil") {
