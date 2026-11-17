@@ -7,14 +7,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
 import { persenFee } from "@/lib/kso-komite-daftar";
+import { teksPolos } from "@/lib/teks-polos";
 
 import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
+import { EditorTeks, TeksKaya } from "./editor-teks";
 import { BagianSph, FormPenawaranSph } from "./sph-kso";
 import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
 
@@ -96,7 +97,7 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       {r.diloloskan_at && (
         <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           <b>Diloloskan ke forum</b> walau isian belum lengkap · {waktu(r.diloloskan_at)}
-          {r.diloloskan_alasan ? <> — {r.diloloskan_alasan}</> : null}
+          <TeksKaya md={r.diloloskan_alasan} className="mt-1" />
         </p>
       )}
       {bolehAksi && <FormAksi tab={tab} d={d} jalankan={jalankan} />}
@@ -109,7 +110,8 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
           {d.pendapat.map((p) => (
             <li key={`${p.hod_id}-${p.jenis}`}>
               <b>{p.hod_nama ?? p.hod_id}</b> · {p.jenis === "putusan" ? `putusan: ${p.keputusan}${p.dianggap_setuju ? " (lewat batas, dianggap setuju)" : ""}` : "pendapat"}
-              {p.catatan && <> — “{p.catatan}”</>} <span className="text-muted-foreground text-xs">{waktu(p.at)}</span>
+              <span className="text-muted-foreground text-xs"> {waktu(p.at)}</span>
+              <TeksKaya md={p.catatan} className="mt-0.5" />
             </li>
           ))}
         </Blok>
@@ -117,14 +119,19 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       {d.usulan.length > 0 && (
         <Blok judul="Usulan komite ke Direksi">
           {d.usulan.map((u, i) => (
-            <li key={i}><b>{STATUS_LABEL[u.usulan] ?? u.usulan}</b>{u.alasan && ` — ${u.alasan}`}
-              {u.syarat?.length ? <> · syarat: {u.syarat.map((x) => x.isi).join("; ")}</> : null}
-              {u.data_kurang && ` · kurang: ${u.data_kurang} (oleh ${u.pemilik}, kembali ${u.tanggal_kembali})`}
-              <span className="text-muted-foreground text-xs"> {waktu(u.at)}</span></li>
+            <li key={i}><b>{STATUS_LABEL[u.usulan] ?? u.usulan}</b>
+              <span className="text-muted-foreground text-xs"> {waktu(u.at)}</span>
+              <TeksKaya md={u.alasan} className="mt-0.5" />
+              {u.syarat?.length ? <div className="mt-0.5"><span className="text-muted-foreground text-xs">Syarat:</span>{u.syarat.map((x, j) => <TeksKaya key={j} md={x.isi} />)}</div> : null}
+              {u.data_kurang && (
+                <div className="mt-0.5"><span className="text-muted-foreground text-xs">Data kurang (oleh {u.pemilik}, kembali {u.tanggal_kembali}):</span>
+                  <TeksKaya md={u.data_kurang} /></div>
+              )}</li>
           ))}
         </Blok>
       )}
-      {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b>{d.putusan.catatan && ` — ${d.putusan.catatan}`} <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span></li></Blok>}
+      {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b> <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span>
+        <TeksKaya md={d.putusan.catatan} className="mt-0.5" /></li></Blok>}
       {d.mandat && <Mandat d={d} />}
       <BagianSph tab={tab} d={d} />
       {r.harga_deal != null && (
@@ -194,10 +201,10 @@ function Peringatan({ d }: { d: Detail }) {
   const r = d.rencana, g = d.angka_gpm;
   const merah: string[] = [], kuning: string[] = [];
   if (!r.volume_sumber) merah.push("Sumber angka volume kosong.");
-  if (r.volume_terverifikasi === false) merah.push(`Bukti volume ditolak Sekretaris${r.volume_verifikasi_catatan ? `: ${r.volume_verifikasi_catatan}` : "."}`);
+  if (r.volume_terverifikasi === false) merah.push(`Bukti volume ditolak Sekretaris${r.volume_verifikasi_catatan ? `: ${teksPolos(r.volume_verifikasi_catatan)}` : "."}`);
   if (g && !g.hd && g.gpm == null && g.catatan) kuning.push(`GPM belum bisa dihitung: ${g.catatan}.`);
   if (r.zona_dasar && r.zona && r.zona_dasar !== r.zona) kuning.push(`Dari GPM masuk ${LABEL_ZONA[r.zona_dasar]}, naik ke ${LABEL_ZONA[r.zona]} karena gerbang/aturan.`);
-  if (r.alasan_forum) kuning.push(`Ke forum karena: ${r.alasan_forum}`);
+  if (r.alasan_forum) kuning.push(`Ke forum karena: ${teksPolos(r.alasan_forum)}`);
   if (merah.length + kuning.length === 0) return null;
   return (
     <div className="space-y-2">
@@ -423,7 +430,7 @@ function FormLoloskanForum({ ditahan, jalankan }: { ditahan: boolean; jalankan: 
       </p>
       <div className="space-y-1">
         <Label htmlFor="alasan-lolos">Catatan (opsional)</Label>
-        <Textarea id="alasan-lolos" value={alasan} maxLength={500} onChange={(e) => setAlasan(e.target.value)} />
+        <EditorTeks id="alasan-lolos" value={alasan} onChange={setAlasan} />
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button disabled={sibuk} onClick={() => go("loloskan-forum", { alasan: alasan.trim() || null })}>Loloskan ke agenda forum</Button>
@@ -438,7 +445,7 @@ function FormPutusHod({ jalankan }: { jalankan: Jalankan }) {
   return (
     <Kotak judul="Putuskan (jalur cepat)">
       <Pilihan nilai={k} set={setK} opsi={[["setuju", "Setuju"], ["tolak", "Tolak"], ["naikkan", "Naikkan ke forum"]]} />
-      <Textarea placeholder="Catatan (opsional)" value={c} onChange={(e) => setC(e.target.value)} />
+      <EditorTeks placeholder="Catatan (opsional)" value={c} onChange={setC} />
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button disabled={!k || sibuk} onClick={() => go("putus-hod", { keputusan: k, catatan: c })}>Simpan putusan</Button>
     </Kotak>
@@ -451,7 +458,7 @@ function FormTeks({ judul, nada, label, aksi, kunci, jalankan }: { judul: string
   return (
     <Kotak judul={judul} nada={nada}>
       <Label>{label}</Label>
-      <Textarea value={v} onChange={(e) => setV(e.target.value)} />
+      <EditorTeks value={v} onChange={setV} />
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button disabled={!v.trim() || sibuk} onClick={() => go(aksi, { [kunci]: v })}>Simpan</Button>
     </Kotak>
@@ -465,18 +472,21 @@ function FormUsulan({ jalankan }: { jalankan: Jalankan }) {
   const [u, setU] = useState<"DIREKOMENDASIKAN" | "DIREKOMENDASIKAN_BERSYARAT" | "DITAHAN" | "TIDAK_DIREKOMENDASIKAN" | null>(null);
   const [f, setF] = useState({ syarat: "", data_kurang: "", pemilik: "", tanggal_kembali: "", alasan: "" });
   const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const teks = (k: "syarat" | "data_kurang" | "alasan") => (v: string) => setF((x) => ({ ...x, [k]: v }));
   return (
     <Kotak judul="Rumuskan usulan ke Direksi">
       <Pilihan nilai={u} set={setU} opsi={[["DIREKOMENDASIKAN", "Direkomendasikan"], ["DIREKOMENDASIKAN_BERSYARAT", "Bersyarat"], ["DITAHAN", "Ditahan"], ["TIDAK_DIREKOMENDASIKAN", "Tidak direkomendasikan"]]} />
-      {u === "DIREKOMENDASIKAN_BERSYARAT" && <><Label>Syarat</Label><Textarea value={f.syarat} onChange={isi("syarat")} /></>}
+      {u === "DIREKOMENDASIKAN_BERSYARAT" && <><Label>Syarat</Label><EditorTeks value={f.syarat} onChange={teks("syarat")} /></>}
       {u === "DITAHAN" && (
-        <div className="grid gap-2 sm:grid-cols-3">
-          <div><Label>Data yang kurang</Label><Input value={f.data_kurang} onChange={isi("data_kurang")} /></div>
-          <div><Label>Siapa melengkapi</Label><Input value={f.pemilik} onChange={isi("pemilik")} /></div>
-          <div><Label>Kembali ke forum</Label><Input type="date" value={f.tanggal_kembali} onChange={isi("tanggal_kembali")} /></div>
+        <div className="space-y-2">
+          <div><Label>Data yang kurang</Label><EditorTeks value={f.data_kurang} onChange={teks("data_kurang")} /></div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div><Label>Siapa melengkapi</Label><Input value={f.pemilik} onChange={isi("pemilik")} /></div>
+            <div><Label>Kembali ke forum</Label><Input type="date" value={f.tanggal_kembali} onChange={isi("tanggal_kembali")} /></div>
+          </div>
         </div>
       )}
-      {(u === "TIDAK_DIREKOMENDASIKAN" || u === "DIREKOMENDASIKAN") && <><Label>Alasan / catatan</Label><Textarea value={f.alasan} onChange={isi("alasan")} /></>}
+      {(u === "TIDAK_DIREKOMENDASIKAN" || u === "DIREKOMENDASIKAN") && <><Label>Alasan / catatan</Label><EditorTeks value={f.alasan} onChange={teks("alasan")} /></>}
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button disabled={!u || sibuk} onClick={() => go("usulkan", { usulan: u, ...f })}>Simpan usulan</Button>
     </Kotak>
@@ -492,7 +502,7 @@ function FormVerifikasi({ jalankan }: { jalankan: Jalankan }) {
     <Kotak judul="Verifikasi bukti volume" nada="amber">
       <p className="text-muted-foreground text-xs">Minta berkas buktinya ke AM, cocokkan dengan volume yang diusulkan. Ditolak = gerbang 2 merah.</p>
       <Pilihan nilai={sah} set={setSah} opsi={[["sah", "Bukti sah"], ["tolak", "Tolak bukti"]]} />
-      {sah && <><Label>{sah === "tolak" ? "Alasan penolakan (wajib)" : "Catatan (opsional)"}</Label><Textarea value={c} onChange={(e) => setC(e.target.value)} /></>}
+      {sah && <><Label>{sah === "tolak" ? "Alasan penolakan (wajib)" : "Catatan (opsional)"}</Label><EditorTeks value={c} onChange={setC} /></>}
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button className="w-full sm:w-auto" disabled={!sah || sibuk} onClick={() => go("verifikasi-volume", { sah: sah === "sah", catatan: c })}>Simpan verifikasi</Button>
     </Kotak>
@@ -535,7 +545,7 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
           ))}
         </div>
       )}
-      {p && <><Label>{p === "TOLAK" ? "Alasan penolakan" : p === "BERSYARAT" ? "Syarat" : "Catatan (opsional)"}</Label><Textarea value={f.catatan} onChange={isi("catatan")} /></>}
+      {p && <><Label>{p === "TOLAK" ? "Alasan penolakan" : p === "BERSYARAT" ? "Syarat" : "Catatan (opsional)"}</Label><EditorTeks value={f.catatan} onChange={(v) => setF((x) => ({ ...x, catatan: v }))} /></>}
       {err && <p className="text-destructive text-sm">{err}</p>}
       <Button className="w-full sm:w-auto" disabled={!p || sibuk} onClick={() => go("putus-direksi", {
         putusan: p, catatan: f.catatan, pembuka: angka(f.pembuka), lantai: angka(f.lantai), target: angka(f.target), tenor_maks: angka(f.tenor_maks),

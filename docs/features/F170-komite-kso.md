@@ -329,3 +329,19 @@ tertahan di "Belum lengkap".
 - Data yang masih kurang di forum: Komite memilih **Ditahan** + data kurang → AM melengkapi (`lengkapi_draft` terbuka di
   DITAHAN) → diajukan biasa atau diloloskan lagi.
 - Uji: `scripts/qa/kso-komite/924_uji_loloskan_forum.sql`, `apps/api/src/repo/kso-komite.test.ts`.
+
+## Editor WYSIWYG untuk isian teks (issue #2388, 17 Nov 2026)
+
+Permintaan user: isian teks bebas di jendela usulan Komite KSO memakai editor WYSIWYG. Format lengkap (keputusan user): tebal,
+miring, coret, judul/subjudul, daftar berbutir & bernomor, kutipan, tautan, tabel (tambah/hapus baris & kolom).
+
+- Komponen `components/kso-komite/editor-teks.tsx`: `EditorTeks` (TipTap v3 + `@tiptap/markdown`, `immediatelyRender: false`
+  untuk SSR) dan `TeksKaya` (react-markdown + remark-gfm; HTML mentah tidak dirender, tautan di tab baru). Isian tautan lewat
+  `usePrompt` (bukan popup browser).
+- Disimpan sebagai **markdown** di kolom teks yang sama — tanpa ubah skema; teks polos lama terbaca apa adanya.
+- Dipakai di: alasan/catatan, syarat, dan data kurang (Usulan Komite) · catatan/syarat/alasan Putusan Direksi · putusan &
+  pendapat HOD · tarik ke forum · catat kalah · verifikasi bukti Sekretariat · loloskan ke forum. Tampilan di detail usulan
+  (HOD, usulan komite, putusan Direksi, kotak diloloskan) memakai `TeksKaya`; peringatan satu baris dan balasan WhatsApp
+  (`alasan_forum`) memakai `teksPolos` (`apps/web/src/lib/teks-polos.ts` ↔ `apps/api/src/lib/teks-polos.ts`).
+- Isian pendek tetap kotak biasa: siapa melengkapi, tanggal, nomor seri, catatan Bottom Line, nama jabatan.
+- Migrasi 331: batas catatan "loloskan ke forum" 500 → 5.000 huruf (markdown bertabel).
