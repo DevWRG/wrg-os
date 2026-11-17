@@ -312,3 +312,20 @@ Penawaran Harga KSO** bernomor, **ditandatangani Direktur**, **berlaku 30 hari**
 - Layar: form "Terbitkan penawaran + SPH KSO" (harga + pilihan Direktur), bagian "SPH KSO" di detail (nomor, harga, masa,
   penanda tangan, berlaku/kedaluwarsa, tombol Unduh SPH) untuk semua tab yang boleh melihat rencananya.
 - Uji: `scripts/qa/kso-komite/923_uji_sph.sql`, `apps/api/src/repo/kso-sph.test.ts`.
+
+## Loloskan usulan belum lengkap ke agenda forum (migrasi 329, issue #2383, 17 Nov 2026)
+
+Putusan Direktur: kelengkapan data usulan #KSO boleh dilengkapi saat forum, jadi draft yang isiannya belum lengkap tidak perlu
+tertahan di "Belum lengkap".
+
+- Tombol **Loloskan ke agenda forum** di jendela usulan (termasuk yang dibuka dari daftar Belum lengkap) untuk status
+  **DRAFT** dan **DITAHAN**; aksi `POST /kso-komite/rencana/:id/loloskan-forum {alasan?}` — tab Agenda (Komite), Sekretariat,
+  Direksi (`kso.app_loloskan_ke_forum`, peran komite/sekretaris/direksi). Catatan opsional (≤ 500 huruf), terisi otomatis.
+- `kso.loloskan_ke_forum`: DRAFT/DITAHAN → DIAJUKAN → **JALUR_FORUM** tanpa syarat kelengkapan `kso.ajukan` (volume, harga,
+  tenor, pendukung, alasan strategis). Nomor KSO terbit; gerbang & zona dihitung sebisanya (galat diabaikan), zona minimal
+  **Forum**; jejak `diloloskan_at/oleh/alasan` + `alasan_forum`. Detail usulan menampilkan kotak "Diloloskan ke forum".
+- `kso.susun_agenda`: usulan yang diloloskan **didahulukan** di Agenda A dan **tidak tertahan** aturan 285 (bukti volume
+  belum diverifikasi). Batas `agenda_a_maks` per forum tetap berlaku; batas jam 14.00 hari forum tetap.
+- Data yang masih kurang di forum: Komite memilih **Ditahan** + data kurang → AM melengkapi (`lengkapi_draft` terbuka di
+  DITAHAN) → diajukan biasa atau diloloskan lagi.
+- Uji: `scripts/qa/kso-komite/924_uji_loloskan_forum.sql`, `apps/api/src/repo/kso-komite.test.ts`.
