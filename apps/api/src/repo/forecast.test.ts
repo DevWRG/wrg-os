@@ -20,6 +20,7 @@ import {
   isWilayah,
   gudangUntukCabang,
   kategoriDariKlasifikasi,
+  kebutuhanBersih,
   kelompokkanRekap,
   kodeDokumen,
   labelJenis,
@@ -267,4 +268,10 @@ test("alasanUsulan: stok ≤ buffer, dari penjualan, ED", () => {
   assert.deepEqual(alasanUsulan({ currentQty: 0, bufferQty: 14, adaPenjualan: true, nearEd: false }), ["near_buffer"]);
   assert.deepEqual(alasanUsulan({ currentQty: 20, bufferQty: 14, adaPenjualan: true, nearEd: true }), ["forecast", "near_ed"]);
   assert.deepEqual(alasanUsulan({ currentQty: 0, bufferQty: null, adaPenjualan: false, nearEd: true }), ["near_ed"]);
+});
+
+test("kebutuhanBersih: total usulan − stok pusat, minimal 0", () => {
+  assert.equal(kebutuhanBersih(120, 30), 90);
+  assert.equal(kebutuhanBersih(20, 50), 0);
+  assert.equal(kebutuhanBersih(10.4, 0), 10);
 });
