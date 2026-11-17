@@ -123,3 +123,12 @@ test("pathBerkasLampiran (305): berkas sudah dihapus sesudah dibaca → 410 pesa
   assert.equal(galat(() => pathBerkasLampiran({ media_path: null, berkas_dihapus_at: null }))!.status, 404);
   assert.equal(pathBerkasLampiran({ media_path: "/m/inbound/a.pdf", berkas_dihapus_at: null }), "/m/inbound/a.pdf");
 });
+
+test("329 loloskan-forum: hanya Komite (Agenda), Sekretariat, Direksi; alasan opsional ≤ 500; galat jadi kalimat", () => {
+  assert.deepEqual(AKSI_TAB["loloskan-forum"], ["agenda", "sekretariat", "direksi"]);
+  assert.equal(validasiAksi("loloskan-forum", {}), null);
+  assert.equal(validasiAksi("loloskan-forum", { alasan: "Putusan Direktur" }), null);
+  assert.match(String(validasiAksi("loloskan-forum", { alasan: "x".repeat(501) })), /500/);
+  assert.equal(terjemahGalatWeb("TIDAK_BISA_DILOLOSKAN: status JALUR_FORUM").status, 409);
+  assert.match(terjemahGalatWeb("TIDAK_BISA_DILOLOSKAN: status JALUR_FORUM").pesan, /draft atau usulan Ditahan/);
+});
