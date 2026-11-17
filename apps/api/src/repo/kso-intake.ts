@@ -27,6 +27,7 @@ import { db } from "../db.js";
 import { callAi } from "../ai.js";
 import { stripInvisible } from "../parsers/dailyplan.js";
 import { cariAkun } from "./interaction.js";
+import { teksPolos } from "../lib/teks-polos.js";
 import {
   NAMA_LABEL, bacaBarisLabel, bacaIsianFormat, bacaPilihanFaskes, bacaYaTidak, namaTampilFaskes, bentukNama, cariAlat, cocokkanLampiran, daftarKurang,
   isianLengkapiDariFormat, namaCocok, putuskanFaskes, teksGalatOcr, SKOR_YAKIN,
@@ -449,7 +450,7 @@ export function teksHasilAjukan(x: {
   if (x.jalur === "CEPAT") return `${awal} → diputus 2 HOD (maks. 1 hari kerja).`;
   const zf = teksZonaForum(x);
   return `${awal} → masuk agenda Forum berikutnya (Selasa/Kamis).` +
-    `${x.alasan_forum ? `\nCatatan: ${x.alasan_forum}.` : ""}${zf.catatan ? `\n${zf.catatan}` : ""}`;
+    `${x.alasan_forum ? `\nCatatan: ${teksPolos(x.alasan_forum)}.` : ""}${zf.catatan ? `\n${zf.catatan}` : ""}`;
 }
 
 /** Kolom "analyzer" PDF Simulator yang menunjuk TEPAT SATU kode katalog (cariAlat "one"); selain itu null. Murni. */
