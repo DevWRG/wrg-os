@@ -7,17 +7,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
-import { pilihTabDaftar } from "@/lib/kso-komite-daftar";
+import { gabungTabSekretariat, pilihTabDaftar } from "@/lib/kso-komite-daftar";
 
 import { BottomLinePanel } from "./bottom-line";
 import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
 import { TombolFormatKso } from "./format-kso";
 import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
+import { PolaGerbang } from "./pola-gerbang";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
+import { RiwayatForum } from "./riwayat-forum";
 import { SusunanPanel } from "./susunan-panel";
 import {
-  GERBANG_SOLID, LABEL_ZONA, POLA_STATUS, ZONA_CLS, kirim, persen, rpJt, waktu,
+  LABEL_ZONA, ZONA_CLS, kirim, persen, rpJt, waktu,
   type BarisAgenda, type BarisAntrean, type BarisKpi, type DataTab, type Ringkasan, type TabBoleh,
 } from "./types";
 
@@ -29,18 +31,23 @@ import {
 // memakai izin yang sama.
 // Tab "Belum lengkap" & "Lolos tanpa forum" (302) bukan tab peran: daftar lintas status yang diminta
 // lewat satu tab peran milik pengguna (pilihTabDaftar — cakupan terluas), jadi tak butuh fitur baru.
-type TabDaftar = "belum-lengkap" | "lolos-tanpa-forum";
+// Tab "Riwayat" (17 Nov 2026) = forum-forum lampau, pola yang sama (bukan tab peran).
+type TabDaftar = "belum-lengkap" | "lolos-tanpa-forum" | "riwayat";
 type TabLayar = TabKso | "bottomline" | "portofolio" | TabDaftar;
-const isDaftar = (t: TabLayar): t is TabDaftar => t === "belum-lengkap" || t === "lolos-tanpa-forum";
+const isDaftar = (t: TabLayar): t is TabDaftar => t === "belum-lengkap" || t === "lolos-tanpa-forum" || t === "riwayat";
 const isPeran = (t: TabLayar): t is TabKso => t !== "bottomline" && t !== "portofolio" && !isDaftar(t);
 
-export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bottomLine?: boolean }) {
+export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabBoleh[]; bottomLine?: boolean }) {
+  // 17 Nov 2026 (permintaan user): Sekretariat & Penawaran dipegang satu orang → satu tab. Isi tab Penawaran
+  // (mandat siap diterbitkan) sudah ada di tab Sekretariat, jadi Penawaran disembunyikan bila Sekretariat ada.
+  const tabs = gabungTabSekretariat(tabsAkses);
   const [tab, setTab] = useState<TabLayar>(tabs[0]?.tab ?? "bottomline");
   const [data, setData] = useState<Partial<Record<TabKso, DataTab>>>({});
   const [err, setErr] = useState<string | null>(null);
   const [buka, setBuka] = useState<number | null>(null);
   const [segar, setSegar] = useState(0);
-  const sumber = { "belum-lengkap": pilihTabDaftar(tabs, "belum-lengkap"), "lolos-tanpa-forum": pilihTabDaftar(tabs, "lolos-tanpa-forum") };
+  const sumber = { "belum-lengkap": pilihTabDaftar(tabs, "belum-lengkap"), "lolos-tanpa-forum": pilihTabDaftar(tabs, "lolos-tanpa-forum"),
+                   riwayat: pilihTabDaftar(tabs, "riwayat") };
 
   const terapkan = useCallback((t: TabKso, p: Promise<DataTab>, batal: () => boolean) => {
     p.then((d) => { if (!batal()) { setData((x) => ({ ...x, [t]: d })); setErr(null); } })
@@ -71,6 +78,7 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
             ))}
             {sumber["belum-lengkap"] && <TabsTrigger value="belum-lengkap">Belum lengkap</TabsTrigger>}
             {sumber["lolos-tanpa-forum"] && <TabsTrigger value="lolos-tanpa-forum">Lolos tanpa forum</TabsTrigger>}
+            {sumber.riwayat && <TabsTrigger value="riwayat">Riwayat</TabsTrigger>}
             {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
             {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
           </TabsList>
@@ -127,10 +135,10 @@ export function KomiteView({ tabs, bottomLine = false }: { tabs: TabBoleh[]; bot
           )}
         </TabsContent>
       ))}
-      {(["belum-lengkap", "lolos-tanpa-forum"] as const).map((f) => {
+      {(["belum-lengkap", "lolos-tanpa-forum", "riwayat"] as const).map((f) => {
         const s = sumber[f];
         if (!s) return null;
-        const Daftar = f === "belum-lengkap" ? DaftarBelumLengkap : DaftarLolos;
+        const Daftar = f === "belum-lengkap" ? DaftarBelumLengkap : f === "riwayat" ? RiwayatForum : DaftarLolos;
         return (
           <TabsContent key={f} value={f}>
             <DuaKolom lebarDaftar panel={lebar && tab === f ? (
@@ -218,17 +226,6 @@ function DuaKolom({ panel, children, lebarDaftar = false }: { panel: React.React
   );
 }
 
-export function PolaGerbang({ pola }: { pola: string | null }) {
-  if (!pola) return null;
-  return (
-    <span className="inline-flex gap-0.5" aria-label={`gerbang ${pola}`}>
-      {pola.split("").map((c, i) => (
-        <span key={i} className={cn("inline-block size-4 rounded-[3px] text-center text-[10px] font-bold leading-4", GERBANG_SOLID[POLA_STATUS[c] ?? "belum"])}>{i + 1}</span>
-      ))}
-    </span>
-  );
-}
-
 function Bagian({ judul, catatan, baris, onBuka, pilih }: {
   judul?: string; catatan?: string; nada?: "sky" | "amber"; baris: BarisAntrean[]; onBuka: (id: number) => void; pilih: number | null;
 }) {
@@ -278,7 +275,7 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
 
 function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) => void; pilih?: number | null }) {
   const forum = [...new Map(baris.map((b) => [b.forum_id, b])).values()];
-  if (forum.length === 0) return <EmptyState title="Belum ada forum" description="Agenda terbit otomatis pukul 14.00 hari Selasa/Kamis." />;
+  if (forum.length === 0) return <EmptyState title="Tidak ada usulan yang menunggu forum" description="Agenda terbit otomatis pukul 14.00 hari Selasa/Kamis. Forum sebelumnya dan hasilnya ada di tab Riwayat." />;
   return (
     <section className="space-y-3">
       {forum.map((f) => {
