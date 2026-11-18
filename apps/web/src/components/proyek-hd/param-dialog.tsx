@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CurrencyInput } from "@/components/ui/currency-input";
 import { Input } from "@/components/ui/input";
 
 import { kirim, type Param } from "./types";
@@ -33,6 +34,8 @@ export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param", judul
   }, [api]);
 
   const nilaiTampil = (p: Param) => (p.kunci in ubah ? ubah[p.kunci] : p.nilai == null ? "" : String(p.nilai));
+  // Isian rupiah dikenali dari keterangannya ("… (Rp)") — format ribuan Rp seperti angka tampilan.
+  const rupiah = (p: Param) => /\(Rp\b/.test(p.keterangan);
 
   async function simpan() {
     setBusy(true);
@@ -73,8 +76,13 @@ export function ParamDialog({ open, onClose, api = "/api/proyek-hd/param", judul
                 {xs.map((p) => (
                   <label key={p.kunci} className="grid grid-cols-[1fr_9rem] items-center gap-3 text-sm">
                     <span>{p.keterangan.replace(/^(Proyeksi RS|Margin) — /, "")}</span>
-                    <Input type="number" min={0} step="any" className="bg-card text-right" disabled={!boleh}
-                      value={nilaiTampil(p)} onChange={(e) => setUbah((u) => ({ ...u, [p.kunci]: e.target.value }))} />
+                    {rupiah(p) ? (
+                      <CurrencyInput className="bg-card" disabled={!boleh} value={p.kunci in ubah ? ubah[p.kunci] : p.nilai == null ? "" : String(Math.round(p.nilai))}
+                        onChange={(v) => setUbah((u) => ({ ...u, [p.kunci]: v }))} />
+                    ) : (
+                      <Input type="number" min={0} step="any" className="bg-card text-right" disabled={!boleh}
+                        value={nilaiTampil(p)} onChange={(e) => setUbah((u) => ({ ...u, [p.kunci]: e.target.value }))} />
+                    )}
                   </label>
                 ))}
               </div>
