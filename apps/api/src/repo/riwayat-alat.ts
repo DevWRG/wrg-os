@@ -60,13 +60,18 @@ export function bacaKunci(raw: string | undefined | null): string {
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
+// Sama dengan itemSparepart() di web (lib/riwayat-alat.ts): isian sparepart yang bukan "-"/"0"/"tidak ada",
+// atau "ganti …" di Kegiatan selain bahan habis pakai. Pendekatan SQL — hitungan bisa selisih tipis dengan tab.
+const GANTI_PART = `(btrim(COALESCE(sparepart, '')) !~* '^(-*|0+|tidak( ada| asa)?|tdk( ada)?|nihil|none|n/?a|kosong|belum ada)$'
+  OR kegiatan ~* '\\m(ganti|penggantian|pergantian|mengganti|diganti)\\s+(?!(reagen|reagent|botol|kertas|thermal|paper|faktor|posisi|setting|program|meja)\\M)\\w')`;
+
 // Waktu ditampilkan sebagai jam WIB (teks), bukan Date — kolom timestamptz ke JS bergeser zona.
 // `satu` = detail satu alat: filter SN ($1) ditaruh di DALAM tiap CTE supaya tak mengagregasi semua alat.
 const daftarSql = (satu: boolean) => {
   const f = satu ? "AND sn_key = $1" : "";
   return `
   WITH ev AS (
-    SELECT sn_key, count(*)::int AS n, count(*) FILTER (WHERE sparepart IS NOT NULL)::int AS n_spare, max(waktu) AS terakhir,
+    SELECT sn_key, count(*)::int AS n, count(*) FILTER (WHERE ${GANTI_PART})::int AS n_spare, max(waktu) AS terakhir,
            (array_agg(jenis ORDER BY waktu DESC NULLS LAST))[1] AS jenis_terakhir,
            (array_agg(faskes ORDER BY waktu DESC NULLS LAST) FILTER (WHERE faskes IS NOT NULL))[1] AS faskes_ev,
            (array_agg(alat ORDER BY waktu DESC NULLS LAST) FILTER (WHERE alat IS NOT NULL))[1] AS alat_ev,
