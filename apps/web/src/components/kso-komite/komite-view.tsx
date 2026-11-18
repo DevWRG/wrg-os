@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,7 @@ import { gabungTabSekretariat, kelompokTab, pilihTabDaftar } from "@/lib/kso-kom
 
 import { BottomLinePanel } from "./bottom-line";
 import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
+import { DeretTab } from "./deret-tab";
 import { TombolFormatKso } from "./format-kso";
 import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { PolaGerbang } from "./pola-gerbang";
@@ -78,21 +79,7 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
       {tabs.length > 0 && <SusunanPanel />}
       <div className="flex flex-wrap items-start gap-2">
-        {/* 18 Nov 2026 (evaluasi UI): tab dikelompokkan Antrean · Daftar · Analisis dan baris dibiarkan turun —
-            dulu satu baris bergulir sehingga pemegang banyak akses tak melihat tab di ujung. Label kelompok
-            hanya tampil bila ada lebih dari satu kelompok. */}
-        <TabsList className="h-auto w-full min-w-0 flex-wrap justify-start gap-x-4 gap-y-1.5 p-1.5 sm:w-auto sm:flex-1 group-data-[orientation=horizontal]/tabs:h-auto">
-          {kelompok.map((k) => (
-            <div key={k.judul} className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
-              {kelompok.length > 1 && (
-                <span aria-hidden className="text-muted-foreground px-1.5 text-[11px] font-semibold tracking-wide uppercase">{k.judul}</span>
-              )}
-              {k.isi.map((t) => (
-                <TabsTrigger key={t.value} value={t.value} className="h-7 flex-none px-2.5">{t.label}</TabsTrigger>
-              ))}
-            </div>
-          ))}
-        </TabsList>
+        <DeretTab kelompok={kelompok} />
         {tabs.length > 0 && <TombolFormatKso />}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
