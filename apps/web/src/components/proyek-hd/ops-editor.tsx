@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Combobox } from "@/components/ui/combobox";
+import { CurrencyInput } from "@/components/ui/currency-input";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -98,7 +99,9 @@ export function OpsEditor({ tab, proyekId, boleh }: {
 function nilaiAwal(k: Kolom, b: BarisOps | null): string | boolean {
   const v = b?.[k.nama];
   if (k.tipe === "bool") return v === true;
-  return v === null || v === undefined ? "" : String(v);
+  if (v === null || v === undefined) return "";
+  // Rupiah: digit bulat untuk CurrencyInput (NUMERIC "1500.00" tak boleh terbaca 150000).
+  return k.tipe === "rupiah" ? String(Math.round(Number(v))) : String(v);
 }
 
 function FormOps({ tab, baris, proyekAwal, proyek, karyawan, onClose, onSaved }: {
@@ -170,6 +173,8 @@ function FormOps({ tab, baris, proyekAwal, proyek, karyawan, onClose, onSaved }:
                     options={(k.pilihan ?? []).map((x) => ({ value: x, label: x }))} emptyOption={k.wajib ? undefined : "—"} />
                 ) : k.tipe === "pic" ? (
                   <Combobox id={id} value={String(f[k.nama])} onChange={(v) => setF({ ...f, [k.nama]: v })} options={opsiPic} emptyOption="—" searchPlaceholder="Cari karyawan…" />
+                ) : k.tipe === "rupiah" ? (
+                  <CurrencyInput id={id} className="bg-card" value={String(f[k.nama])} onChange={(v) => setF({ ...f, [k.nama]: v })} />
                 ) : (
                   <Input id={id} className="bg-card" value={String(f[k.nama])} onChange={(e) => setF({ ...f, [k.nama]: e.target.value })}
                     type={k.tipe === "date" ? "date" : k.tipe === "month" ? "month" : ["int", "number", "rupiah", "percent"].includes(k.tipe) ? "number" : "text"}

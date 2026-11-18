@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { CurrencyInput } from "@/components/ui/currency-input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -130,7 +131,7 @@ export function TambahProyekDialog({ open, onClose, onSaved }: { open: boolean; 
             <Combobox id="tp-alat" value={f.produk_kode} onChange={set("produk_kode")} options={opsiAlat} emptyOption="— belum ditentukan —"
               placeholder={alat.length ? "— pilih —" : "Memuat…"} searchPlaceholder="Cari mesin hemodialisa…" /></div>
           <div className="space-y-1"><Label htmlFor="tp-harga">Harga unit (Rp)</Label>
-            <Input id="tp-harga" type="number" min={0} value={f.harga_unit} onChange={(e) => set("harga_unit")(e.target.value)} /></div>
+            <CurrencyInput id="tp-harga" value={f.harga_unit} onChange={set("harga_unit")} /></div>
           <div className="space-y-1"><Label htmlFor="tp-kso">Jml unit KSO</Label>
             <Input id="tp-kso" type="number" min={1} value={f.unit_kso} onChange={(e) => set("unit_kso")(e.target.value)} /></div>
           <div className="space-y-1"><Label htmlFor="tp-inst">Jml unit terinstal</Label>
