@@ -340,3 +340,21 @@ test("contoh #REPORT di balasan bot sendiri lolos validasi", () => {
     assert.deepEqual(parseTeknisiReport(teks).errors.filter((e) => !/RS:|identitas/.test(e)), [], teks);
   }
 });
+
+
+test("report: judul blok hanya nama faskes (\"1. RSUD Trenggalek\") + Note — 18 Nov 2026", () => {
+  const r = parseTeknisiReport(
+    "#REPORT\n1. RSUD Trenggalek\nStatus: Selesai\nKegiatan: PM bulanan\nJumlah Tes: 1200\nPergantian Sparepart: -\nNote: analis minta cek ulang"
+    + "\n2. RS PTP Jember\nStatus: Pending sparepart\nKegiatan: cek tray\nJumlah Tes: -\nPergantian Sparepart: -",
+  );
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.blok.map((b) => [b.nomor, b.faskes, b.planNo, b.sn, b.alat, b.status]),
+    [[1, "RSUD Trenggalek", null, null, null, "Selesai"], [2, "RS PTP Jember", null, null, null, "Pending"]]);
+  assert.equal(r.blok[0].catatan, "analis minta cek ulang");
+  // Angka tulisan disimpan terpisah dari urutan blok: "5. RS A" sebagai blok pertama → nomor 1, nomorTulis 5.
+  const lima = parseTeknisiReport("#REPORT\n5. RS A\nStatus: Batal tutup");
+  assert.deepEqual([lima.blok[0].nomor, lima.blok[0].nomorTulis], [1, 5]);
+  assert.equal(r.blok[0].jumlahTes, 1200);
+  // Judul bukan faskes & tanpa identitas tetap dibaca sebagai alat (perilaku lama).
+  assert.equal(parseTeknisiReport("#REPORT\nRS: RS A\n1) Mindray BS-240\nStatus: Batal tutup").blok[0].alat, "Mindray BS-240");
+});
