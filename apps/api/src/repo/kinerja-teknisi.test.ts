@@ -37,7 +37,7 @@ const kerja = (o: Partial<KerjaRow>): KerjaRow => ({
   plan_item_id: 1, teknisi_id: "T-1", teknisi_nama: "Budi", tanggal: "2026-11-16", urut: 1, jenis: "PM", faskes: "RS A",
   di_luar_plan: false, plan_telat: false, started_at: null, selesai_at: null, status_report: null, durasi_menit: null,
   report_tanpa_start: false, start_tanpa_report: false, tanpa_laporan: false, berlokasi: false, lokasi_alamat: null,
-  jumlah_foto: 0, sla_respon_menit: null, sla_selesai_menit: null, lewat_eta: null, ...o,
+  jumlah_foto: 0, foto_kurang: false, foto_tes: 0, foto_kondisi: 0, sla_respon_menit: null, sla_selesai_menit: null, lewat_eta: null, ...o,
 });
 
 test("ringkasan per teknisi: kepatuhan, durasi, SLA vs ETA", () => {

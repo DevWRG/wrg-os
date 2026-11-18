@@ -647,6 +647,8 @@ export function balasanReportTeknisi(input: {
   lokasi?: "ada" | "tanpa-geotag" | "tanpa-foto";
   /** Report memuat >1 faskes → dikelompokkan per faskes (satu kunjungan per faskes). */
   kelompok?: { faskes: string | null; nomor: number[] }[];
+  /** Foto wajib yang belum ada per blok (336): jumlah tes / kondisi alat. Kosong = lengkap. */
+  fotoKurang?: FotoKurang[];
 }): string {
   const baris1 = (a: (typeof input.alat)[number]): string[] => {
     const sn = ekorSn(a.sn);
@@ -678,10 +680,64 @@ export function balasanReportTeknisi(input: {
   if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);
   if (input.lokasi === "ada") baris.push("📍 lokasi tercatat");
   else if (input.lokasi === "tanpa-geotag") baris.push("⚠️ foto tanpa geotag — pakai Geo-Tagging Camera supaya lokasi tercatat");
-  else if (input.lokasi === "tanpa-foto") {
+  else if (input.lokasi === "tanpa-foto" && !input.fotoKurang?.length) {
     baris.push(multi ? "📷 kirim foto Geo-Tagging Camera tiap kunjungan (boleh menyusul)" : "📷 kirim foto Geo-Tagging Camera kunjungan ini (boleh menyusul)");
   }
+  // Foto wajib per alat (336): sebut caption yang harus dikirim, mis. "1 tes · 1 kondisi".
+  if (input.fotoKurang?.length) {
+    baris.push(`📷 Kirim foto (Geo-Tagging Camera), caption nomor + jenis: ${captionKurang(input.fotoKurang)}`);
+  } else if (input.fotoKurang && input.foto) {
+    baris.push("📷 Foto jumlah tes & kondisi alat lengkap");
+  }
   return baris.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Foto wajib #REPORT (336, keputusan user 18 Nov 2026): tiap alat ≥1 foto JUMLAH TES (bila Jumlah Tes diisi angka)
+// dan ≥1 foto KONDISI ALAT (boleh lebih). Caption foto = nomor blok/plan atau ekor SN + jenis.
+// ---------------------------------------------------------------------------
+
+export type JenisFoto = "tes" | "kondisi";
+export interface FotoKurang { nomor: number; tes: boolean; kondisi: boolean }
+
+const KATA_TES = /^(t|tes|test|counter|jml(?:\s*tes)?|jumlah\s*tes|jumlah\s*test)$/i;
+const KATA_KONDISI = /^(k|kondisi|alat|kondisi\s*alat|kond)$/i;
+
+/**
+ * Caption foto susulan → rujukan alat + jenis. "1 tes", "tes 1", "1t", "0832 kondisi", "kondisi", "2".
+ * Tanpa kata jenis = kondisi (jenis yang boleh banyak). `ref` = nomor (1–2 digit) atau ekor SN (≥3 karakter).
+ */
+export function bacaCaptionFoto(caption: string | null | undefined): { ref: string | null; jenis: JenisFoto } {
+  const t = String(caption ?? "").replace(/<media:[^>]*>/gi, "").replace(/\[whatsapp attachment unavailable\]/gi, "")
+    .replace(/[*_~]/g, " ").replace(/^#/, "").trim();
+  let jenis: JenisFoto = "kondisi";
+  let ref: string | null = null;
+  // "1t" / "2k" / "1tes" (nomor menempel kata jenis).
+  const lekat = t.match(/^(\d{1,2})\s*(t|tes|test|k|kondisi)$/i);
+  if (lekat) return { ref: lekat[1], jenis: /^t/i.test(lekat[2]) ? "tes" : "kondisi" };
+  const kata = t.split(/[\s,;:.\-–—/]+/).filter(Boolean);
+  const sisa: string[] = [];
+  for (let i = 0; i < kata.length; i++) {
+    const dua = kata.slice(i, i + 2).join(" ");
+    if (KATA_TES.test(dua) && i + 1 < kata.length) { jenis = "tes"; i++; continue; }
+    if (KATA_KONDISI.test(dua) && i + 1 < kata.length) { jenis = "kondisi"; i++; continue; }
+    if (KATA_TES.test(kata[i])) { jenis = "tes"; continue; }
+    if (KATA_KONDISI.test(kata[i])) { jenis = "kondisi"; continue; }
+    sisa.push(kata[i]);
+  }
+  const r = sisa.find((x) => /^\d{1,2}$/.test(x)) ?? sisa.find((x) => /^[A-Za-z0-9]{3,}$/.test(x) && /\d/.test(x));
+  if (r) ref = r;
+  return { ref, jenis };
+}
+
+/** "1 tes · 1 kondisi · 2 kondisi" — caption yang masih harus dikirim. */
+export function captionKurang(kurang: FotoKurang[]): string {
+  const out: string[] = [];
+  for (const k of kurang) {
+    if (k.tes) out.push(`${k.nomor} tes`);
+    if (k.kondisi) out.push(`${k.nomor} kondisi`);
+  }
+  return out.join(" · ");
 }
 
 export function balasanFormatSalah(kind: "plan" | "report" | "start", nama: string, errors: string[]): string {

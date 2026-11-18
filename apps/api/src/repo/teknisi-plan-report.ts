@@ -12,7 +12,7 @@ import { accountIdDariTulisan } from "./akun-faskes.js";
 import { normSn } from "./asetTetapRekon.js";
 import { computeIsLate } from "./todo.js";
 import { terapkanEfek } from "./teknisi-efek.js";
-import { KANTOR_RE } from "../parsers/teknisi.js";
+import { KANTOR_RE, bacaCaptionFoto, captionKurang, type FotoKurang, type JenisFoto } from "../parsers/teknisi.js";
 
 // Nomor item "di luar plan" mulai 51 — SAMA dengan URUT_DI_LUAR_PLAN di teknisi-start.ts (tak diimpor: modul itu
 // mengimpor modul ini).
@@ -249,6 +249,8 @@ export async function simpanReportTeknisi(input: {
   lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" | null;
   /** Satu #REPORT bisa memuat >1 faskes → satu kunjungan per faskes (keputusan user 16 Nov 2026). */
   kelompok: { faskes: string | null; nomor: number[] }[];
+  /** Foto wajib yang belum ada per blok (336). */
+  fotoKurang: FotoKurang[];
 }> {
   const sql = db();
   const { parse } = input;
@@ -429,8 +431,8 @@ export async function simpanReportTeknisi(input: {
     // Report dikirim sebagai caption foto → foto kunjungan umum.
     if (input.mediaPath) {
       const f = await tx`
-        INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id)
-        VALUES (${kunjunganId}, ${input.mediaPath}, ${input.waMessageId})
+        INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id, jenis)
+        VALUES (${kunjunganId}, ${input.mediaPath}, ${input.waMessageId}, 'kondisi')
         ON CONFLICT DO NOTHING RETURNING id`;
       foto += f.length;
     }
@@ -439,8 +441,9 @@ export async function simpanReportTeknisi(input: {
     // grup + nama pengirim. Foto yang sudah tertaut ke kunjungan lain tak diambil.
     if (input.pengirim && input.receivedAt) {
       const f = await tx`
-        INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id)
-        SELECT ${kunjunganId}, w.media_path, w.message_id
+        INSERT INTO teknisi_kunjungan_foto (kunjungan_id, media_path, wa_message_id, jenis)
+        SELECT ${kunjunganId}, w.media_path, w.message_id,
+               CASE WHEN coalesce(w.body, '') ~* '\m(tes|test|counter)\M' THEN 'tes' ELSE 'kondisi' END
         FROM wa_message w
         WHERE w.group_jid = ${input.pengirim.groupJid}
           AND coalesce(w.sender_name, '') = coalesce(${input.pengirim.senderName}, '')
@@ -489,8 +492,10 @@ export async function simpanReportTeknisi(input: {
     const m = Math.round((selesai.getTime() - mulai.getTime()) / 60000);
     return m >= 0 ? m : null;
   };
+  const fotoKurang = hasil.duplikat ? [] : await kekuranganFoto(hasil.kunjunganIds);
   return {
     duplikat: hasil.duplikat,
+    fotoKurang,
     faskes: grup[0]?.label ?? faskesLabel,
     foto: hasil.foto,
     lokasi,
@@ -517,7 +522,7 @@ export async function tempelFotoTeknisi(input: {
   caption: string | null;
   waMessageId: string | null;
   receivedAt: string;
-}): Promise<{ kunjungan_id: number; nomor_blok: number | null; faskes: string | null } | null> {
+}): Promise<{ kunjungan_id: number; nomor_blok: number | null; faskes: string | null; jenis: JenisFoto } | null> {
   const sql = db();
   // Semua kunjungan dari pesan #REPORT terakhir dalam jendela (satu report bisa >1 faskes → >1 kunjungan).
   const ks = await sql`
@@ -535,27 +540,99 @@ export async function tempelFotoTeknisi(input: {
     FROM teknisi_kunjungan_alat ka LEFT JOIN kso_asset a ON a.id = ka.kso_asset_id
     LEFT JOIN teknisi_plan_item p ON p.id = ka.plan_item_id
     WHERE ka.kunjungan_id IN ${sql(ks.map((k) => Number(k.id)))} ORDER BY ka.nomor_blok`;
-  const cap = (input.caption ?? "").replace(/<media:[^>]*>/gi, "").replace(/\[whatsapp attachment unavailable\]/gi, "").trim();
+  // Caption = rujukan alat (nomor blok/plan atau ekor SN) + jenis foto ("1 tes", "1 kondisi", 336).
+  const { ref, jenis } = bacaCaptionFoto(input.caption);
   let pilih: { id: number; nomor: number; kunjungan: number } | null = null;
-  const no = cap.match(/^#?\s*(\d{1,2})\s*$/);
-  if (no) {
+  const ambil = (a: (typeof alat)[number]) => ({ id: Number(a.id), nomor: Number(a.nomor_blok), kunjungan: Number(a.kunjungan_id) });
+  if (ref && /^\d{1,2}$/.test(ref)) {
     // Angka = nomor blok di report, atau nomor PLAN (teknisi menulis "2" untuk #REPORT 2 yang
     // hanya punya satu blok). Nomor blok didahulukan bila keduanya cocok.
-    const a = alat.find((x) => Number(x.nomor_blok) === Number(no[1]) && (alat.length > 1 || x.plan_urut == null))
-      ?? alat.find((x) => x.plan_urut != null && Number(x.plan_urut) === Number(no[1]))
-      ?? alat.find((x) => Number(x.nomor_blok) === Number(no[1]));
-    if (a) pilih = { id: Number(a.id), nomor: Number(a.nomor_blok), kunjungan: Number(a.kunjungan_id) };
-  } else if (/^[A-Za-z0-9-]{3,}$/.test(cap)) {
-    const ekor = normSn(cap);
+    const a = alat.find((x) => Number(x.nomor_blok) === Number(ref) && (alat.length > 1 || x.plan_urut == null))
+      ?? alat.find((x) => x.plan_urut != null && Number(x.plan_urut) === Number(ref))
+      ?? alat.find((x) => Number(x.nomor_blok) === Number(ref));
+    if (a) pilih = ambil(a);
+  } else if (ref) {
+    const ekor = normSn(ref);
     const cocok = alat.filter((x) => x.sn && normSn(x.sn).endsWith(ekor));
-    if (cocok.length === 1) pilih = { id: Number(cocok[0].id), nomor: Number(cocok[0].nomor_blok), kunjungan: Number(cocok[0].kunjungan_id) };
+    if (cocok.length === 1) pilih = ambil(cocok[0]);
+  } else if (alat.length === 1) {
+    // Report satu alat: foto tanpa nomor ("tes" / "kondisi") milik alat itu.
+    pilih = ambil(alat[0]);
   }
   // Tak cocok = foto kunjungan umum → kunjungan pertama dari report itu.
   const kid = pilih?.kunjungan ?? Number(ks[0].id);
   await sql`
-    INSERT INTO teknisi_kunjungan_foto (kunjungan_id, kunjungan_alat_id, media_path, wa_message_id)
-    VALUES (${kid}, ${pilih?.id ?? null}, ${input.mediaPath}, ${input.waMessageId})
+    INSERT INTO teknisi_kunjungan_foto (kunjungan_id, kunjungan_alat_id, media_path, wa_message_id, jenis)
+    VALUES (${kid}, ${pilih?.id ?? null}, ${input.mediaPath}, ${input.waMessageId}, ${jenis})
     ON CONFLICT (kunjungan_id, media_path) DO NOTHING`;
   const fk = ks.find((k) => Number(k.id) === kid);
-  return { kunjungan_id: kid, nomor_blok: pilih?.nomor ?? null, faskes: fk?.faskes_teks ?? null };
+  return { kunjungan_id: kid, nomor_blok: pilih?.nomor ?? null, faskes: fk?.faskes_teks ?? null, jenis };
+}
+
+
+/**
+ * Foto wajib yang belum ada (336): per alat berstatus Selesai/Pending/Revisit (bukan kegiatan kantor) ≥1 foto
+ * kondisi, dan ≥1 foto jumlah tes bila Jumlah Tes diisi angka. Foto tanpa alat dihitung untuk alat tunggal kunjungan.
+ * Hitungan sama dengan kolom foto_* di teknisi_kerja_v.
+ */
+export async function kekuranganFoto(kunjunganIds: number[]): Promise<FotoKurang[]> {
+  if (!kunjunganIds.length) return [];
+  const sql = db();
+  const rows = await sql`
+    SELECT ka.nomor_blok,
+           (ka.jumlah_tes IS NOT NULL) AS tes_wajib,
+           count(f.id) FILTER (WHERE f.jenis = 'tes')::int AS tes,
+           count(f.id) FILTER (WHERE COALESCE(f.jenis, 'kondisi') = 'kondisi')::int AS kondisi
+    FROM teknisi_kunjungan_alat ka
+    LEFT JOIN teknisi_plan_item p ON p.id = ka.plan_item_id
+    LEFT JOIN teknisi_kunjungan_foto f ON f.kunjungan_id = ka.kunjungan_id
+      AND (f.kunjungan_alat_id = ka.id
+           OR (f.kunjungan_alat_id IS NULL
+               AND (SELECT count(*) FROM teknisi_kunjungan_alat y WHERE y.kunjungan_id = ka.kunjungan_id) = 1))
+    WHERE ka.kunjungan_id IN ${sql(kunjunganIds)} AND ka.status <> 'Batal' AND NOT COALESCE(p.kantor, false)
+    GROUP BY ka.id, ka.nomor_blok, ka.jumlah_tes
+    ORDER BY ka.nomor_blok`;
+  return rows
+    .map((r) => ({ nomor: Number(r.nomor_blok), tes: !!r.tes_wajib && Number(r.tes) === 0, kondisi: Number(r.kondisi) === 0 }))
+    .filter((k) => k.tes || k.kondisi);
+}
+
+/**
+ * Job teknisi-foto-ingat (336): kunjungan #REPORT 30 menit–24 jam lalu yang belum diperiksa → periksa sekali;
+ * bila foto wajib masih kurang, ingatkan di grup tempat report dikirim. Saklar TEKNISI_FOTO_INGAT_ENABLED.
+ */
+export async function ingatkanFotoKurang(kirim: (to: string, body: string) => Promise<unknown>): Promise<{ diperiksa: number; diingatkan: number }> {
+  const sql = db();
+  const ks = await sql`
+    SELECT k.id, k.faskes_teks, COALESCE(NULLIF(mu.panggilan, ''), mu.nama, k.teknisi_id) AS nama, w.group_jid
+    FROM teknisi_kunjungan k
+    LEFT JOIN master_user mu ON mu.am_id = k.teknisi_id
+    LEFT JOIN wa_message w ON w.message_id = split_part(k.wa_message_id, '#', 1)
+    WHERE k.foto_ingat_at IS NULL
+      AND k.reported_at BETWEEN now() - interval '24 hours' AND now() - make_interval(mins => ${FOTO_INGAT_MENIT})
+    ORDER BY k.reported_at`;
+  let diingatkan = 0;
+  for (const k of ks) {
+    const kurang = await kekuranganFoto([Number(k.id)]);
+    await sql`UPDATE teknisi_kunjungan SET foto_ingat_at = now() WHERE id = ${k.id}`;
+    if (!kurang.length || !k.group_jid) continue;
+    await kirim(String(k.group_jid), pesanFotoKurang(String(k.nama), k.faskes_teks ? String(k.faskes_teks) : null, kurang));
+    diingatkan += 1;
+  }
+  return { diperiksa: ks.length, diingatkan };
+}
+
+export const FOTO_INGAT_MENIT = 30;
+
+export function pesanFotoKurang(nama: string, faskes: string | null, kurang: FotoKurang[]): string {
+  const rinci = kurang.map((k) => `No. ${k.nomor}: ${[k.tes ? "jumlah tes" : null, k.kondisi ? "kondisi alat" : null].filter(Boolean).join(" & ")}`);
+  return [
+    `📷 Foto #REPORT ${faskes ?? ""} belum lengkap, ${nama}:`.replace(/\s+,/, ","),
+    ...rinci.map((r) => `• ${r}`),
+    `Kirim dengan caption nomor + jenis, mis. ${captionKurang(kurang)}`,
+  ].join("\n");
+}
+
+export function teknisiFotoIngatAktif(): boolean {
+  return /^(1|true|yes|on)$/i.test(process.env.TEKNISI_FOTO_INGAT_ENABLED?.trim() ?? "");
 }

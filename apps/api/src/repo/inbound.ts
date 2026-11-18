@@ -610,7 +610,7 @@ async function handleTeknisiPlanReport(
     pengirim: { groupJid: row.group_jid, senderName: row.sender_name },
   });
   if (r.duplikat) return { skipped: "teknisi-report-duplikat", am_id: am.am_id, mode: "teknisi" };
-  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto, lokasi: r.lokasi ?? undefined, kelompok: r.kelompok });
+  let body = balasanReportTeknisi({ faskes: r.faskes, alat: r.alat, foto: r.foto, lokasi: r.lokasi ?? undefined, kelompok: r.kelompok, fotoKurang: r.fotoKurang });
   const peringatan = buildPeringatanTanggal(tanggal, String(tgl_pesan));
   if (peringatan) body += peringatan;
   const reply = await sendViaWaGateway(target, body);
