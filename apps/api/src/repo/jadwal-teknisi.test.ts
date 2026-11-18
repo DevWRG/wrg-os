@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { hariKerjaBulan, intervalDefault, jatuhTempo, pesanJadwal, selisihBulan, susunHari, type FaskesRencana } from "./jadwal-teknisi.js";
+import { hariKerjaBulan, intervalDefault, jatuhTempo, pesanJadwal, selisihBulan, susunHari, type FaskesRencana, snapshotAlat } from "./jadwal-teknisi.js";
 
 // F154 Jadwal Kunjungan Rutin Teknisi — penyusun (18 Okt 2026).
 
@@ -60,4 +60,17 @@ test("pesanJadwal: dikelompokkan per tanggal, tanpa kurung sudut", () => {
   assert.match(p, /✅ PKM B \(1 alat\)/);
   assert.doesNotMatch(p, /[<>]/);
   assert.match(pesanJadwal("Galih", "2026-11-01", []), /Tidak ada kunjungan rutin/);
+});
+
+test("snapshot alat jadwal_rutin tetap bentuk lama {sn, nama, skema} — dibaca #JADWAL, Kinerja, efek F175 (334)", () => {
+  const s = snapshotAlat([{ id: 1, sn: "0832", nama: "Zybio Z3", skema: "PER_TEST", tipe: "Hematology 3Diff", interval: 1, terakhir: "2026-10-01" }]);
+  assert.deepEqual(s, [{ sn: "0832", nama: "Zybio Z3", skema: "PER_TEST" }]);
+});
+
+test("jatuh tempo per alat: PM terakhir + interval alat; tanpa riwayat disebar per faskes", () => {
+  assert.equal(jatuhTempo(1, 1, "2026-11-01", "2026-12-01"), true);
+  assert.equal(jatuhTempo(1, 2, "2026-11-01", "2026-12-01"), false);
+  assert.equal(jatuhTempo(1, 2, "2026-11-01", "2027-01-01"), true);
+  // Dua alat tanpa riwayat di faskes yang sama & interval sama → bulan yang sama.
+  assert.equal(jatuhTempo(77, 3, null, "2027-02-01"), jatuhTempo(77, 3, null, "2027-02-01"));
 });

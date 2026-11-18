@@ -9,11 +9,14 @@
 // kso_asset.kota. Prod 18 Okt: 195 faskes di 15 wilayah; 5 teknisi, semua berbasis Pusat
 // (Surabaya) → kunjungan dikelompokkan per WILAYAH jadi trip berhari-hari berurutan.
 //
-// Jatuh tempo: bulan sejak kunjungan rutin terakhir (baris non-batal) ≥ interval.
-// Faskes tanpa riwayat disebar merata: (indeks bulan + hash account_id) mod interval = 0
-// — tanpa ini semua 195 faskes jatuh di bulan pertama.
-// Interval default: ada alat PER_TEST → 2 bulan, selain itu 3 bulan (kolom
-// kso_asset.ritme_kunjungan tak bisa dipakai: 532/600 kosong, sisanya angka harga).
+// Jatuh tempo PER ALAT (334, keputusan user 18 Nov 2026): bulan sejak PM terakhir alat itu ≥ interval alat itu.
+// PM terakhir = max(Riwayat Alat F176 jenis PM/Maintenance yang tidak Batal/Pending, bulan jadwal rutin non-batal
+// terakhir yang memuat SN-nya). Faskes masuk jadwal bila ada ≥1 alat jatuh tempo; baris jadwal_rutin tetap satu
+// per faskes, `alat` = hanya alat yang jatuh tempo (digabung satu kunjungan).
+// Interval alat: jadwal_pm_alat → frekuensi faskes (isian lama) → jadwal_pm_interval (tipe alat) → default skema
+// (PER_TEST 2 bulan, lainnya 3 bulan; kolom kso_asset.ritme_kunjungan tak bisa dipakai: 532/600 kosong).
+// Alat tanpa riwayat disebar merata per FASKES: (indeks bulan + hash account_id) mod interval = 0 — alat satu
+// faskes tak terpencar ke banyak bulan, dan 195 faskes tak jatuh di bulan pertama semua.
 
 import { db } from "../db.js";
 import { sendViaWaGateway } from "../wasend.js";
@@ -127,14 +130,40 @@ async function liburBulan(sql: Sql, bulan: string): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.t)));
 }
 
-/** Faskes KSO operasional + wilayah + teknisi + interval + kunjungan rutin terakhir sebelum `bulan`. */
+export interface AlatPm { id: number; sn: string | null; nama: string | null; skema: string | null; tipe: string | null; interval: number; terakhir: string | null }
+
+/**
+ * Faskes KSO operasional + wilayah + teknisi + kunjungan rutin terakhir sebelum `bulan`, dengan daftar alat yang
+ * membawa interval efektif & bulan PM terakhir masing-masing (334). `alat_jatuh` = alat yang jatuh tempo di `bulan`.
+ */
 async function populasi(sql: Sql, bulan: string) {
-  return sql`
-    WITH a AS (
+  const rows = await sql`
+    WITH pm AS (
+      SELECT sn_key, max(waktu) AS terakhir FROM alat_riwayat_v
+      WHERE sn_key IS NOT NULL AND lower(coalesce(jenis, '')) IN ('pm', 'maintenance')
+        AND coalesce(status, '') !~* '^(batal|pending|revisit)'
+        AND waktu < ${bulan}::date
+      GROUP BY sn_key
+    ), jr AS (
+      SELECT alat_sn_key(x.el->>'sn') AS sn_key, max(j.bulan) AS bulan
+      FROM jadwal_rutin j CROSS JOIN LATERAL jsonb_array_elements(COALESCE(j.alat, '[]'::jsonb)) AS x(el)
+      WHERE j.status <> 'batal' AND j.bulan < ${bulan}::date
+      GROUP BY 1
+    ), a AS (
       SELECT a.account_id, array_agg(DISTINCT a.skema) AS skema,
-             jsonb_agg(jsonb_build_object('sn', a.sn_raw, 'nama', COALESCE(NULLIF(a.nama_alat, ''), a.type_alat), 'skema', a.skema) ORDER BY a.sn_raw) AS alat,
+             jsonb_agg(jsonb_build_object(
+               'id', a.id, 'sn', a.sn_raw, 'nama', COALESCE(NULLIF(a.nama_alat, ''), a.type_alat), 'skema', a.skema,
+               'tipe', NULLIF(btrim(a.type_alat), ''),
+               'interval', COALESCE(pa.interval_bulan, f.interval_bulan, pi.interval_bulan, CASE WHEN a.skema = 'PER_TEST' THEN 2 ELSE 3 END),
+               'terakhir', to_char(date_trunc('month', GREATEST((pm.terakhir AT TIME ZONE 'Asia/Jakarta')::date, jr.bulan)), 'YYYY-MM-DD')
+             ) ORDER BY a.sn_raw) AS alat,
              min(NULLIF(btrim(a.kota), '')) AS kota_alat
       FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
+      LEFT JOIN jadwal_pm_alat pa ON pa.kso_asset_id = a.id
+      LEFT JOIN jadwal_rutin_frekuensi f ON f.account_id = a.account_id
+      LEFT JOIN jadwal_pm_interval pi ON pi.type_alat = upper(btrim(a.type_alat))
+      LEFT JOIN pm ON pm.sn_key = a.sn_key
+      LEFT JOIN jr ON jr.sn_key = a.sn_key
       WHERE v.status_kode = 'operasional' AND a.account_id IS NOT NULL
       GROUP BY a.account_id
     )
@@ -146,7 +175,23 @@ async function populasi(sql: Sql, bulan: string) {
     JOIN accurate_customer ac ON ac.id = a.account_id
     LEFT JOIN jadwal_rutin_frekuensi f ON f.account_id = a.account_id
     LEFT JOIN teknisi_wilayah tw ON tw.wilayah = upper(btrim(COALESCE(NULLIF(area_customer(a.account_id), ''), a.kota_alat, 'TANPA WILAYAH')))`;
+  return rows.map((p) => {
+    const alat = ((p.alat as Record<string, unknown>[]) ?? []).map((x): AlatPm => ({
+      id: Number(x.id), sn: (x.sn as string) ?? null, nama: (x.nama as string) ?? null, skema: (x.skema as string) ?? null,
+      tipe: (x.tipe as string) ?? null, interval: Number(x.interval), terakhir: (x.terakhir as string) ?? null,
+    }));
+    const alat_jatuh = alat.filter((x) => jatuhTempo(Number(p.account_id), x.interval, x.terakhir, bulan));
+    return {
+      account_id: Number(p.account_id), nama: String(p.nama), wilayah: String(p.wilayah), kota: p.kota ? String(p.kota) : null,
+      skema: (p.skema as string[]) ?? [], interval_bulan: p.interval_bulan == null ? null : Number(p.interval_bulan),
+      teknisi_id: p.teknisi_id ? String(p.teknisi_id) : null, terakhir: p.terakhir ? String(p.terakhir) : null,
+      alat, alat_jatuh,
+    };
+  });
 }
+
+/** Snapshot alat di jadwal_rutin.alat — bentuk lama {sn, nama, skema} (dibaca #JADWAL, Kinerja, efek F175). */
+export const snapshotAlat = (xs: AlatPm[]) => xs.map((x) => ({ sn: x.sn, nama: x.nama, skema: x.skema }));
 
 export async function daftarTeknisi() {
   const rows = await db()`
@@ -159,8 +204,8 @@ export async function daftarTeknisi() {
 async function hitungRencana(sql: Sql, bulan: string, ada: Set<number>) {
   const [pop, libur] = await Promise.all([populasi(sql, bulan), liburBulan(sql, bulan)]);
   const hariKerja = hariKerjaBulan(bulan, libur);
-  const due = pop.filter((p) => !ada.has(Number(p.account_id)))
-    .filter((p) => jatuhTempo(Number(p.account_id), p.interval_bulan ?? intervalDefault(p.skema as string[]), p.terakhir ? String(p.terakhir) : null, bulan));
+  // Faskes jatuh tempo = punya ≥1 alat jatuh tempo bulan ini (334).
+  const due = pop.filter((p) => !ada.has(Number(p.account_id)) && p.alat_jatuh.length > 0);
   const rencana = susunHari(due.map((p) => ({ account_id: Number(p.account_id), nama: String(p.nama), wilayah: String(p.wilayah), kota: p.kota ? String(p.kota) : null, teknisi_id: p.teknisi_id ? String(p.teknisi_id) : null })), hariKerja);
   return { pop, due, rencana, hariKerja, libur };
 }
@@ -181,7 +226,8 @@ export async function pratinjau(bulan0: string) {
     x.kunjungan += 1; perTek.set(k, x);
   }
   for (const [k, x] of perTek) x.hari = new Set(rencana.filter((r) => (r.teknisi_id ?? "") === k).map((r) => r.tanggal)).size;
-  return { bulan, populasi: pop.length, jatuh_tempo: due.length, hari_kerja: hariKerja.length, libur_tercatat: libur.size,
+  return { bulan, populasi: pop.length, jatuh_tempo: due.length, alat_jatuh_tempo: due.reduce((n, d) => n + d.alat_jatuh.length, 0),
+           alat_total: pop.reduce((n, d) => n + d.alat.length, 0), hari_kerja: hariKerja.length, libur_tercatat: libur.size,
            melebihi: rencana.filter((r) => r.melebihi).length,
            per_wilayah: [...perWil.entries()].map(([wilayah, n]) => ({ wilayah, faskes: n })).sort((a, b) => b.faskes - a.faskes),
            per_teknisi: [...perTek.values()].sort((a, b) => b.kunjungan - a.kunjungan) };
@@ -200,7 +246,7 @@ export async function susunDraft(bulan0: string, oleh: string) {
     await t`DELETE FROM jadwal_rutin WHERE bulan = ${bulan}::date AND sumber = 'auto' AND status = 'rencana'`;
     const ada = new Set((await t`SELECT account_id FROM jadwal_rutin WHERE bulan = ${bulan}::date AND status <> 'batal'`).map((r) => Number(r.account_id)));
     const { pop, due, rencana, hariKerja } = await hitungRencana(t, bulan, ada);
-    const alat = new Map(due.map((p) => [Number(p.account_id), p.alat]));
+    const alat = new Map(due.map((p) => [Number(p.account_id), snapshotAlat(p.alat_jatuh)]));
     for (const r of rencana) {
       await t`INSERT INTO jadwal_rutin (bulan, tanggal, urutan, teknisi_id, account_id, wilayah, alat, sumber, oleh, catatan)
               VALUES (${bulan}::date, ${r.tanggal}::date, ${r.urutan}, ${r.teknisi_id}, ${r.account_id}, ${r.wilayah}, ${t.json(alat.get(r.account_id) as never)}, 'auto', ${oleh},
@@ -353,7 +399,7 @@ export async function daftarWilayah() {
   for (const p of pop) {
     const w = String(p.wilayah);
     const x = per.get(w) ?? { wilayah: w, faskes: 0, alat: 0 };
-    x.faskes += 1; x.alat += ((p.alat as unknown[]) ?? []).length;
+    x.faskes += 1; x.alat += p.alat.length;
     per.set(w, x);
   }
   return { wilayah: [...per.values()].map((w) => ({ ...w, teknisi_id: peta.get(w.wilayah) ?? null })).sort((a, b) => b.faskes - a.faskes), teknisi: await daftarTeknisi() };
@@ -376,7 +422,7 @@ export async function daftarFrekuensi() {
   const pop = await populasi(sql, bulanDepan());
   return pop.map((p) => ({
     account_id: String(p.account_id), nama: String(p.nama), wilayah: String(p.wilayah), skema: (p.skema as string[]) ?? [],
-    alat: ((p.alat as unknown[]) ?? []).length, interval_default: intervalDefault((p.skema as string[]) ?? []),
+    alat: p.alat.length, interval_default: intervalDefault((p.skema as string[]) ?? []),
     interval_bulan: p.interval_bulan == null ? null : Number(p.interval_bulan), terakhir: p.terakhir ? String(p.terakhir) : null,
   })).sort((a, b) => a.wilayah.localeCompare(b.wilayah) || a.nama.localeCompare(b.nama));
 }
@@ -389,6 +435,79 @@ export async function setFrekuensi(accountId: number, intervalBulan: number | nu
   await sql`INSERT INTO jadwal_rutin_frekuensi (account_id, interval_bulan, catatan, oleh) VALUES (${accountId}, ${intervalBulan}, ${catatan}, ${oleh})
             ON CONFLICT (account_id) DO UPDATE SET interval_bulan = EXCLUDED.interval_bulan, catatan = EXCLUDED.catatan, oleh = EXCLUDED.oleh, updated_at = now()`;
   return { account_id: accountId, interval_bulan: intervalBulan };
+}
+
+// ── Interval PM per tipe alat & per alat (334) ─────────────────────────────
+
+const tambahBulan = (iso: string, n: number): string => {
+  const i = indeksBulan(iso) + n;
+  return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}-01`;
+};
+const cekInterval = (v: number | null) => {
+  if (v == null) return null;
+  if (!Number.isInteger(v) || v < 1 || v > 12) throw new JadwalError(400, "interval 1–12 bulan", "interval_bulan");
+  return v;
+};
+
+/** Tab Interval PM: interval per tipe alat + daftar alat dengan PM terakhir & perkiraan PM berikutnya. */
+export async function daftarIntervalPm() {
+  const sql = db();
+  const bulan = bulanDepan();
+  const [pop, tipeRows, alatRows] = await Promise.all([
+    populasi(sql, bulan),
+    sql`SELECT type_alat, interval_bulan FROM jadwal_pm_interval`,
+    sql`SELECT kso_asset_id, interval_bulan, catatan FROM jadwal_pm_alat`,
+  ]);
+  const perTipe = new Map(tipeRows.map((r) => [String(r.type_alat), Number(r.interval_bulan)]));
+  const perAlat = new Map(alatRows.map((r) => [Number(r.kso_asset_id), { interval: Number(r.interval_bulan), catatan: r.catatan ? String(r.catatan) : null }]));
+  const tipe = new Map<string, { tipe: string; alat: number; per_test: number }>();
+  const alat = [];
+  for (const p of pop) {
+    for (const x of p.alat) {
+      const k = (x.tipe ?? "").trim().toUpperCase();
+      if (k) {
+        const t = tipe.get(k) ?? { tipe: x.tipe!.trim(), alat: 0, per_test: 0 };
+        t.alat += 1; if (x.skema === "PER_TEST") t.per_test += 1; tipe.set(k, t);
+      }
+      const khusus = perAlat.get(x.id);
+      const sumber = khusus ? "alat" : p.interval_bulan != null ? "faskes" : k && perTipe.has(k) ? "tipe" : "default";
+      alat.push({
+        id: x.id, sn: x.sn, nama: x.nama, tipe: x.tipe, skema: x.skema, faskes: p.nama, account_id: p.account_id, wilayah: p.wilayah,
+        interval: x.interval, interval_alat: khusus?.interval ?? null, catatan: khusus?.catatan ?? null, sumber_interval: sumber,
+        pm_terakhir: x.terakhir, pm_berikutnya: x.terakhir ? tambahBulan(x.terakhir, x.interval) : null,
+        jatuh_tempo_bulan_depan: p.alat_jatuh.some((y) => y.id === x.id),
+      });
+    }
+  }
+  return {
+    bulan_depan: bulan,
+    tipe: [...tipe.entries()].map(([k, t]) => ({ ...t, kunci: k, interval_bulan: perTipe.get(k) ?? null }))
+      .sort((a, b) => b.alat - a.alat || a.tipe.localeCompare(b.tipe)),
+    alat: alat.sort((a, b) => (a.pm_berikutnya ?? "0000").localeCompare(b.pm_berikutnya ?? "0000") || a.faskes.localeCompare(b.faskes)),
+  };
+}
+
+export async function setIntervalTipe(tipe0: string, interval0: number | null, oleh: string) {
+  const tipe = String(tipe0 ?? "").trim().toUpperCase();
+  if (!tipe || tipe.length > 80) throw new JadwalError(400, "tipe alat wajib", "type_alat");
+  const interval = cekInterval(interval0);
+  const sql = db();
+  if (interval == null) { await sql`DELETE FROM jadwal_pm_interval WHERE type_alat = ${tipe}`; return { type_alat: tipe, interval_bulan: null }; }
+  await sql`INSERT INTO jadwal_pm_interval (type_alat, interval_bulan, oleh) VALUES (${tipe}, ${interval}, ${oleh})
+            ON CONFLICT (type_alat) DO UPDATE SET interval_bulan = EXCLUDED.interval_bulan, oleh = EXCLUDED.oleh, updated_at = now()`;
+  return { type_alat: tipe, interval_bulan: interval };
+}
+
+export async function setIntervalAlat(id: number, interval0: number | null, catatan: string | null, oleh: string) {
+  if (!Number.isInteger(id) || id <= 0) throw new JadwalError(400, "kso_asset_id wajib", "kso_asset_id");
+  const interval = cekInterval(interval0);
+  const sql = db();
+  if (interval == null) { await sql`DELETE FROM jadwal_pm_alat WHERE kso_asset_id = ${id}`; return { kso_asset_id: id, interval_bulan: null }; }
+  const [a] = await sql`SELECT 1 FROM kso_asset WHERE id = ${id}`;
+  if (!a) throw new JadwalError(404, "alat tidak ditemukan", "kso_asset_id");
+  await sql`INSERT INTO jadwal_pm_alat (kso_asset_id, interval_bulan, catatan, oleh) VALUES (${id}, ${interval}, ${catatan}, ${oleh})
+            ON CONFLICT (kso_asset_id) DO UPDATE SET interval_bulan = EXCLUDED.interval_bulan, catatan = EXCLUDED.catatan, oleh = EXCLUDED.oleh, updated_at = now()`;
+  return { kso_asset_id: id, interval_bulan: interval };
 }
 
 // ── WA #JADWAL ───────────────────────────────────────────────────────────

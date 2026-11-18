@@ -214,7 +214,7 @@ import { productScorecard } from "./repo/product-scorecard.js";
 import { keaslianPipeline } from "./repo/pipeline-keaslian.js";
 import { OrderError, daftarOrder, ubahStatusOrder } from "./repo/order-wa.js";
 import { BonError, batalkanBon, buatBonGudang, cariSparepart, daftarBon, kandidatSj, rekonsiliasiBon, tautkanSjManual } from "./repo/bon-sparepart.js";
-import { JadwalError, daftarFrekuensi, daftarWilayah, jadwalBulan, pratinjau as pratinjauJadwal, setFrekuensi, setWilayah, susunDraft, tambahManual, terbitkan, ubahBaris, bulanDepan } from "./repo/jadwal-teknisi.js";
+import { JadwalError, daftarFrekuensi, daftarIntervalPm, daftarWilayah, setIntervalAlat, setIntervalTipe, jadwalBulan, pratinjau as pratinjauJadwal, setFrekuensi, setWilayah, susunDraft, tambahManual, terbitkan, ubahBaris, bulanDepan } from "./repo/jadwal-teknisi.js";
 import { IntelError, briefingFaskes, dominasiWilayah, setDominan } from "./repo/customer-intel.js";
 import { ringkasPembayaran } from "./repo/pembayaran.js";
 import {
@@ -4673,6 +4673,25 @@ app.get("/jadwal-teknisi/wilayah", async (c) => {
 app.put("/jadwal-teknisi/wilayah", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   try { const b = await bodyJadwal(c); return c.json(await setWilayah(String(b.wilayah ?? ""), b.teknisi_id ? String(b.teknisi_id) : null, olehJadwal(b))); } catch (e) { return jadwalErr(c, e); }
+});
+// F154 334: interval PM per tipe alat & per alat.
+app.get("/jadwal-teknisi/interval", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await daftarIntervalPm()); } catch (e) { return jadwalErr(c, e); }
+});
+app.put("/jadwal-teknisi/interval-tipe", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyJadwal(c);
+    return c.json(await setIntervalTipe(String(b.type_alat ?? ""), b.interval_bulan == null || b.interval_bulan === "" ? null : Number(b.interval_bulan), olehJadwal(b)));
+  } catch (e) { return jadwalErr(c, e); }
+});
+app.put("/jadwal-teknisi/interval-alat", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const b = await bodyJadwal(c);
+    return c.json(await setIntervalAlat(Number(b.kso_asset_id), b.interval_bulan == null || b.interval_bulan === "" ? null : Number(b.interval_bulan), b.catatan ? String(b.catatan) : null, olehJadwal(b)));
+  } catch (e) { return jadwalErr(c, e); }
 });
 app.get("/jadwal-teknisi/frekuensi", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
