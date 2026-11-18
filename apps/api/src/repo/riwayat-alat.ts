@@ -19,6 +19,8 @@ export interface AlatRow {
   kota: string | null;
   aktif: boolean | null;
   kunjungan: number;
+  /** Berapa kali riwayat mencatat penggantian sparepart. */
+  ganti_sparepart: number;
   terakhir: string | null;
   terakhir_jenis: string | null;
 }
@@ -64,7 +66,7 @@ const daftarSql = (satu: boolean) => {
   const f = satu ? "AND sn_key = $1" : "";
   return `
   WITH ev AS (
-    SELECT sn_key, count(*)::int AS n, max(waktu) AS terakhir,
+    SELECT sn_key, count(*)::int AS n, count(*) FILTER (WHERE sparepart IS NOT NULL)::int AS n_spare, max(waktu) AS terakhir,
            (array_agg(jenis ORDER BY waktu DESC NULLS LAST))[1] AS jenis_terakhir,
            (array_agg(faskes ORDER BY waktu DESC NULLS LAST) FILTER (WHERE faskes IS NOT NULL))[1] AS faskes_ev,
            (array_agg(alat ORDER BY waktu DESC NULLS LAST) FILTER (WHERE alat IS NOT NULL))[1] AS alat_ev,
@@ -90,7 +92,7 @@ const daftarSql = (satu: boolean) => {
          CASE WHEN k.kso_id IS NOT NULL THEN 'KSO' WHEN b.unit_id IS NOT NULL THEN 'Beli' END AS jenis_alat,
          k.kso_id, b.unit_id,
          COALESCE(k.faskes, b.faskes, ev.faskes_ev) AS faskes, k.kota, k.aktif,
-         COALESCE(ev.n, 0) AS kunjungan,
+         COALESCE(ev.n, 0) AS kunjungan, COALESCE(ev.n_spare, 0) AS ganti_sparepart,
          to_char(ev.terakhir AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS terakhir,
          ev.jenis_terakhir
   FROM kunci
@@ -111,6 +113,7 @@ function petaAlat(r: Record<string, unknown>): AlatRow {
     kota: (r.kota as string) ?? null,
     aktif: r.aktif == null ? null : !!r.aktif,
     kunjungan: Number(r.kunjungan ?? 0),
+    ganti_sparepart: Number(r.ganti_sparepart ?? 0),
     terakhir: (r.terakhir as string) ?? null,
     terakhir_jenis: (r.jenis_terakhir as string) ?? null,
   };
