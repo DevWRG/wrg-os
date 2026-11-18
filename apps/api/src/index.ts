@@ -622,7 +622,7 @@ import {
   listTeknisiReports,
 } from "./repo/readinessboard.js";
 import { KinerjaError, bacaRentang, cakupanKinerja, daftarTeknisi, hariIniWib, jadwalTeknisi, kerjaTeknisi, ringkasKerja } from "./repo/kinerja-teknisi.js";
-import { RiwayatAlatError, bacaKunci, daftarAlat, detailAlat, pathFotoTeknisi } from "./repo/riwayat-alat.js";
+import { bacaKunci, daftarAlat, daftarAlatIdle, detailAlat, pathFotoTeknisi, RiwayatAlatError } from "./repo/riwayat-alat.js";
 import {
   listCategories as listGaTicketCategories,
   createCategory as createGaTicketCategory,
@@ -10441,6 +10441,12 @@ app.get("/riwayat-alat/foto/:id", async (c) => {
   } catch {
     return c.json({ error: "file tak ditemukan" }, 404);
   }
+});
+// Alat siap pasang (idle): aset KSO Accurate yang belum terpasang di customer (18 Nov 2026).
+app.get("/riwayat-alat/idle", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const rows = await daftarAlatIdle();
+  return c.json({ count: rows.length, rows });
 });
 app.get("/riwayat-alat/alat/:kunci", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
