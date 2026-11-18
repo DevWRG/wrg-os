@@ -267,15 +267,30 @@ export async function simpanReportTeknisi(input: {
   }[] = [];
   for (const b of parse.blok) {
     const masalah: string[] = [];
-    const p = b.planNo != null ? planPerUrut.get(b.planNo) : undefined;
+    // Faskes di judul blok (format #PLAN "RS A | SN | jenis") didahulukan dari `RS:` kunjungan.
+    const accJudul = b.faskes ? await accountIdDariTulisan(b.faskes) : null;
+    let p = b.planNo != null ? planPerUrut.get(b.planNo) : undefined;
     if (b.planNo != null && !p) masalah.push(`plan #${b.planNo} tanggal ini tak ada`);
+    // Judul blok HANYA nama faskes ("1. RSUD Trenggalek", 18 Nov 2026): nomor blok = nomor plan bila item itu
+    // memang di faskes tersebut; selain itu satu-satunya item plan (belum dilaporkan) di faskes itu hari ini.
+    if (!p && b.planNo == null && !b.sn && !b.alat && b.faskes) {
+      const k = (t: unknown) => String(t ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const diFaskes = plan.filter((x) =>
+        accJudul ? Number(x.account_id) === accJudul : k(x.faskes_teks) === k(b.faskes));
+      const belum = diFaskes.filter((x) => !x.reported_at);
+      p = diFaskes.find((x) => Number(x.urut) === (b.nomorTulis ?? b.nomor))
+        ?? (belum.length === 1 ? belum[0] : diFaskes.length === 1 ? diFaskes[0] : undefined);
+      if (!p) {
+        masalah.push(diFaskes.length
+          ? `${diFaskes.length} pekerjaan di #PLAN untuk faskes ini — tulis nomor plan (#n) atau SN`
+          : "faskes ini tak ada di #PLAN hari ini — tulis SN atau nama alat");
+      }
+    }
     let assetId: number | null = p?.kso_asset_id != null ? Number(p.kso_asset_id) : null;
     let unitId: string | null = p?.installation_unit_id ? String(p.installation_unit_id) : null;
     let label: string | null = p ? (p.asset_nama ?? p.alat_teks ?? p.sn_teks ?? null) : null;
     let snTampil: string | null = p ? (p.asset_sn ?? p.sn_teks ?? null) : null;
     let planId: number | null = p ? Number(p.id) : null;
-    // Faskes di judul blok (format #PLAN "RS A | SN | jenis") didahulukan dari `RS:` kunjungan.
-    const accJudul = b.faskes ? await accountIdDariTulisan(b.faskes) : null;
     if (b.faskes && !accJudul) masalah.push(`faskes "${b.faskes}" tak dikenali`);
     const accBlok = accJudul ?? acc ?? (p?.account_id != null ? Number(p.account_id) : null);
     if (!faskesLabel && b.faskes) faskesLabel = b.faskes;
