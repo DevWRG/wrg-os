@@ -63,7 +63,7 @@ test("pesanJadwal: dikelompokkan per tanggal, tanpa kurung sudut", () => {
 });
 
 test("snapshot alat jadwal_rutin tetap bentuk lama {sn, nama, skema} — dibaca #JADWAL, Kinerja, efek F175 (334)", () => {
-  const s = snapshotAlat([{ id: 1, sn: "0832", nama: "Zybio Z3", skema: "PER_TEST", tipe: "Hematology 3Diff", interval: 1, terakhir: "2026-10-01" }]);
+  const s = snapshotAlat([{ id: 1, sn: "0832", nama: "Zybio Z3", skema: "PER_TEST", model: "Zybio Z3", kategori: "Hematology 3Diff", interval: 1, terakhir: "2026-10-01" }]);
   assert.deepEqual(s, [{ sn: "0832", nama: "Zybio Z3", skema: "PER_TEST" }]);
 });
 
