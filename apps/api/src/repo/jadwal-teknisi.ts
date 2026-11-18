@@ -130,7 +130,14 @@ async function liburBulan(sql: Sql, bulan: string): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.t)));
 }
 
-export interface AlatPm { id: number; sn: string | null; nama: string | null; skema: string | null; tipe: string | null; interval: number; terakhir: string | null }
+export interface AlatPm {
+  id: number; sn: string | null; nama: string | null; skema: string | null;
+  /** Model alat (nama_alat, cadangan type_alat) — kunci interval PM (335). */
+  model: string | null;
+  /** Kategori alat (type_alat), hanya keterangan. */
+  kategori: string | null;
+  interval: number; terakhir: string | null;
+}
 
 /**
  * Faskes KSO operasional + wilayah + teknisi + kunjungan rutin terakhir sebelum `bulan`, dengan daftar alat yang
@@ -153,7 +160,8 @@ async function populasi(sql: Sql, bulan: string) {
       SELECT a.account_id, array_agg(DISTINCT a.skema) AS skema,
              jsonb_agg(jsonb_build_object(
                'id', a.id, 'sn', a.sn_raw, 'nama', COALESCE(NULLIF(a.nama_alat, ''), a.type_alat), 'skema', a.skema,
-               'tipe', NULLIF(btrim(a.type_alat), ''),
+               'model', NULLIF(btrim(COALESCE(NULLIF(a.nama_alat, ''), a.type_alat)), ''),
+               'kategori', NULLIF(btrim(a.type_alat), ''),
                'interval', COALESCE(pa.interval_bulan, f.interval_bulan, pi.interval_bulan, CASE WHEN a.skema = 'PER_TEST' THEN 2 ELSE 3 END),
                'terakhir', to_char(date_trunc('month', GREATEST((pm.terakhir AT TIME ZONE 'Asia/Jakarta')::date, jr.bulan)), 'YYYY-MM-DD')
              ) ORDER BY a.sn_raw) AS alat,
@@ -161,7 +169,8 @@ async function populasi(sql: Sql, bulan: string) {
       FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
       LEFT JOIN jadwal_pm_alat pa ON pa.kso_asset_id = a.id
       LEFT JOIN jadwal_rutin_frekuensi f ON f.account_id = a.account_id
-      LEFT JOIN jadwal_pm_interval pi ON pi.type_alat = upper(btrim(a.type_alat))
+      -- 335: interval per MODEL alat (nama_alat), bukan kategori (type_alat).
+      LEFT JOIN jadwal_pm_interval pi ON pi.type_alat = upper(btrim(COALESCE(NULLIF(a.nama_alat, ''), a.type_alat)))
       LEFT JOIN pm ON pm.sn_key = a.sn_key
       LEFT JOIN jr ON jr.sn_key = a.sn_key
       WHERE v.status_kode = 'operasional' AND a.account_id IS NOT NULL
@@ -178,7 +187,7 @@ async function populasi(sql: Sql, bulan: string) {
   return rows.map((p) => {
     const alat = ((p.alat as Record<string, unknown>[]) ?? []).map((x): AlatPm => ({
       id: Number(x.id), sn: (x.sn as string) ?? null, nama: (x.nama as string) ?? null, skema: (x.skema as string) ?? null,
-      tipe: (x.tipe as string) ?? null, interval: Number(x.interval), terakhir: (x.terakhir as string) ?? null,
+      model: (x.model as string) ?? null, kategori: (x.kategori as string) ?? null, interval: Number(x.interval), terakhir: (x.terakhir as string) ?? null,
     }));
     const alat_jatuh = alat.filter((x) => jatuhTempo(Number(p.account_id), x.interval, x.terakhir, bulan));
     return {
@@ -449,7 +458,7 @@ const cekInterval = (v: number | null) => {
   return v;
 };
 
-/** Tab Interval PM: interval per tipe alat + daftar alat dengan PM terakhir & perkiraan PM berikutnya. */
+/** Tab Interval PM: interval per model alat (335) + daftar alat dengan PM terakhir & perkiraan PM berikutnya. */
 export async function daftarIntervalPm() {
   const sql = db();
   const bulan = bulanDepan();
@@ -460,19 +469,19 @@ export async function daftarIntervalPm() {
   ]);
   const perTipe = new Map(tipeRows.map((r) => [String(r.type_alat), Number(r.interval_bulan)]));
   const perAlat = new Map(alatRows.map((r) => [Number(r.kso_asset_id), { interval: Number(r.interval_bulan), catatan: r.catatan ? String(r.catatan) : null }]));
-  const tipe = new Map<string, { tipe: string; alat: number; per_test: number }>();
+  const tipe = new Map<string, { tipe: string; kategori: string | null; alat: number; per_test: number }>();
   const alat = [];
   for (const p of pop) {
     for (const x of p.alat) {
-      const k = (x.tipe ?? "").trim().toUpperCase();
+      const k = (x.model ?? "").trim().toUpperCase();
       if (k) {
-        const t = tipe.get(k) ?? { tipe: x.tipe!.trim(), alat: 0, per_test: 0 };
+        const t = tipe.get(k) ?? { tipe: x.model!.trim(), kategori: x.kategori, alat: 0, per_test: 0 };
         t.alat += 1; if (x.skema === "PER_TEST") t.per_test += 1; tipe.set(k, t);
       }
       const khusus = perAlat.get(x.id);
       const sumber = khusus ? "alat" : p.interval_bulan != null ? "faskes" : k && perTipe.has(k) ? "tipe" : "default";
       alat.push({
-        id: x.id, sn: x.sn, nama: x.nama, tipe: x.tipe, skema: x.skema, faskes: p.nama, account_id: p.account_id, wilayah: p.wilayah,
+        id: x.id, sn: x.sn, nama: x.nama, tipe: x.model, kategori: x.kategori, skema: x.skema, faskes: p.nama, account_id: p.account_id, wilayah: p.wilayah,
         interval: x.interval, interval_alat: khusus?.interval ?? null, catatan: khusus?.catatan ?? null, sumber_interval: sumber,
         pm_terakhir: x.terakhir, pm_berikutnya: x.terakhir ? tambahBulan(x.terakhir, x.interval) : null,
         jatuh_tempo_bulan_depan: p.alat_jatuh.some((y) => y.id === x.id),
