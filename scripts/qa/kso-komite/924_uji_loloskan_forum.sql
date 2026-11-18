@@ -46,7 +46,9 @@ reset role;
 -- 4. susun agenda: yang diloloskan didahulukan & tidak tertahan verifikasi volume (285), walau bukti "data" belum diperiksa
 update kso.rencana_kso set volume_sumber_label = 'data', volume_terverifikasi = null, zona = 'forum'
  where id = (select v::bigint from uji.d924 where k = 'd');
-insert into uji.d924 select 'tgl', (kso.hari_ini() + ((9 - extract(isodow from kso.hari_ini())::int) % 7 + 7) % 7 + 7)::text;  -- Selasa ≥ minggu depan
+-- Selasa ≥ minggu depan yang BELUM punya forum (uji sebelumnya bisa sudah membuat forum di Selasa itu — tergantung tanggal hari ini)
+insert into uji.d924 select 'tgl', min(d)::text from generate_series(kso.hari_ini() + 7, kso.hari_ini() + 70, interval '1 day') g(d)
+ where extract(isodow from d) = 2 and not exists (select 1 from kso.forum f where f.tanggal = d::date);
 insert into uji.d924 select 'f', kso.susun_agenda((select v::date from uji.d924 where k = 'tgl'), clock_timestamp())::text;
 select uji.cek('Agenda A memuat usulan yang diloloskan di urutan pertama, status DIAGENDAKAN',
    (select ai.jenis = 'A' and ai.urut = 1 and r.status = 'DIAGENDAKAN'

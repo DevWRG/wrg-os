@@ -26,19 +26,24 @@ test("HOD Sales disaring; HOD Business tetap; akun yang memegang KEDUA kursi = B
   assert.equal(modeSaringTab("hod", k({ jenisHod: ["area"], tabLihat: ["hod", "agenda"] })), null);
 });
 
-test("Admin Sales disaring tapi harga pembuka tetap; Teknik disaring; Komite/Sekretariat/Direksi tidak pernah", () => {
+test("Admin Sales & Sekretariat disaring tapi harga pembuka tetap; Teknik disaring; Komite/Direksi tidak pernah", () => {
   assert.equal(modeSaringTab("penawaran", k({ tabLihat: ["penawaran"] })), "pembuka");
-  assert.equal(modeSaringTab("penawaran", k({ tabLihat: ["penawaran", "sekretariat"] })), null);
+  // 18 Nov 2026: Sekretariat tidak lagi membuka angka — dipegang Admin Sales; hanya Direktur & Komite
+  assert.equal(modeSaringTab("penawaran", k({ tabLihat: ["penawaran", "sekretariat"] })), "pembuka");
+  assert.equal(modeSaringTab("sekretariat", k({ tabLihat: ["penawaran", "sekretariat"] })), "pembuka");
+  assert.equal(modeSaringTab("sekretariat", k({ tabLihat: ["sekretariat", "agenda"] })), null);
+  assert.equal(modeSaringTab("sekretariat", k({ role: "direktur", tabLihat: ["sekretariat"] })), null);
   assert.equal(modeSaringTab("teknik", k({ tabLihat: ["teknik"] })), "semua");
-  for (const t of ["agenda", "sekretariat", "direksi", "kpi"] as const) assert.equal(modeSaringTab(t, k()), null, t);
+  for (const t of ["agenda", "direksi", "kpi"] as const) assert.equal(modeSaringTab(t, k()), null, t);
+  assert.equal(modeSaringTab("sekretariat", k()), "pembuka");
   assert.equal(modeSaringTab("penawaran", k({ superuser: true })), null);
   assert.equal(modeSaringTab("hod", k({ role: "direktur" })), null);
 });
 
-test("bolehLihatAngka: Business HOD, Komite, Sekretariat, Direksi, admin/superuser, pengisi angka Finance", () => {
+test("bolehLihatAngka: Business HOD, Komite, Direksi, admin/superuser, pengisi angka Finance — Sekretariat tidak (18 Nov)", () => {
   assert.equal(bolehLihatAngka(k({ jenisHod: ["bisnis"] })), true);
   assert.equal(bolehLihatAngka(k({ tabLihat: ["agenda"] })), true);
-  assert.equal(bolehLihatAngka(k({ tabLihat: ["sekretariat"] })), true);
+  assert.equal(bolehLihatAngka(k({ tabLihat: ["sekretariat"] })), false);
   assert.equal(bolehLihatAngka(k({ tabLihat: ["direksi"] })), true);
   assert.equal(bolehLihatAngka(k({ pengisiAngka: true })), true);
   assert.equal(bolehLihatAngka(k({ am_id: "AM-1", tabLihat: ["saya"] })), false);
