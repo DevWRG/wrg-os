@@ -41,7 +41,7 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/288_kso_biaya_elektrolit.sql \
          "$INIT"/302_kso_format_wa_lampiran.sql "$INIT"/303_kso_faskes_baru.sql \
          "$INIT"/304_kso_faskes_baru_kota_area.sql "$INIT"/305_kso_lampiran_tanpa_simpan.sql \
-         "$INIT"/307_kso_alat_baru.sql "$INIT"/312_kso_sph.sql "$INIT"/313_kso_sph_nama_alat.sql "$INIT"/329_kso_loloskan_forum.sql "$INIT"/331_kso_loloskan_catatan_panjang.sql "$INIT"/337_kso_pengecualian_pks.sql; do
+         "$INIT"/307_kso_alat_baru.sql "$INIT"/312_kso_sph.sql "$INIT"/313_kso_sph_nama_alat.sql "$INIT"/329_kso_loloskan_forum.sql "$INIT"/331_kso_loloskan_catatan_panjang.sql "$INIT"/337_kso_pengecualian_pks.sql "$INIT"/338_kso_opini_komite.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -105,4 +105,6 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_bot_lengkapi_draft|app_loloskan_ke_forum) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 925_uji_pengecualian_pks.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_minta_pengecualian_pks|app_putus_pengecualian_pks) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$|^CREATE FUNCTION$|^GRANT$|^DO$|^RESET$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 926_uji_opini_komite.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_isi_opini_komite) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$|^CREATE FUNCTION$|^GRANT$|^DO$|^RESET$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'
