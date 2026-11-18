@@ -126,11 +126,16 @@ export const driveArsipSiap = (): boolean =>
 /** Unggah resumable (dua langkah) — upload multipart Drive dibatasi 5 MB, scan arsip bisa sampai 8 MB. */
 export async function unggahArsipKeDrive(isi: Buffer, nama: string, mime: string): Promise<{ id: string }> {
   if (!driveArsipSiap()) throw new DriveError(503, "folder Google Drive arsip belum dikonfigurasi di server (GDRIVE_ARSIP_FOLDER_ID) — hubungi admin");
+  return unggahPrivatKeDrive(isi, nama, mime, process.env.GDRIVE_ARSIP_FOLDER_ID!.trim());
+}
+
+/** Unggah resumable ke folder privat — berkas tidak dibuka untuk publik. */
+async function unggahPrivatKeDrive(isi: Buffer, nama: string, mime: string, folderId: string): Promise<{ id: string }> {
   const token = await tokenAkses();
   const mulai = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id", {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=UTF-8", "x-upload-content-type": mime, "x-upload-content-length": String(isi.length) },
-    body: JSON.stringify({ name: nama, parents: [process.env.GDRIVE_ARSIP_FOLDER_ID!.trim()] }),
+    body: JSON.stringify({ name: nama, parents: [folderId] }),
   });
   const sesi = mulai.headers.get("location");
   if (!mulai.ok || !sesi) {

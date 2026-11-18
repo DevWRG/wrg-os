@@ -11,6 +11,8 @@ export function CurrencyInput({
   prefix = "Rp",
   className,
   placeholder,
+  disabled,
+  "aria-label": ariaLabel,
 }: {
   id?: string;
   value: string;
@@ -18,6 +20,8 @@ export function CurrencyInput({
   prefix?: string | null;
   className?: string;
   placeholder?: string;
+  disabled?: boolean;
+  "aria-label"?: string;
 }) {
   const raw = value.replace(/\D/g, "");
   const display = raw === "" ? "" : Number(raw).toLocaleString("id-ID");
@@ -27,6 +31,8 @@ export function CurrencyInput({
       inputMode="numeric"
       value={display}
       placeholder={placeholder}
+      disabled={disabled}
+      aria-label={ariaLabel}
       onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
       className={[prefix ? "pl-9" : "", "text-right tabular-nums", className ?? ""].join(" ").trim()}
     />

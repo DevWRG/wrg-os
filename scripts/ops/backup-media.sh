@@ -10,7 +10,7 @@
 #
 # Sumber (yang ada saja):
 #   ${MEDIA_ROOT:-~/.openclaw/media}/inbound   media masuk WA (outbound/transcode = turunan, dilewati)
-#   ~/.wrg-os/uploads                           GA, kontrak KSO, bukti pembayaran (F32), dst.
+#   ~/.wrg-os/uploads                           GA, kontrak KSO, bukti pembayaran (F32), Proyek HD, dst.
 #   ~/.wrg-os/approval-uploads                  lampiran approval
 #
 # Pola BERTAMBAH: run pertama (atau --penuh) = semua berkas; run berikutnya = berkas yang

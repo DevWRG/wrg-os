@@ -12,7 +12,7 @@ import { CalendarCheck, Inbox,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
   Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
   Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, Wrench, HardHat, type LucideIcon,
+  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, Wrench, HardHat, HeartPulse, type LucideIcon,
   Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck, FileCheck2,
 } from "lucide-react";
 
@@ -30,6 +30,7 @@ import { canViewKsoKontrak } from "@/lib/kso-kontrak-access";
 import { canViewArsipDokumen } from "@/lib/arsip-dokumen-access";
 import { canViewDocTracker } from "@/lib/doc-tracker-access";
 import { canViewDirekturInbox } from "@/lib/direktur-inbox-access";
+import { canViewProyekHd, canViewSimulatorHd, FITUR_MARGIN as FITUR_HD_MARGIN } from "@/lib/proyek-hd-access";
 import { FITUR_BOTTOMLINE, FITUR_SUSUNAN, TAB_KSO, canViewKsoKomite } from "@/lib/kso-komite-access";
 import { canViewAsetTetap } from "@/lib/aset-tetap-access";
 import { canViewDoBelumFaktur } from "@/lib/do-belum-faktur-access";
@@ -236,6 +237,14 @@ export const NAV: NavGroup[] = [
       // API (repo/kso-komite.ts) memeriksa ulang izin tiap permintaan.
       { title: "Komite KSO", url: "/kso-komite", icon: Gavel, badge: "NEW", show: canViewKsoKomite,
         features: [...TAB_KSO.filter((t) => t.fitur !== "kso-komite").map((t) => ({ key: t.fitur, name: t.nama })), FITUR_SUSUNAN, ...FITUR_BOTTOMLINE] },
+      // Proyek HD — tracker proyek hemodialisa Deal → layanan berjalan (pindahan app
+      // terpisah berbasis Google Sheets, 13 Nov 2026). Kunci izin sendiri ('proyek-hd').
+      { title: "Proyek HD", url: "/proyek-hd", icon: HeartPulse, badge: "NEW", show: canViewProyekHd },
+      // Simulator HD — menu sendiri seperti Simulator KSO (keputusan user 16 Nov 2026), kunci
+      // 'hd-simulator'. Tab Margin WRG = kunci 'proyek-hd-margin', WAJIB di `features`
+      // supaya Sync Fitur tak mematikannya sebagai zombie. Default tertutup.
+      { title: "Simulator KSO HD", url: "/hd-simulator", icon: Calculator, badge: "NEW", show: canViewSimulatorHd,
+        features: [{ key: FITUR_HD_MARGIN, name: "Simulator KSO HD — tab Margin WRG (harga, biaya & margin)" }] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
       //   /pricebook/ringkasan  Direktur + HoD — bacaan portofolio

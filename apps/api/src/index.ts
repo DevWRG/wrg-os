@@ -90,6 +90,8 @@ import { FakturisError, runCekFakturisDiam, runRekapFakturis, simpanLabelAkun, s
 import { RevisiError, daftarRevisi, tutupManual } from "./repo/revisi-faktur.js";
 import { CekError, buatCek, daftarCek, runCekHarian, ubahDraft, ubahStatus } from "./repo/cek-keluar.js";
 import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipListBuku, simpanBuku as arsipSimpanBuku, ubahArsip, unggahArsip } from "./repo/arsip-dokumen.js";
+import { bacaLampiran as hdBacaLampiran, buatProyek as hdBuatProyek, cariFaskes as hdCariFaskes, detailProyek as hdDetail, JENIS_SIMULASI as HD_JENIS_SIMULASI, listParam as hdListParam, listProyek as hdListProyek, listSimulasi as hdListSimulasi, majuTahap as hdMajuTahap, ProyekHdError, referensi as hdReferensi, ringkasan as hdRingkasan, simpanSimulasi as hdSimpanSimulasi, tambahCatatan as hdTambahCatatan, ubahParam as hdUbahParam, ubahProyek as hdUbahProyek, type JenisSimulasi as HdJenisSimulasi } from "./repo/proyek-hd.js";
+import { buatOps as hdBuatOps, eksporXlsx as hdEksporXlsx, hapusOps as hdHapusOps, listOps as hdListOps, OPS as HD_OPS, opsProyek as hdOpsProyek, ringkasanOps as hdRingkasanOps, ubahOps as hdUbahOps } from "./repo/proyek-hd-ops.js";
 import {
   DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
@@ -6868,6 +6870,150 @@ app.get("/arsip-dokumen/:id/berkas", async (c) => {
       "x-content-type-options": "nosniff",
     });
   } catch (e) { return arsipErr(c, e); }
+});
+// Proyek HD (migrasi 314) — tracker proyek hemodialisa + Simulator HD. Gerbang menu
+// "/proyek-hd" (lihat/buat/ubah) + kunci "proyek-hd-margin" DIPERIKSA DI BFF; service
+// token mem-bypass JWT di sini. `oleh` diisi BFF dari sesi. Lampiran: disk server (PROYEK_HD_UPLOAD_DIR).
+const hdErr = (c: Context, e: unknown) => {
+  if (e instanceof ProyekHdError) return c.json(e.field ? { error: e.message, field: e.field } : { error: e.message }, e.status as 400);
+  console.error("[proyek-hd]", e);
+  return c.json({ error: "Gagal memproses Proyek HD." }, 500);
+};
+const hdOleh = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+const hdBody = async (c: Context) => ((await c.req.json().catch(() => null)) as Record<string, unknown> | null) ?? {};
+/** Multipart: kolom teks + `file` (boleh berulang). Berkas > 8 MB ditolak sebelum dibaca. */
+async function hdMultipart(c: Context): Promise<{ body: Record<string, unknown>; files: { nama: string; buf: Uint8Array }[] }> {
+  let raw: Record<string, unknown>;
+  try { raw = await c.req.parseBody({ all: true }); } catch { throw new ProyekHdError(400, "invalid multipart body"); }
+  const daftar = ([] as unknown[]).concat(raw.file ?? []).filter((f): f is File => f instanceof File && f.size > 0);
+  const files: { nama: string; buf: Uint8Array }[] = [];
+  for (const f of daftar) {
+    if (f.size > MAKS_DOKUMEN) throw new ProyekHdError(400, `${f.name}: berkas maksimal 8 MB`, "file");
+    files.push({ nama: f.name, buf: new Uint8Array(await f.arrayBuffer()) });
+  }
+  const body: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) if (k !== "file") body[k] = Array.isArray(v) ? v[0] : v;
+  return { body, files };
+}
+app.get("/proyek-hd", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await hdListProyek() }); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdRingkasan()); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ref", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdReferensi()); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/faskes", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await hdCariFaskes(c.req.query("q")) }); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/param", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await hdListParam() }); } catch (e) { return hdErr(c, e); }
+});
+app.patch("/proyek-hd/param", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json({ items: await hdUbahParam(b.nilai, hdOleh(b.oleh)) }); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/lampiran/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const d = await hdBacaLampiran(c.req.param("id"));
+    const ascii = d.nama.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+    return c.body(new Uint8Array(d.buf), 200, {
+      "content-type": d.mime,
+      "content-disposition": `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(d.nama)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+    });
+  } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdBuatProyek(b, hdOleh(b.oleh)), 201); } catch (e) { return hdErr(c, e); }
+});
+// Proyek HD fase 2 (migrasi 316) — data operasional. Spesifikasi kolom dilayani dari sini
+// supaya form web tak menyalin daftar kolom. Rute statis WAJIB sebelum /proyek-hd/:id.
+app.get("/proyek-hd/ops-spek", (c) => c.json({ items: HD_OPS.map((o) => ({ slug: o.slug, label: o.label, tunggal: o.tunggal, proyekOpsional: o.proyekOpsional, kolom: o.kolom })) }));
+app.get("/proyek-hd/ops-ringkasan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdRingkasanOps()); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ekspor.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const buf = await hdEksporXlsx();
+    const tgl = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+    return c.body(new Uint8Array(buf), 200, {
+      "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "content-disposition": `attachment; filename="Proyek_HD_${tgl}.xlsx"`,
+      "cache-control": "private, no-store",
+    });
+  } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/ops/:slug", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json({ items: await hdListOps(c.req.param("slug"), c.req.query("proyek_id") || null) }); } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd/ops/:slug", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdBuatOps(c.req.param("slug"), b, hdOleh(b.oleh)), 201); } catch (e) { return hdErr(c, e); }
+});
+app.patch("/proyek-hd/ops/:slug/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdUbahOps(c.req.param("slug"), c.req.param("id"), b, hdOleh(b.oleh))); } catch (e) { return hdErr(c, e); }
+});
+app.delete("/proyek-hd/ops/:slug/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdHapusOps(c.req.param("slug"), c.req.param("id"), hdOleh(c.req.query("oleh")))); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/:id/ops", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const id = c.req.param("id");
+  if (!/^\d{1,12}$/.test(id)) return c.json({ error: "id tidak valid" }, 400);
+  try { return c.json(await hdOpsProyek(Number(id))); } catch (e) { return hdErr(c, e); }
+});
+app.get("/proyek-hd/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try { return c.json(await hdDetail(c.req.param("id"))); } catch (e) { return hdErr(c, e); }
+});
+app.patch("/proyek-hd/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdUbahProyek(c.req.param("id"), b, hdOleh(b.oleh))); } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd/:id/catatan", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, files } = await hdMultipart(c);
+    return c.json(await hdTambahCatatan(c.req.param("id"), body, files, hdOleh(body.oleh)), 201);
+  } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd/:id/maju", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  try {
+    const { body, files } = await hdMultipart(c);
+    return c.json(await hdMajuTahap(c.req.param("id"), body, files, hdOleh(body.oleh)));
+  } catch (e) { return hdErr(c, e); }
+});
+// ?jenis=proyeksi_rs,margin_wrg — BFF hanya meminta margin_wrg bila peminta memegang kunci margin.
+app.get("/proyek-hd/:id/simulasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const jenis = (c.req.query("jenis") ?? "proyeksi_rs").split(",").filter((j): j is HdJenisSimulasi => (HD_JENIS_SIMULASI as readonly string[]).includes(j));
+  try { return c.json({ items: await hdListSimulasi(c.req.param("id"), jenis) }); } catch (e) { return hdErr(c, e); }
+});
+app.post("/proyek-hd/:id/simulasi", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const b = await hdBody(c);
+  try { return c.json(await hdSimpanSimulasi(c.req.param("id"), b, hdOleh(b.oleh)), 201); } catch (e) { return hdErr(c, e); }
 });
 app.get("/permintaan-produk", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
