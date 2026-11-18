@@ -32,6 +32,22 @@ export function gabungTabSekretariat<T extends { tab: TabKso }>(tabs: T[]): T[] 
   return tabs.some((t) => t.tab === "sekretariat") ? tabs.filter((t) => t.tab !== "penawaran") : tabs;
 }
 
+/** Kelompok tab layar Komite KSO (18 Nov 2026, evaluasi UI): sebelas tab dalam satu baris bergulir membuat pemegang
+ *  banyak akses tak melihat tab di ujung (tab pertama pun terpotong). Tab dikelompokkan menurut jenisnya — antrean
+ *  kerja per peran (urut alur usulan), daftar lintas peran, dan analisis — dan baris tab dibiarkan turun. Kelompok
+ *  kosong dibuang; urutan dalam kelompok tetap, apa pun urutan masukan. */
+export const KELOMPOK_TAB: { judul: string; isi: string[] }[] = [
+  { judul: "Antrean", isi: ["saya", "hod", "agenda", "direksi", "sekretariat", "penawaran", "teknik"] },
+  { judul: "Daftar", isi: ["belum-lengkap", "lolos-tanpa-forum", "riwayat"] },
+  { judul: "Analisis", isi: ["kpi", "bottomline", "portofolio"] },
+];
+
+export function kelompokTab<T extends { value: string }>(tab: T[]): { judul: string; isi: T[] }[] {
+  return KELOMPOK_TAB
+    .map((k) => ({ judul: k.judul, isi: k.isi.map((v) => tab.find((t) => t.value === v)).filter((t): t is T => !!t) }))
+    .filter((k) => k.isi.length > 0);
+}
+
 export function pilihTabDaftar<T extends { tab: TabKso }>(tabs: T[], filter: FilterDaftar): { tab: T; cakupan: string } | null {
   for (const k of URUTAN[filter]) {
     const t = tabs.find((x) => x.tab === k);

@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TAB_KSO, type TabKso } from "@/lib/kso-komite-access";
 import { cn } from "@/lib/utils";
 
-import { gabungTabSekretariat, pilihTabDaftar } from "@/lib/kso-komite-daftar";
+import { gabungTabSekretariat, kelompokTab, pilihTabDaftar } from "@/lib/kso-komite-daftar";
 
 import { BottomLinePanel } from "./bottom-line";
 import { DaftarBelumLengkap, DaftarLolos } from "./daftar-filter";
@@ -63,6 +63,13 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
 
   const aktif = isDaftar(tab) ? sumber[tab]?.tab ?? null : isPeran(tab) ? tabs.find((t) => t.tab === tab) ?? null : null;
   const lebar = useLayarLebar();
+  const kelompok = kelompokTab([
+    ...tabs.map((t) => ({ value: t.tab as string, label: TAB_KSO.find((x) => x.tab === t.tab)!.label })),
+    ...(sumber["belum-lengkap"] ? [{ value: "belum-lengkap", label: "Belum lengkap" }] : []),
+    ...(sumber["lolos-tanpa-forum"] ? [{ value: "lolos-tanpa-forum", label: "Lolos tanpa forum" }] : []),
+    ...(sumber.riwayat ? [{ value: "riwayat", label: "Riwayat" }] : []),
+    ...(bottomLine ? [{ value: "bottomline", label: "Bottom Line Alat" }, { value: "portofolio", label: "Tinjauan Portofolio" }] : []),
+  ]);
   const d = isPeran(tab) ? data[tab] : undefined;
   // sesudah aksi di rincian: muat ulang antrean tab peran / daftar yang sedang dibuka
   const berubah = (t: TabKso) => { if (isPeran(tab)) muat(t); else setSegar((x) => x + 1); };
@@ -70,19 +77,22 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
   return (
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
       {tabs.length > 0 && <SusunanPanel />}
-      <div className="flex items-center gap-2">
-        <div className="-mx-1 min-w-0 flex-1 overflow-x-auto px-1">
-          <TabsList>
-            {tabs.map((t) => (
-              <TabsTrigger key={t.tab} value={t.tab}>{TAB_KSO.find((x) => x.tab === t.tab)!.label}</TabsTrigger>
-            ))}
-            {sumber["belum-lengkap"] && <TabsTrigger value="belum-lengkap">Belum lengkap</TabsTrigger>}
-            {sumber["lolos-tanpa-forum"] && <TabsTrigger value="lolos-tanpa-forum">Lolos tanpa forum</TabsTrigger>}
-            {sumber.riwayat && <TabsTrigger value="riwayat">Riwayat</TabsTrigger>}
-            {bottomLine && <TabsTrigger value="bottomline">Bottom Line Alat</TabsTrigger>}
-            {bottomLine && <TabsTrigger value="portofolio">Tinjauan Portofolio</TabsTrigger>}
-          </TabsList>
-        </div>
+      <div className="flex flex-wrap items-start gap-2">
+        {/* 18 Nov 2026 (evaluasi UI): tab dikelompokkan Antrean · Daftar · Analisis dan baris dibiarkan turun —
+            dulu satu baris bergulir sehingga pemegang banyak akses tak melihat tab di ujung. Label kelompok
+            hanya tampil bila ada lebih dari satu kelompok. */}
+        <TabsList className="h-auto w-full min-w-0 flex-wrap justify-start gap-x-4 gap-y-1.5 p-1.5 sm:w-auto sm:flex-1 group-data-[orientation=horizontal]/tabs:h-auto">
+          {kelompok.map((k) => (
+            <div key={k.judul} className="flex max-w-full min-w-0 flex-wrap items-center gap-1">
+              {kelompok.length > 1 && (
+                <span aria-hidden className="text-muted-foreground px-1.5 text-[11px] font-semibold tracking-wide uppercase">{k.judul}</span>
+              )}
+              {k.isi.map((t) => (
+                <TabsTrigger key={t.value} value={t.value} className="h-7 flex-none px-2.5">{t.label}</TabsTrigger>
+              ))}
+            </div>
+          ))}
+        </TabsList>
         {tabs.length > 0 && <TombolFormatKso />}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}

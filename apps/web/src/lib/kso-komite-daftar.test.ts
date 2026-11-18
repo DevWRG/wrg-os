@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  FORMAT_KSO, hargaBersih, keadaanBerkas, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran, teksDiunggah, gabungTabSekretariat,
+  FORMAT_KSO, hargaBersih, keadaanBerkas, kelengkapan, nadaBerlaku, pilihTabDaftar, relatif, saringBelumLengkap, saringLolos, sisaHari, statusLampiran, teksDiunggah, gabungTabSekretariat, kelompokTab,
 } from "./kso-komite-daftar";
 
 test("pilihTabDaftar: cakupan terluas dulu, teknik tak pernah, admin sales hanya untuk Lolos", () => {
@@ -119,4 +119,17 @@ test("pilihTabDaftar riwayat: cakupan terluas dulu, AM tetap dapat riwayat usula
   const t = (tab: string) => ({ tab }) as { tab: never };
   assert.equal(pilihTabDaftar([t("saya"), t("agenda")], "riwayat")?.tab.tab, "agenda");
   assert.equal(pilihTabDaftar([t("saya")], "riwayat")?.cakupan, "rencana Anda");
+});
+
+test("kelompokTab: antrean urut alur, daftar, analisis; kelompok kosong dibuang", () => {
+  const t = (...v: string[]) => v.map((value) => ({ value }));
+  const k = kelompokTab(t("kpi", "riwayat", "direksi", "agenda", "teknik", "portofolio", "belum-lengkap", "sekretariat", "bottomline"));
+  assert.deepEqual(k.map((x) => [x.judul, x.isi.map((y) => y.value)]), [
+    ["Antrean", ["agenda", "direksi", "sekretariat", "teknik"]],
+    ["Daftar", ["belum-lengkap", "riwayat"]],
+    ["Analisis", ["kpi", "bottomline", "portofolio"]],
+  ]);
+  assert.deepEqual(kelompokTab(t("saya", "riwayat")).map((x) => x.judul), ["Antrean", "Daftar"]);
+  assert.deepEqual(kelompokTab(t("bottomline")).map((x) => x.judul), ["Analisis"]);
+  assert.deepEqual(kelompokTab(t("tak-dikenal")), []);
 });
