@@ -210,6 +210,10 @@ export interface KerjaRow {
   berlokasi: boolean;
   lokasi_alamat: string | null;
   jumlah_foto: number;
+  /** 336: foto wajib (jumlah tes & kondisi alat) belum lengkap. */
+  foto_kurang: boolean;
+  foto_tes: number;
+  foto_kondisi: number;
   sla_respon_menit: number | null;
   sla_selesai_menit: number | null;
   /** Tiket selesai melewati ETA (atau masih terbuka & ETA sudah lewat) — target SLA = ETA tiket. */
@@ -245,6 +249,8 @@ export async function kerjaTeknisi(c: CakupanKinerja, q: { teknisi?: string | nu
       report_tanpa_start: !!r.report_tanpa_start, start_tanpa_report: !!r.start_tanpa_report,
       tanpa_laporan: r.tidak_realisasi_at != null && r.selesai_at == null,
       berlokasi: !!r.berlokasi, lokasi_alamat: r.lokasi_alamat ?? null, jumlah_foto: Number(r.jumlah_foto ?? 0),
+      foto_tes: Number(r.foto_tes ?? 0), foto_kondisi: Number(r.foto_kondisi ?? 0),
+      foto_kurang: !!r.foto_wajib && (Number(r.foto_kondisi ?? 0) === 0 || (!!r.foto_tes_wajib && Number(r.foto_tes ?? 0) === 0)),
       sla_respon_menit: num(r.sla_respon_menit), sla_selesai_menit: num(r.sla_selesai_menit), lewat_eta: lewat,
     };
   });
@@ -263,6 +269,8 @@ export interface RingkasanTeknisi {
   tanpa_laporan: number;
   hari_plan_telat: number;
   report_berlokasi: number;
+  /** 336: pekerjaan dilaporkan yang foto wajibnya belum lengkap. */
+  foto_kurang: number;
   rata_durasi_menit: number | null;
   tiket: number;
   rata_sla_respon_menit: number | null;
@@ -291,6 +299,7 @@ export function ringkasKerja(rows: KerjaRow[]): RingkasanTeknisi[] {
       tanpa_laporan: xs.filter((x) => x.tanpa_laporan).length,
       hari_plan_telat: new Set(xs.filter((x) => x.plan_telat && !x.di_luar_plan).map((x) => x.tanggal)).size,
       report_berlokasi: dilaporkan.filter((x) => x.berlokasi).length,
+      foto_kurang: dilaporkan.filter((x) => x.foto_kurang).length,
       rata_durasi_menit: rata(xs.map((x) => x.durasi_menit).filter((v): v is number => v != null)),
       tiket: tiket.length,
       rata_sla_respon_menit: rata(tiket.map((x) => x.sla_respon_menit).filter((v): v is number => v != null)),

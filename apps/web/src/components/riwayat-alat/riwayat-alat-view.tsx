@@ -11,18 +11,22 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { gantiDariKegiatan, pecahSparepart } from "@/lib/riwayat-alat";
 
 // ───────── Tipe (cermin apps/api/src/repo/riwayat-alat.ts) ─────────
 interface AlatRow {
   sn_key: string; sn: string | null; alat: string | null; jenis_alat: "KSO" | "Beli" | null;
   kso_asset_id: number | null; installation_unit_id: string | null; faskes: string | null; kota: string | null;
-  aktif: boolean | null; kunjungan: number; terakhir: string | null; terakhir_jenis: string | null;
+  aktif: boolean | null; kunjungan: number; ganti_sparepart: number; terakhir: string | null; terakhir_jenis: string | null;
 }
 interface RiwayatRow {
   sumber: "wa" | "form" | "jadwal" | "pm" | "install" | "servis"; ref: string; waktu: string | null;
   jenis: string | null; status: string | null; faskes: string | null; teknisi: string | null; keluhan: string | null;
   kegiatan: string | null; sparepart: string | null; jumlah_tes: number | null; kondisi: string | null;
   catatan: string | null; alat: string | null; sn: string | null;
+  /** Foto #REPORT (336): tes = jumlah tes, kondisi = kondisi alat. */
+  foto?: { id: number; jenis: "tes" | "kondisi" }[];
 }
 interface PenempatanRow {
   id: number; faskes: string | null; customerRaw: string; mulai: string | null; selesai: string | null;
@@ -67,6 +71,7 @@ const EKSPOR_ALAT: ExportColumn<AlatRow>[] = [
   { header: "Faskes", value: (r) => r.faskes },
   { header: "Kota", value: (r) => r.kota },
   { header: "Jumlah riwayat", value: (r) => r.kunjungan },
+  { header: "Ganti sparepart (kali)", value: (r) => r.ganti_sparepart },
   { header: "Terakhir", value: (r) => r.terakhir },
   { header: "Pekerjaan terakhir", value: (r) => r.terakhir_jenis },
 ];
@@ -96,7 +101,94 @@ export function RiwayatAlatView() {
     router.push(`${pathname}${q.toString() ? `?${q.toString()}` : ""}`, { scroll: true });
   }, [params, pathname, router]);
 
-  return sn ? <DetailAlat kunci={sn} kembali={() => pilih(null)} /> : <DaftarAlat pilih={pilih} />;
+  if (sn) return <DetailAlat kunci={sn} kembali={() => pilih(null)} />;
+  return (
+    <Tabs defaultValue="daftar" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="daftar">Daftar alat</TabsTrigger>
+        <TabsTrigger value="idle">Alat siap pasang</TabsTrigger>
+      </TabsList>
+      <TabsContent value="daftar"><DaftarAlat pilih={pilih} /></TabsContent>
+      <TabsContent value="idle"><AlatSiapPasang pilih={pilih} /></TabsContent>
+    </Tabs>
+  );
+}
+
+// ───────── Alat siap pasang (idle) — 18 Nov 2026 ─────────
+interface AlatIdleRow {
+  kunci: string; sn_key: string | null; sn: string | null; nomor_aset: string | null; alat: string | null; lokasi: string | null;
+  kategori: "ditarik" | "gudang" | "stok_kantor" | "backup" | "not_ready" | "perlu_cek" | "belum_tertaut";
+  tgl_perolehan: string | null; kso_asset_id: number | null;
+  riwayat_terakhir: string | null; riwayat_terakhir_jenis: string | null; riwayat_terakhir_faskes: string | null;
+}
+const KATEGORI_IDLE: Record<AlatIdleRow["kategori"], { label: string; ket: string }> = {
+  ditarik: { label: "Ditarik", ket: "pekerjaan terakhir Tarik Alat, belum dipasang lagi" },
+  gudang: { label: "Di gudang", ket: "lokasi Accurate: gudang" },
+  stok_kantor: { label: "Stok kantor", ket: "Daftar Alat: stok kantor" },
+  backup: { label: "Backup", ket: "Daftar Alat: alat backup" },
+  not_ready: { label: "Belum siap", ket: "Daftar Alat: not ready" },
+  perlu_cek: { label: "Perlu cek", ket: "Daftar Alat: status perlu dicek" },
+  belum_tertaut: { label: "Belum tertaut", ket: "aset Accurate belum tertaut ke alat KSO & tak ada kunjungan 12 bulan" },
+};
+const EKSPOR_IDLE: ExportColumn<AlatIdleRow>[] = [
+  { header: "Status", value: (r) => KATEGORI_IDLE[r.kategori].label },
+  { header: "Alat", value: (r) => r.alat },
+  { header: "SN", value: (r) => r.sn },
+  { header: "Nomor aset", value: (r) => r.nomor_aset },
+  { header: "Lokasi", value: (r) => r.lokasi },
+  { header: "Tanggal perolehan", value: (r) => r.tgl_perolehan },
+  { header: "Pekerjaan terakhir", value: (r) => r.riwayat_terakhir_jenis },
+  { header: "Tanggal terakhir", value: (r) => r.riwayat_terakhir },
+  { header: "Faskes terakhir", value: (r) => r.riwayat_terakhir_faskes },
+];
+
+function AlatSiapPasang({ pilih }: { pilih: (kunci: string) => void }) {
+  const { data, err } = useMuat<{ rows: AlatIdleRow[] }>("/api/riwayat-alat/idle");
+  const [kat, setKat] = useState("");
+  const rows = useMemo(() => (data?.rows ?? []).filter((r) => (kat ? r.kategori === kat : r.kategori !== "belum_tertaut")), [data, kat]);
+  const jumlah = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of data?.rows ?? []) m.set(r.kategori, (m.get(r.kategori) ?? 0) + 1);
+    return m;
+  }, [data]);
+  const kolom: DataColumn<AlatIdleRow>[] = [
+    { id: "alat", header: "Alat", accessor: (r) => `${r.alat ?? ""} ${r.sn ?? ""} ${r.nomor_aset ?? ""}`, cell: (r) => (
+      <div><div className="font-medium">{r.alat ?? "—"}</div>
+        <div className="text-muted-foreground text-xs"><span className="font-mono">{r.sn ?? "tanpa SN"}</span>{r.nomor_aset ? ` · ${r.nomor_aset}` : ""}</div></div>) },
+    { id: "kategori", header: "Status", accessor: (r) => KATEGORI_IDLE[r.kategori].label, cell: (r) => (
+      <Badge variant={r.kategori === "belum_tertaut" ? "outline" : "secondary"} title={KATEGORI_IDLE[r.kategori].ket}>{KATEGORI_IDLE[r.kategori].label}</Badge>) },
+    { id: "lokasi", header: "Lokasi", accessor: (r) => r.lokasi, cell: (r) => <span className="text-sm">{strip(r.lokasi)}</span> },
+    { id: "terakhir", header: "Pekerjaan terakhir", accessor: (r) => r.riwayat_terakhir ?? "", searchable: false, cell: (r) => (r.riwayat_terakhir
+      ? <span className="text-xs">{tgl(r.riwayat_terakhir)} · {r.riwayat_terakhir_jenis ?? "—"}<span className="text-muted-foreground block">{r.riwayat_terakhir_faskes ?? ""}</span></span>
+      : <span className="text-muted-foreground text-xs">—</span>) },
+    { id: "perolehan", header: "Perolehan", accessor: (r) => r.tgl_perolehan ?? "", searchable: false, cell: (r) => <span className="text-xs tabular-nums">{tgl(r.tgl_perolehan)}</span> },
+  ];
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Alat siap pasang</CardTitle></CardHeader>
+      <CardContent>
+        {err ? <EmptyState title="Gagal memuat" description={err} /> : !data ? (
+          <p className="text-muted-foreground py-8 text-center text-sm">Memuat…</p>
+        ) : (
+          <DataTable columns={kolom} data={rows} getKey={(r) => r.kunci} pageSize={10}
+            searchPlaceholder="Cari alat / SN / nomor aset / lokasi…"
+            onRowClick={(r) => { if (r.sn_key) pilih(r.sn_key); }}
+            toolbar={<div className="flex flex-wrap items-center gap-3">
+              <FilterSelect label="Status" value={kat} onChange={setKat} semua="Semua (kecuali belum tertaut)"
+                options={(Object.keys(KATEGORI_IDLE) as AlatIdleRow["kategori"][]).map((k) => ({ value: k, label: `${KATEGORI_IDLE[k].label} (${jumlah.get(k) ?? 0})` }))} />
+              <ExportButton filename="alat-siap-pasang" columns={EKSPOR_IDLE} data={rows} />
+            </div>}
+            empty="Tidak ada alat dengan status ini." />
+        )}
+        <p className="text-muted-foreground mt-2 text-xs">
+          Alat milik WRG (aset KSO di Accurate, dicatat Accounting) yang belum terpasang di customer. <b>Ditarik</b> = pekerjaan terakhirnya Tarik Alat;
+          <b> Di gudang</b> = lokasi Accurate gudang; Stok kantor / Backup / Belum siap / Perlu cek = status Daftar Alat. <b>Belum tertaut</b> = aset Accurate
+          yang belum tertaut ke alat KSO dan tak ada kunjungan teknisi 12 bulan — bisa jadi idle, bisa jadi datanya belum dirapikan (tautkan di menu Aset Tetap).
+          Klik baris untuk melihat riwayat alat.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DaftarAlat({ pilih }: { pilih: (kunci: string) => void }) {
@@ -123,6 +215,8 @@ function DaftarAlat({ pilih }: { pilih: (kunci: string) => void }) {
     },
     { id: "kota", header: "Kota", accessor: (r) => r.kota },
     { id: "kunjungan", header: "Riwayat", align: "right", accessor: (r) => r.kunjungan, searchable: false },
+    { id: "sparepart", header: "Ganti sparepart", align: "right", accessor: (r) => r.ganti_sparepart, searchable: false,
+      cell: (r) => (r.ganti_sparepart ? <span className="tabular-nums">{r.ganti_sparepart}×</span> : <span className="text-muted-foreground">—</span>) },
     {
       id: "terakhir", header: "Terakhir", accessor: (r) => r.terakhir ?? "", searchable: false,
       cell: (r) => (r.terakhir ? <span>{tgl(r.terakhir)}<span className="text-muted-foreground block text-xs">{r.terakhir_jenis}</span></span> : "—"),
@@ -165,6 +259,7 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
     () => (data?.riwayat ?? []).filter((r) => !pekerjaan || r.jenis === pekerjaan),
     [data, pekerjaan],
   );
+  const nSparepart = useMemo(() => (data?.riwayat ?? []).filter((r) => itemSparepart(r).item.length > 0).length, [data]);
 
   const kolom: DataColumn<RiwayatRow>[] = [
     {
@@ -198,6 +293,7 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
         </div>
       ),
     },
+    { id: "foto", header: "Foto", sortable: false, searchable: false, accessor: (r) => r.foto?.length ?? 0, cell: (r) => <FotoLaporan foto={r.foto ?? []} /> },
     { id: "sumber", header: "Sumber", accessor: (r) => SUMBER[r.sumber], cell: (r) => <Badge variant="outline">{SUMBER[r.sumber]}</Badge> },
   ];
 
@@ -221,34 +317,112 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
             </CardContent>
           </Card>
 
-          {data.penempatan.length > 0 && (
-            <Card>
-              <CardHeader><CardTitle className="text-base">Riwayat penempatan</CardTitle></CardHeader>
-              <CardContent>
-                <DataTable columns={KOLOM_PENEMPATAN} data={data.penempatan} getKey={(r) => String(r.id)} pageSize={10}
-                  initialSort={{ id: "mulai", dir: "desc" }} searchPlaceholder="Cari faskes…" empty="Belum ada penempatan." />
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader><CardTitle className="text-base">Riwayat pekerjaan</CardTitle></CardHeader>
-            <CardContent>
-              <DataTable columns={kolom} data={riwayat} getKey={(r) => r.ref} pageSize={10}
-                initialSort={{ id: "waktu", dir: "desc" }} searchPlaceholder="Cari keluhan / kegiatan / sparepart / teknisi…"
-                toolbar={<div className="flex flex-wrap items-center gap-3">
-                  <FilterSelect label="Pekerjaan" value={pekerjaan} onChange={setPekerjaan} semua="Semua pekerjaan"
-                    options={daftarPekerjaan.map((j) => ({ value: j, label: j }))} />
-                  <ExportButton filename={`riwayat-alat_${a.sn_key}`} columns={EKSPOR_RIWAYAT} data={riwayat} />
-                </div>}
-                empty="Belum ada riwayat pekerjaan untuk alat ini." />
-              <p className="text-muted-foreground mt-2 text-xs">
-                Faskes = lokasi alat saat pekerjaan itu. &quot;Form lama&quot; = Google Form Kegiatan Teknisi; &quot;WA #REPORT&quot; = laporan teknisi lewat WA.
-              </p>
-            </CardContent>
-          </Card>
+          <Tabs defaultValue="pekerjaan" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="pekerjaan">Riwayat pekerjaan · {data.riwayat.length}</TabsTrigger>
+              <TabsTrigger value="sparepart">Penggantian sparepart · {nSparepart}</TabsTrigger>
+              {data.penempatan.length > 0 && <TabsTrigger value="penempatan">Penempatan · {data.penempatan.length}</TabsTrigger>}
+            </TabsList>
+            <TabsContent value="pekerjaan">
+              <Card>
+                <CardHeader><CardTitle className="text-base">Riwayat pekerjaan</CardTitle></CardHeader>
+                <CardContent>
+                  <DataTable columns={kolom} data={riwayat} getKey={(r) => r.ref} pageSize={10}
+                    initialSort={{ id: "waktu", dir: "desc" }} searchPlaceholder="Cari keluhan / kegiatan / sparepart / teknisi…"
+                    toolbar={<div className="flex flex-wrap items-center gap-3">
+                      <FilterSelect label="Pekerjaan" value={pekerjaan} onChange={setPekerjaan} semua="Semua pekerjaan"
+                        options={daftarPekerjaan.map((j) => ({ value: j, label: j }))} />
+                      <ExportButton filename={`riwayat-alat_${a.sn_key}`} columns={EKSPOR_RIWAYAT} data={riwayat} />
+                    </div>}
+                    empty="Belum ada riwayat pekerjaan untuk alat ini." />
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Faskes = lokasi alat saat pekerjaan itu. &quot;Form lama&quot; = Google Form Kegiatan Teknisi; &quot;WA #REPORT&quot; = laporan teknisi lewat WA.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="sparepart"><RiwayatSparepart riwayat={data.riwayat} kunci={a.sn_key} /></TabsContent>
+            {data.penempatan.length > 0 && (
+              <TabsContent value="penempatan">
+              <Card>
+                <CardHeader><CardTitle className="text-base">Riwayat penempatan</CardTitle></CardHeader>
+                <CardContent>
+                  <DataTable columns={KOLOM_PENEMPATAN} data={data.penempatan} getKey={(r) => String(r.id)} pageSize={10}
+                    initialSort={{ id: "mulai", dir: "desc" }} searchPlaceholder="Cari faskes…" empty="Belum ada penempatan." />
+                </CardContent>
+              </Card>
+              </TabsContent>
+            )}
+          </Tabs>
         </>
       )}
+    </div>
+  );
+}
+
+/** Part yang diganti: dari isian Pergantian Sparepart; kalau kosong, dari frasa "ganti …" di Kegiatan. */
+function itemSparepart(r: RiwayatRow): { item: string[]; dariKegiatan: boolean } {
+  const isian = pecahSparepart(r.sparepart);
+  return isian.length ? { item: isian, dariKegiatan: false } : { item: gantiDariKegiatan(r.kegiatan), dariKegiatan: true };
+}
+
+interface BarisSparepart { ref: string; waktu: string | null; item: string[]; dariKegiatan: boolean; kegiatan: string | null; jenis: string | null; faskes: string | null; teknisi: string | null; sumber: RiwayatRow["sumber"] }
+
+/** Riwayat penggantian sparepart satu alat (dari #REPORT & Google Form lama), terbaru dulu. */
+function RiwayatSparepart({ riwayat, kunci }: { riwayat: RiwayatRow[]; kunci: string }) {
+  const rows = useMemo<BarisSparepart[]>(() => riwayat
+    .map((r) => ({ ref: r.ref, waktu: r.waktu, ...itemSparepart(r), kegiatan: r.kegiatan, jenis: r.jenis, faskes: r.faskes, teknisi: r.teknisi, sumber: r.sumber }))
+    .filter((r) => r.item.length > 0), [riwayat]);
+  const kolom: DataColumn<BarisSparepart>[] = [
+    { id: "waktu", header: "Tanggal", accessor: (r) => r.waktu ?? "", searchable: false, cell: (r) => <span className="whitespace-nowrap">{tgl(r.waktu)}</span> },
+    { id: "item", header: "Sparepart diganti", accessor: (r) => r.item.join(" "), sortable: false, className: "min-w-64", cell: (r) => (
+      <div className="space-y-1">
+        <ul className="list-disc space-y-0.5 pl-4 text-sm">{r.item.map((x, i) => <li key={i}>{x}</li>)}</ul>
+        {r.dariKegiatan && <p className="text-muted-foreground text-xs" title={r.kegiatan ?? ""}>dibaca dari Kegiatan (kolom sparepart kosong)</p>}
+      </div>) },
+    { id: "jenis", header: "Pekerjaan", accessor: (r) => r.jenis, cell: (r) => strip(r.jenis) },
+    { id: "faskes", header: "Faskes", accessor: (r) => r.faskes, className: "min-w-40" },
+    { id: "teknisi", header: "Teknisi", accessor: (r) => r.teknisi },
+    { id: "sumber", header: "Sumber", accessor: (r) => SUMBER[r.sumber], cell: (r) => <Badge variant="outline">{SUMBER[r.sumber]}</Badge> },
+  ];
+  const ekspor: ExportColumn<BarisSparepart>[] = [
+    { header: "Tanggal", value: (r) => r.waktu },
+    { header: "Sparepart diganti", value: (r) => r.item.join("; ") },
+    { header: "Dibaca dari", value: (r) => (r.dariKegiatan ? "Kegiatan" : "Isian sparepart") },
+    { header: "Kegiatan", value: (r) => r.kegiatan },
+    { header: "Pekerjaan", value: (r) => r.jenis },
+    { header: "Faskes", value: (r) => r.faskes },
+    { header: "Teknisi", value: (r) => r.teknisi },
+    { header: "Sumber", value: (r) => SUMBER[r.sumber] },
+  ];
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Riwayat penggantian sparepart <span className="text-muted-foreground text-sm font-normal">· {rows.length}×</span></CardTitle></CardHeader>
+      <CardContent>
+        <DataTable columns={kolom} data={rows} getKey={(r) => r.ref} pageSize={10} initialSort={{ id: "waktu", dir: "desc" }}
+          searchPlaceholder="Cari nama sparepart / teknisi / faskes…"
+          toolbar={<ExportButton filename={`sparepart-alat_${kunci}`} columns={ekspor} data={rows} />}
+          empty="Belum ada penggantian sparepart tercatat untuk alat ini." />
+        <p className="text-muted-foreground mt-2 text-xs">Dari isian Pergantian Sparepart di #REPORT teknisi dan Google Form lama; bila isian itu kosong, dibaca dari kalimat &quot;ganti …&quot; di Kegiatan (ganti reagen/botol/kertas tidak dihitung). Bon Sparepart tidak ikut — bon belum tertaut ke alat (SN).</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Foto jumlah tes & kondisi alat dari #REPORT — klik untuk ukuran penuh (tab baru). */
+function FotoLaporan({ foto }: { foto: { id: number; jenis: "tes" | "kondisi" }[] }) {
+  if (!foto.length) return <span className="text-muted-foreground text-xs">—</span>;
+  return (
+    <div className="flex max-w-56 flex-wrap gap-1">
+      {foto.map((f) => (
+        <a key={f.id} href={`/api/riwayat-alat/foto/${f.id}`} target="_blank" rel="noreferrer" title={f.jenis === "tes" ? "Foto jumlah tes" : "Foto kondisi alat"}
+          className="relative block">
+          {/* eslint-disable-next-line @next/next/no-img-element -- foto dari BFF ber-gerbang, bukan aset statis */}
+          <img src={`/api/riwayat-alat/foto/${f.id}`} alt={f.jenis === "tes" ? "Foto jumlah tes" : "Foto kondisi alat"} loading="lazy"
+            className="h-12 w-12 rounded border object-cover" />
+          <span className="bg-background/90 absolute bottom-0 left-0 rounded-tr px-1 text-[10px] font-medium">{f.jenis === "tes" ? "Tes" : "Kondisi"}</span>
+        </a>
+      ))}
     </div>
   );
 }

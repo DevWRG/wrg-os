@@ -19,6 +19,8 @@ export interface AlatRow {
   kota: string | null;
   aktif: boolean | null;
   kunjungan: number;
+  /** Berapa kali riwayat mencatat penggantian sparepart. */
+  ganti_sparepart: number;
   terakhir: string | null;
   terakhir_jenis: string | null;
 }
@@ -39,6 +41,8 @@ export interface RiwayatRow {
   catatan: string | null;
   alat: string | null;
   sn: string | null;
+  /** Foto laporan WA untuk alat ini (336) — jenis tes = jumlah tes, kondisi = kondisi alat. */
+  foto: { id: number; jenis: "tes" | "kondisi" }[];
 }
 
 export class RiwayatAlatError extends Error {
@@ -56,13 +60,18 @@ export function bacaKunci(raw: string | undefined | null): string {
 
 const num = (v: unknown): number | null => (v == null ? null : Number(v));
 
+// Sama dengan itemSparepart() di web (lib/riwayat-alat.ts): isian sparepart yang bukan "-"/"0"/"tidak ada",
+// atau "ganti …" di Kegiatan selain bahan habis pakai. Pendekatan SQL — hitungan bisa selisih tipis dengan tab.
+const GANTI_PART = `(btrim(COALESCE(sparepart, '')) !~* '^(-*|0+|tidak( ada| asa)?|tdk( ada)?|nihil|none|n/?a|kosong|belum ada)$'
+  OR kegiatan ~* '\\m(ganti|penggantian|pergantian|mengganti|diganti)\\s+(?!(reagen|reagent|botol|kertas|thermal|paper|faktor|posisi|setting|program|meja)\\M)\\w')`;
+
 // Waktu ditampilkan sebagai jam WIB (teks), bukan Date — kolom timestamptz ke JS bergeser zona.
 // `satu` = detail satu alat: filter SN ($1) ditaruh di DALAM tiap CTE supaya tak mengagregasi semua alat.
 const daftarSql = (satu: boolean) => {
   const f = satu ? "AND sn_key = $1" : "";
   return `
   WITH ev AS (
-    SELECT sn_key, count(*)::int AS n, max(waktu) AS terakhir,
+    SELECT sn_key, count(*)::int AS n, count(*) FILTER (WHERE ${GANTI_PART})::int AS n_spare, max(waktu) AS terakhir,
            (array_agg(jenis ORDER BY waktu DESC NULLS LAST))[1] AS jenis_terakhir,
            (array_agg(faskes ORDER BY waktu DESC NULLS LAST) FILTER (WHERE faskes IS NOT NULL))[1] AS faskes_ev,
            (array_agg(alat ORDER BY waktu DESC NULLS LAST) FILTER (WHERE alat IS NOT NULL))[1] AS alat_ev,
@@ -88,7 +97,7 @@ const daftarSql = (satu: boolean) => {
          CASE WHEN k.kso_id IS NOT NULL THEN 'KSO' WHEN b.unit_id IS NOT NULL THEN 'Beli' END AS jenis_alat,
          k.kso_id, b.unit_id,
          COALESCE(k.faskes, b.faskes, ev.faskes_ev) AS faskes, k.kota, k.aktif,
-         COALESCE(ev.n, 0) AS kunjungan,
+         COALESCE(ev.n, 0) AS kunjungan, COALESCE(ev.n_spare, 0) AS ganti_sparepart,
          to_char(ev.terakhir AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS terakhir,
          ev.jenis_terakhir
   FROM kunci
@@ -109,6 +118,7 @@ function petaAlat(r: Record<string, unknown>): AlatRow {
     kota: (r.kota as string) ?? null,
     aktif: r.aktif == null ? null : !!r.aktif,
     kunjungan: Number(r.kunjungan ?? 0),
+    ganti_sparepart: Number(r.ganti_sparepart ?? 0),
     terakhir: (r.terakhir as string) ?? null,
     terakhir_jenis: (r.jenis_terakhir as string) ?? null,
   };
@@ -152,7 +162,122 @@ export async function detailAlat(snKey: string): Promise<{
     catatan: (r.catatan as string) ?? null,
     alat: (r.alat as string) ?? null,
     sn: (r.sn as string) ?? null,
+    foto: [],
   }));
+  // Foto #REPORT per alat (sumber wa): foto bertaut ke alat itu, atau foto umum kunjungan beralat tunggal.
+  const kaIds = riwayat.filter((r) => r.sumber === "wa").map((r) => Number(r.ref.slice(3))).filter(Number.isFinite);
+  if (kaIds.length) {
+    const fotos = await sql`
+      SELECT ka.id AS ka_id, f.id, COALESCE(f.jenis, 'kondisi') AS jenis
+      FROM teknisi_kunjungan_alat ka
+      JOIN teknisi_kunjungan_foto f ON f.kunjungan_id = ka.kunjungan_id
+        AND (f.kunjungan_alat_id = ka.id
+             OR (f.kunjungan_alat_id IS NULL
+                 AND (SELECT count(*) FROM teknisi_kunjungan_alat y WHERE y.kunjungan_id = ka.kunjungan_id) = 1))
+      WHERE ka.id IN ${sql(kaIds)}
+      ORDER BY f.jenis DESC NULLS LAST, f.id`;
+    const per = new Map<string, RiwayatRow["foto"]>();
+    for (const f of fotos) {
+      const k = `wa:${f.ka_id}`;
+      per.set(k, [...(per.get(k) ?? []), { id: Number(f.id), jenis: f.jenis === "tes" ? "tes" : "kondisi" }]);
+    }
+    for (const r of riwayat) r.foto = per.get(r.ref) ?? [];
+  }
   const penempatan = alat.kso_asset_id != null ? await penempatanAlat(alat.kso_asset_id) : [];
   return { alat, riwayat, penempatan };
+}
+
+
+/** Path berkas satu foto laporan teknisi (336) — untuk /riwayat-alat/foto/:id. null = tak ada. */
+export async function pathFotoTeknisi(id: number): Promise<string | null> {
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const [r] = await db()`SELECT media_path FROM teknisi_kunjungan_foto WHERE id = ${id}`;
+  return r?.media_path ? String(r.media_path) : null;
+}
+
+// ── Alat siap pasang (idle) — keputusan user 18 Nov 2026 ─────────────────────
+// Alat milik WRG (aset tetap KSO-n di Accurate, dicatat Accounting) yang BELUM terpasang di customer.
+// Status per aset Accurate (prefiks KSO/KS, belum dilepas):
+//   tertaut ke alat KSO (fixed_asset_override F34, atau SN di `notes` = kso_asset.sn_key) → ikut status Daftar Alat:
+//     operasional = terpasang (tak tampil); stok_kantor / backup / not_ready / perlu_cek = tampil.
+//   tak tertaut: pekerjaan terakhir di Riwayat Alat = Tarik Alat → "ditarik"; lokasi Accurate "GUDANG …" → "gudang";
+//   ada kunjungan teknisi lain ≤12 bulan → dianggap terpasang (tak tampil); selain itu "belum_tertaut" (perlu dicek).
+//   Uji dev 18 Nov: 706 aset "Kantor Pusat" tak tertaut, 222 di antaranya punya kunjungan teknisi = terpasang.
+// Ditambah alat Daftar Alat yang non-operasional tapi tak punya aset Accurate.
+
+export type KategoriIdle = "ditarik" | "gudang" | "stok_kantor" | "backup" | "not_ready" | "perlu_cek" | "belum_tertaut";
+
+export interface AlatIdleRow {
+  kunci: string;
+  sn_key: string | null;
+  sn: string | null;
+  nomor_aset: string | null;
+  alat: string | null;
+  lokasi: string | null;
+  kategori: KategoriIdle;
+  tgl_perolehan: string | null;
+  kso_asset_id: number | null;
+  riwayat_terakhir: string | null;
+  riwayat_terakhir_jenis: string | null;
+  riwayat_terakhir_faskes: string | null;
+}
+
+export async function daftarAlatIdle(): Promise<AlatIdleRow[]> {
+  if (!isDbEnabled()) return [];
+  const rows = await db()`
+    WITH acc AS (
+      SELECT f.id, f.number, f.description, f.notes, f.location_name,
+             COALESCE(f.usage_date, f.trans_date) AS tgl,
+             COALESCE(o.kso_asset_id, ks.id) AS kso_id
+      FROM accurate_fixed_asset f
+      LEFT JOIN fixed_asset_override o ON o.accurate_id = f.id
+      LEFT JOIN LATERAL (
+        SELECT a.id FROM kso_asset a
+        WHERE o.kso_asset_id IS NULL AND alat_sn_key(f.notes) IS NOT NULL AND a.sn_key = alat_sn_key(f.notes)
+        ORDER BY a.aktif DESC, a.id LIMIT 1
+      ) ks ON true
+      WHERE f.prefix IN ('KSO', 'KS') AND NOT f.disposed
+    ), gab AS (
+      SELECT 'acc:' || acc.id AS kunci, COALESCE(a.sn_key, alat_sn_key(acc.notes)) AS sn_key,
+             COALESCE(a.sn_raw, NULLIF(btrim(acc.notes), '')) AS sn, acc.number AS nomor_aset,
+             COALESCE(NULLIF(a.nama_alat, ''), a.type_alat, acc.description) AS alat,
+             CASE WHEN v.status_kode IS NOT NULL AND v.status_kode <> 'operasional'
+                  THEN COALESCE(NULLIF(btrim(a.customer_raw), ''), acc.location_name) ELSE acc.location_name END AS lokasi,
+             v.status_kode, acc.location_name AS lokasi_acc,
+             acc.tgl, acc.kso_id
+      FROM acc
+      LEFT JOIN kso_asset a ON a.id = acc.kso_id
+      LEFT JOIN kso_asset_status_v v ON v.id = a.id
+      UNION ALL
+      SELECT 'kso:' || a.id, a.sn_key, a.sn_raw, NULL, COALESCE(NULLIF(a.nama_alat, ''), a.type_alat),
+             NULLIF(btrim(a.customer_raw), ''), v.status_kode, NULL, NULL::date, a.id
+      FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
+      WHERE v.status_kode <> 'operasional' AND NOT EXISTS (SELECT 1 FROM acc WHERE acc.kso_id = a.id)
+    )
+    SELECT * FROM (
+    SELECT g.*, to_char(g.tgl, 'YYYY-MM-DD') AS tgl_perolehan,
+           CASE WHEN g.status_kode = 'operasional' THEN NULL
+                WHEN g.status_kode IS NOT NULL THEN g.status_kode
+                WHEN r.jenis ILIKE 'tarik%' THEN 'ditarik'
+                WHEN g.lokasi_acc ILIKE 'gudang%' THEN 'gudang'
+                WHEN r.waktu > now() - interval '12 months' THEN NULL
+                ELSE 'belum_tertaut' END AS kategori,
+           to_char(r.waktu AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS riwayat_terakhir, r.jenis AS riwayat_jenis, r.faskes AS riwayat_faskes
+    FROM gab g
+    LEFT JOIN LATERAL (
+      SELECT waktu, jenis, faskes FROM alat_riwayat_v rv WHERE g.sn_key IS NOT NULL AND rv.sn_key = g.sn_key
+      ORDER BY waktu DESC NULLS LAST LIMIT 1
+    ) r ON true
+    ) z
+    WHERE z.kategori IS NOT NULL
+    ORDER BY CASE z.kategori WHEN 'ditarik' THEN 0 WHEN 'gudang' THEN 1 WHEN 'stok_kantor' THEN 2 WHEN 'backup' THEN 3
+                             WHEN 'not_ready' THEN 4 WHEN 'perlu_cek' THEN 5 ELSE 6 END, z.lokasi NULLS LAST, z.alat NULLS LAST`;
+  return rows.map((r) => ({
+    kunci: String(r.kunci), sn_key: (r.sn_key as string) ?? null, sn: (r.sn as string) ?? null,
+    nomor_aset: (r.nomor_aset as string) ?? null, alat: (r.alat as string) ?? null, lokasi: (r.lokasi as string) ?? null,
+    kategori: r.kategori as KategoriIdle, tgl_perolehan: (r.tgl_perolehan as string) ?? null,
+    kso_asset_id: r.kso_id == null ? null : Number(r.kso_id),
+    riwayat_terakhir: (r.riwayat_terakhir as string) ?? null, riwayat_terakhir_jenis: (r.riwayat_jenis as string) ?? null,
+    riwayat_terakhir_faskes: (r.riwayat_faskes as string) ?? null,
+  }));
 }
