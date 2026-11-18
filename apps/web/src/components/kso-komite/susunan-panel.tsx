@@ -1,5 +1,6 @@
 "use client";
 
+import { Settings } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -11,50 +12,68 @@ import { Label } from "@/components/ui/label";
 import { LABEL_KOMITE, kirim, waktu, type Komite, type Susunan } from "./types";
 
 // Susunan Komite (migrasi 242): siapa menjabat apa — diisi dari layar ini, tidak pernah di kode.
-// Semua pembuka menu melihatnya; tombol "Atur" hanya untuk pemegang centang kso-komite-susunan
-// (API yang menentukan lewat `bolehUbah`, dan memeriksa ulang setiap simpan).
-export function SusunanPanel() {
+// 18 Nov 2026 (permintaan user): bukan lagi panel lebar di atas tab, melainkan tombol "Susunan Komite" (ikon setelan) di samping
+// Format #KSO yang membuka modal. Data dimuat saat modal dibuka. Pemegang centang kso-komite-susunan (API menentukan lewat
+// `bolehUbah`, dan memeriksa ulang setiap simpan) langsung mendapat form ubah; yang lain melihat daftar baca-saja.
+export function TombolSusunan() {
+  const [buka, setBuka] = useState(false);
   const [d, setD] = useState<Susunan | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [atur, setAtur] = useState(false);
   const muat = useCallback(() => {
     kirim<Susunan>("/api/kso-komite/susunan").then((x) => { setD(x); setErr(null); }).catch((e: Error) => setErr(e.message));
   }, []);
-  useEffect(() => { muat(); }, [muat]);
+  useEffect(() => { if (buka) muat(); }, [buka, muat]);
+  return (
+    <>
+      <Button type="button" size="sm" variant="soft" onClick={() => setBuka(true)}>
+        <Settings aria-hidden />Susunan Komite
+      </Button>
+      <Dialog open={buka} onOpenChange={setBuka}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Susunan Komite</DialogTitle>
+            <DialogDescription>
+              {d?.bolehUbah
+                ? "Ganti orang = pilih akun baru + tanggal mulai. Pemegang lama otomatis ditutup; riwayatnya tetap tersimpan."
+                : "Jabatan KSO Forum dan Product Development beserta pemegangnya. Judul agenda WhatsApp menyebut Ketua dan Sekretaris dari sini."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            {err && <p className="text-destructive text-sm">{err}</p>}
+            {!d ? (!err && <p className="text-muted-foreground text-sm">Memuat…</p>)
+              : d.bolehUbah ? <AturSusunan d={d} onBerubah={muat} /> : <DaftarSusunan d={d} />}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
 
-  if (err) return <p className="text-destructive text-sm">Susunan Komite: {err}</p>;
-  if (!d) return null;
+function DaftarSusunan({ d }: { d: Susunan }) {
   const aktif = d.jabatan.filter((j) => j.aktif);
   return (
-    <section className="bg-card rounded-lg border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-semibold">Susunan Komite</h2>
-        {d.bolehUbah && <Button size="sm" variant="outline" onClick={() => setAtur(true)}>Atur susunan</Button>}
-      </div>
-      <div className="mt-2 grid gap-3 sm:grid-cols-2">
-        {(Object.keys(LABEL_KOMITE) as Komite[]).map((k) => (
-          <div key={k}>
-            <div className="text-muted-foreground text-xs font-medium uppercase">{LABEL_KOMITE[k]}</div>
-            <ul className="mt-1 space-y-0.5 text-sm">
-              {aktif.filter((j) => j.komite === k).map((j) => (
-                <li key={j.kode}>
-                  {j.label}: {j.pemegang
-                    ? <b>{j.pemegang.nama ?? "akun tidak dikenal"}</b>
-                    : <span className="text-amber-700 dark:text-amber-400">belum diisi</span>}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
-      {d.bolehUbah && <AturSusunan open={atur} d={d} onClose={() => setAtur(false)} onBerubah={muat} />}
-    </section>
+    <div className="grid gap-4 sm:grid-cols-2">
+      {(Object.keys(LABEL_KOMITE) as Komite[]).map((k) => (
+        <div key={k}>
+          <div className="text-muted-foreground text-xs font-medium uppercase">{LABEL_KOMITE[k]}</div>
+          <ul className="mt-1 space-y-1 text-sm">
+            {aktif.filter((j) => j.komite === k).map((j) => (
+              <li key={j.kode}>
+                {j.label}: {j.pemegang
+                  ? <b>{j.pemegang.nama ?? "akun tidak dikenal"}</b>
+                  : <span className="text-amber-700 dark:text-amber-400">belum diisi</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 
 const hariIni = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
 
-function AturSusunan({ open, d, onClose, onBerubah }: { open: boolean; d: Susunan; onClose: () => void; onBerubah: () => void }) {
+function AturSusunan({ d, onBerubah }: { d: Susunan; onBerubah: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [sibuk, setSibuk] = useState(false);
   const simpan = async (jenis: "pemegang" | "jabatan", body: Record<string, unknown>) => {
@@ -66,32 +85,24 @@ function AturSusunan({ open, d, onClose, onBerubah }: { open: boolean; d: Susuna
   };
   const opsi = d.akun.map((a) => ({ value: a.id, label: a.name }));
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Atur Susunan Komite</DialogTitle>
-          <DialogDescription>Ganti orang = pilih akun baru + tanggal mulai. Pemegang lama otomatis ditutup; riwayatnya tetap tersimpan.</DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          {err && <p className="text-destructive text-sm">{err}</p>}
-          {d.jabatan.map((j) => (
-            <BarisJabatan key={`${j.kode}-${j.pemegang?.user_id ?? "-"}-${j.label}-${j.aktif}`} j={j} opsi={opsi} sibuk={sibuk} simpan={simpan} />
-          ))}
-          <JabatanBaru sibuk={sibuk} simpan={simpan} />
-          {d.riwayat.length > 0 && (
-            <section>
-              <h3 className="mb-1 text-sm font-semibold">Riwayat</h3>
-              <ul className="space-y-0.5 text-xs">
-                {d.riwayat.map((r, i) => (
-                  <li key={i}>{r.label}: <b>{r.nama ?? r.user_id}</b> · {r.mulai} s/d {r.selesai ?? "sekarang"}
-                    <span className="text-muted-foreground"> · dicatat {r.dicatat_oleh ?? "—"} {waktu(r.dicatat_at)}</span></li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+    <>
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      {d.jabatan.map((j) => (
+        <BarisJabatan key={`${j.kode}-${j.pemegang?.user_id ?? "-"}-${j.label}-${j.aktif}`} j={j} opsi={opsi} sibuk={sibuk} simpan={simpan} />
+      ))}
+      <JabatanBaru sibuk={sibuk} simpan={simpan} />
+      {d.riwayat.length > 0 && (
+        <section>
+          <h3 className="mb-1 text-sm font-semibold">Riwayat</h3>
+          <ul className="space-y-0.5 text-xs">
+            {d.riwayat.map((r, i) => (
+              <li key={i}>{r.label}: <b>{r.nama ?? r.user_id}</b> · {r.mulai} s/d {r.selesai ?? "sekarang"}
+                <span className="text-muted-foreground"> · dicatat {r.dicatat_oleh ?? "—"} {waktu(r.dicatat_at)}</span></li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
   );
 }
 
