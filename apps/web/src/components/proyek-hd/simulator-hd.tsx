@@ -7,6 +7,7 @@ import { RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Combobox } from "@/components/ui/combobox";
+import { CurrencyInput } from "@/components/ui/currency-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -157,9 +158,9 @@ export function SimulatorHd({ proyekId, bolehMargin, bolehSimpan, bolehParam, ta
   );
 }
 
-/** Slider + angka. Angka boleh diketik di luar rentang slider. */
-function Isian({ label, value, onChange, min, max, step, fmt }: {
-  label: string; value: number; onChange: (v: number) => void; min: number; max: number; step: number; fmt?: (v: number) => string;
+/** Slider + angka. Angka boleh diketik di luar rentang slider. `rupiah` = isian berformat "Rp 1.234.567". */
+function Isian({ label, value, onChange, min, max, step, fmt, rupiah }: {
+  label: string; value: number; onChange: (v: number) => void; min: number; max: number; step: number; fmt?: (v: number) => string; rupiah?: boolean;
 }) {
   return (
     <label className="block space-y-1 text-sm">
@@ -167,8 +168,15 @@ function Isian({ label, value, onChange, min, max, step, fmt }: {
       <span className="flex items-center gap-2">
         <input type="range" aria-label={label} min={min} max={Math.max(max, value)} step={step} value={value}
           onChange={(e) => onChange(+e.target.value)} className="accent-primary min-w-0 flex-1" />
-        <Input type="number" aria-label={`${label} (angka)`} min={0} step={step} value={value} className="bg-card h-8 w-32 text-right"
-          onChange={(e) => onChange(Math.max(0, +e.target.value || 0))} />
+        {rupiah ? (
+          <span className="w-40 shrink-0">
+            <CurrencyInput aria-label={`${label} (angka)`} value={String(Math.round(value))} className="bg-card h-8"
+              onChange={(x) => onChange(x === "" ? 0 : Number(x))} />
+          </span>
+        ) : (
+          <Input type="number" aria-label={`${label} (angka)`} min={0} step={step} value={value} className="bg-card h-8 w-32 text-right"
+            onChange={(e) => onChange(Math.max(0, +e.target.value || 0))} />
+        )}
       </span>
     </label>
   );
@@ -201,7 +209,7 @@ function TabProyeksi({ v, set }: { v: ProyeksiInput; set: (v: ProyeksiInput) => 
           <Isian label="Mesin aktif" value={v.mesin} onChange={u("mesin")} min={1} max={40} step={1} fmt={(x) => `${x} unit`} />
           <Isian label="Shift / mesin / hari" value={v.shift} onChange={u("shift")} min={1} max={3} step={0.5} />
           <Isian label="Hari operasi / bulan" value={v.hari} onChange={u("hari")} min={20} max={26} step={1} />
-          <Isian label="Tarif klaim / tindakan" value={v.tarif_klaim} onChange={u("tarif_klaim")} min={0} max={2_000_000} step={100} fmt={rp} />
+          <Isian label="Tarif klaim / tindakan" value={v.tarif_klaim} onChange={u("tarif_klaim")} min={0} max={2_000_000} step={100} fmt={rp} rupiah />
           <div className="space-y-1">
             <span className="text-sm font-medium">RS bayar Wahana</span>
             <div className="flex gap-2">
@@ -211,7 +219,7 @@ function TabProyeksi({ v, set }: { v: ProyeksiInput; set: (v: ProyeksiInput) => 
           </div>
           {v.mode === "bagi_hasil"
             ? <Isian label="Porsi Wahana" value={v.porsi_pct} onChange={u("porsi_pct")} min={0} max={100} step={1} fmt={(x) => `${x}%`} />
-            : <Isian label="Harga tetap / tindakan" value={v.harga_tetap} onChange={u("harga_tetap")} min={0} max={1_000_000} step={5000} fmt={rp} />}
+            : <Isian label="Harga tetap / tindakan" value={v.harga_tetap} onChange={u("harga_tetap")} min={0} max={1_000_000} step={5000} fmt={rp} rupiah />}
         </CardContent>
       </Card>
       <div className="space-y-4">
@@ -248,7 +256,7 @@ function TabMargin({ v, set }: { v: MarginInput; set: (v: MarginInput) => void }
           <CardContent className="space-y-4">
             {CONSUMABLE.map((it) => (
               <Isian key={it.key} label={`${it.label}${it.qty > 1 ? ` (×${it.qty}, harga satuan)` : ""}`} value={v[it.key]} onChange={u(it.key)}
-                min={0} max={Math.max(150_000, v[it.key])} step={100} fmt={rp} />
+                min={0} max={Math.max(150_000, v[it.key])} step={100} fmt={rp} rupiah />
             ))}
             <p className="text-muted-foreground text-xs">Set ex PPN {rp(r.set_ex_ppn)}</p>
           </CardContent>
@@ -256,31 +264,31 @@ function TabMargin({ v, set }: { v: MarginInput; set: (v: MarginInput) => void }
         <Card>
           <CardHeader><CardTitle>Alat & kontrak KSO</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <Isian label="Mesin HD / unit (ex PPN)" value={v.harga_mesin} onChange={u("harga_mesin")} min={0} max={400_000_000} step={1_000_000} fmt={jt} />
-            <Isian label="RO + pipanisasi + instalasi" value={v.ro} onChange={u("ro")} min={0} max={500_000_000} step={5_000_000} fmt={jt} />
+            <Isian label="Mesin HD / unit (ex PPN)" value={v.harga_mesin} onChange={u("harga_mesin")} min={0} max={400_000_000} step={1_000_000} fmt={jt} rupiah />
+            <Isian label="RO + pipanisasi + instalasi" value={v.ro} onChange={u("ro")} min={0} max={500_000_000} step={5_000_000} fmt={jt} rupiah />
             <Isian label="Mesin aktif" value={v.mesin} onChange={u("mesin")} min={1} max={100} step={1} fmt={(x) => `${x} unit`} />
             <Isian label="Mesin backup" value={v.backup} onChange={u("backup")} min={0} max={10} step={1} fmt={(x) => `${x} unit`} />
             <Isian label="Tindakan / mesin / hari" value={v.tindakan_per_hari} onChange={u("tindakan_per_hari")} min={1} max={4} step={0.5} />
             <Isian label="Hari operasional / bulan" value={v.hari} onChange={u("hari")} min={20} max={30} step={1} />
             <Isian label="Tenor KSO" value={v.tenor} onChange={u("tenor")} min={1} max={10} step={1} fmt={(x) => `${x} tahun`} />
-            <Isian label="Pendapatan WRG / tindakan" value={v.pendapatan} onChange={u("pendapatan")} min={0} max={1_000_000} step={1000} fmt={rp} />
+            <Isian label="Pendapatan WRG / tindakan" value={v.pendapatan} onChange={u("pendapatan")} min={0} max={1_000_000} step={1000} fmt={rp} rupiah />
             <Isian label="Revenue sharing WRG" value={v.share_pct} onChange={u("share_pct")} min={0} max={100} step={5} fmt={(x) => `${x}%`} />
           </CardContent>
         </Card>
         <Card>
           <CardHeader><CardTitle>Operasional</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <Isian label="Gaji teknisi / bulan (×13/tahun)" value={v.gaji_teknisi} onChange={u("gaji_teknisi")} min={0} max={20_000_000} step={500_000} fmt={jt} />
-            <Isian label="Fee DPJP / tindakan" value={v.fee_dpjp} onChange={u("fee_dpjp")} min={0} max={50_000} step={1000} fmt={rp} />
-            <Isian label="Kirim consumable / tindakan" value={v.kirim} onChange={u("kirim")} min={0} max={50_000} step={1000} fmt={rp} />
-            <Isian label="Lab air / tahun" value={v.lab_air} onChange={u("lab_air")} min={0} max={50_000_000} step={1_000_000} fmt={jt} />
-            <Isian label="Diklat perawat / tahun" value={v.diklat} onChange={u("diklat")} min={0} max={50_000_000} step={500_000} fmt={jt} />
-            <Isian label="Kalibrasi / mesin / tahun (mulai th. 2)" value={v.kalibrasi} onChange={u("kalibrasi")} min={0} max={3_000_000} step={50_000} fmt={rp} />
-            <Isian label="Pitnas-Pitwil / tahun" value={v.pitnas} onChange={u("pitnas")} min={0} max={30_000_000} step={500_000} fmt={jt} />
-            <Isian label="Renovasi + inventaris, sekali" value={v.renovasi} onChange={u("renovasi")} min={0} max={1_500_000_000} step={10_000_000} fmt={jt} />
-            <Isian label="Biaya lain / tindakan" value={v.lain_per_tindakan} onChange={u("lain_per_tindakan")} min={0} max={20_000} step={100} fmt={rp} />
-            <Isian label="Biaya lain / hari operasi" value={v.lain_harian} onChange={u("lain_harian")} min={0} max={200_000} step={1000} fmt={rp} />
-            <Isian label="Biaya lain / bulan" value={v.lain_bln} onChange={u("lain_bln")} min={0} max={5_000_000} step={50_000} fmt={rp} />
+            <Isian label="Gaji teknisi / bulan (×13/tahun)" value={v.gaji_teknisi} onChange={u("gaji_teknisi")} min={0} max={20_000_000} step={500_000} fmt={jt} rupiah />
+            <Isian label="Fee DPJP / tindakan" value={v.fee_dpjp} onChange={u("fee_dpjp")} min={0} max={50_000} step={1000} fmt={rp} rupiah />
+            <Isian label="Kirim consumable / tindakan" value={v.kirim} onChange={u("kirim")} min={0} max={50_000} step={1000} fmt={rp} rupiah />
+            <Isian label="Lab air / tahun" value={v.lab_air} onChange={u("lab_air")} min={0} max={50_000_000} step={1_000_000} fmt={jt} rupiah />
+            <Isian label="Diklat perawat / tahun" value={v.diklat} onChange={u("diklat")} min={0} max={50_000_000} step={500_000} fmt={jt} rupiah />
+            <Isian label="Kalibrasi / mesin / tahun (mulai th. 2)" value={v.kalibrasi} onChange={u("kalibrasi")} min={0} max={3_000_000} step={50_000} fmt={rp} rupiah />
+            <Isian label="Pitnas-Pitwil / tahun" value={v.pitnas} onChange={u("pitnas")} min={0} max={30_000_000} step={500_000} fmt={jt} rupiah />
+            <Isian label="Renovasi + inventaris, sekali" value={v.renovasi} onChange={u("renovasi")} min={0} max={1_500_000_000} step={10_000_000} fmt={jt} rupiah />
+            <Isian label="Biaya lain / tindakan" value={v.lain_per_tindakan} onChange={u("lain_per_tindakan")} min={0} max={20_000} step={100} fmt={rp} rupiah />
+            <Isian label="Biaya lain / hari operasi" value={v.lain_harian} onChange={u("lain_harian")} min={0} max={200_000} step={1000} fmt={rp} rupiah />
+            <Isian label="Biaya lain / bulan" value={v.lain_bln} onChange={u("lain_bln")} min={0} max={5_000_000} step={50_000} fmt={rp} rupiah />
             <Isian label="Ambang margin minimum" value={v.min_pct} onChange={u("min_pct")} min={0} max={40} step={1} fmt={(x) => `${x}%`} />
           </CardContent>
         </Card>
