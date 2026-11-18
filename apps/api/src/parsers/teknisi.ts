@@ -151,6 +151,8 @@ export interface TeknisiReportBlok {
   nomor: number;
   /** Nomor item plan yang dirujuk (`#REPORT 1` / judul `#2`). */
   planNo: number | null;
+  /** Angka yang DITULIS di judul blok ("5. RSUD A" → 5); `nomor` = urutan blok di pesan. */
+  nomorTulis?: number | null;
   sn: string | null;
   alat: string | null;
   jenis: JenisTeknisi | null;
@@ -199,8 +201,11 @@ const BLOK_LINE_SPASI = /^\s*(\d{1,2})\s+(\S.*\|.*)$/;
 // Awal nama faskes — segmen judul berawalan ini dibaca sebagai faskes (format #PLAN), bukan alat.
 const AWAL_FASKES = /^(rs[a-z]{0,3}|rumah\s+sakit|pkm|puskesmas|pustu|klinik|lab(?:kesda|oratorium)?|faskes|upt|dinkes|bkia|apotek|bp)\b\.?/i;
 // Judul blok alat yang jelas: kosong, memuat `|`, `#nomor-plan`, atau awalan SN.
+// Judul yang diawali nama faskes ("2. RS PTP Jember") juga jelas judul blok — tanpa ini ia tertelan sebagai
+// lanjutan Kegiatan/Catatan/Note blok sebelumnya.
 const judulBlokJelas = (t: string) =>
-  !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t);
+  !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t)
+  || AWAL_FASKES.test(t.trim());
 const TANPA = /^(-+|—|tidak ada|tdk ada|ga ada|gak ada|nihil|none|no|0|kosong|tidak)$/i;
 
 /** Teks status → status kanonik + alasan. */
@@ -231,7 +236,9 @@ function blokKosong(nomor: number): TeknisiReportBlok {
 function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
   const seg = judul.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
   for (const [i, s] of seg.entries()) {
-    if (i === 0 && seg.length > 1 && AWAL_FASKES.test(s)) { b.faskes = s; continue; }
+    // Faskes di segmen pertama (format #PLAN "RS | SN | jenis"), atau judul yang HANYA nama faskes
+    // ("1. RSUD Trenggalek", 18 Nov 2026) — alatnya diambil dari #PLAN faskes itu di repo.
+    if (i === 0 && AWAL_FASKES.test(s)) { b.faskes = s; continue; }
     const ref = s.match(/^#\s*(\d{1,2})$/);
     if (ref) { b.planNo = Number(ref[1]); continue; }
     const jt = pisahJenisTiket(s);
@@ -325,6 +332,7 @@ export function parseTeknisiReport(
     // alat baru — kecuali judulnya jelas judul alat (`|`, `#2`, `SN …`).
     if (bm && !(lanjutan && !jeda && !judulBlokJelas(bm[2]))) {
       cur = blokKosong(out.blok.length + 1);
+      cur.nomorTulis = Number(bm[1]);
       out.blok.push(cur);
       last = null;
       jeda = false;
@@ -372,7 +380,7 @@ export function parseTeknisiReport(
 
   for (const b of out.blok) {
     if (!b.jenis && opts.jenisDefault) b.jenis = opts.jenisDefault;
-    if (b.planNo == null && !b.sn && !b.alat) {
+    if (b.planNo == null && !b.sn && !b.alat && !b.faskes) {
       out.errors.push(`Blok ${b.nomor}: identitas alat kosong — tulis nomor plan (\`#1\`) atau \`SN:\`/\`Alat:\`.`);
     }
     if (b.planNo == null && !out.faskes && !b.faskes) {
@@ -524,6 +532,15 @@ export const CONTOH_REPORT_TEKNISI = [
   "Status: Selesai",
   "Kegiatan: bersihkan probe, kalibrasi",
   "Jumlah Tes: 2150",
+  "Pergantian Sparepart: -",
+  "Note: analis minta cek ulang minggu depan",
+  "",
+  "atau nomor plan + nama RS:",
+  "#REPORT",
+  "1. RSUD Trenggalek",
+  "Status: Selesai",
+  "Kegiatan: PM bulanan",
+  "Jumlah Tes: 1200",
   "Pergantian Sparepart: -",
   "",
   "atau tanpa plan:",
