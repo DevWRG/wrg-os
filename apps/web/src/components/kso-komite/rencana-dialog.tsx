@@ -17,7 +17,7 @@ import { BadgeAlatBaru, BadgeFaskesBaru, LabelStatus } from "./label-status";
 import { BagianKurang, BagianLampiran } from "./lampiran-kurang";
 import { EditorTeks, TeksKaya } from "./editor-teks";
 import { BagianSph, FormPenawaranSph } from "./sph-kso";
-import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail } from "./types";
+import { GERBANG_CLS, GERBANG_KATA, GERBANG_SOLID, LABEL_PERLINDUNGAN, LABEL_ZONA, STATUS_LABEL, ZONA_CLS, kirim, persen, rp, rpJt, waktu, type Detail, type PengecualianPks } from "./types";
 
 // Detail satu rencana + form aksi sesuai tab. Form hanya muncul bila tab boleh "edit" DAN
 // status rencana cocok; API tetap memeriksa keduanya (tombol tersembunyi ≠ endpoint tertutup).
@@ -133,6 +133,7 @@ function IsiDetail({ tab, d, bolehAksi, jalankan, ruangTutup = false }: { tab: T
       {d.putusan && <Blok judul="Putusan Direksi"><li><b>{d.putusan.putusan}</b> <span className="text-muted-foreground text-xs">{waktu(d.putusan.at)}</span>
         <TeksKaya md={d.putusan.catatan} className="mt-0.5" /></li></Blok>}
       {d.mandat && <Mandat d={d} />}
+      <BagianRestu tab={tab} d={d} bolehAksi={bolehAksi} jalankan={jalankan} />
       <BagianSph tab={tab} d={d} />
       {r.harga_deal != null && (
         <Blok judul="PKS (dicocokkan Sekretariat)">
@@ -334,6 +335,7 @@ function FormAksi({ tab, d, jalankan }: { tab: TabKso; d: Detail; jalankan: Jala
   if ((tab === "sekretariat" || tab === "penawaran") && (s === "DIPUTUS_AM" || s === "DIPUTUS_HOD" || s === "MANDAT_TERBIT") && !mandatLewat)
     return (
       <div className="space-y-3">
+        <CatatanDirektur d={d} />
         <FormPenawaranSph d={d}
           label={`Harga per test (Rp) — ${[d.mandat?.harga_pembuka != null && `pembuka ${rp(d.mandat.harga_pembuka)}`,
             d.mandat?.harga_target !== undefined && `target ${rp(d.mandat.harga_target)}`,
@@ -558,23 +560,55 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
 // Pencocokan PKS: isi dari naskah PKS, bukan dari mandat — sistem yang membandingkan dengan putusan
 // (harga ≥ lantai, tenor ≤ maks, volume ≥ minimum, perlindungan wajib ada, tanpa klausul dilarang /
 // di luar usulan). Tidak cocok = ditolak dengan rinciannya; tidak ada PKS di luar keputusan.
+/** Catatan putusan Direktur — acuan Sekretariat/Admin saat menerbitkan SPH dan mencocokkan PKS (permintaan user 18 Nov 2026). */
+function CatatanDirektur({ d }: { d: Detail }) {
+  if (!d.putusan?.catatan?.trim()) return null;
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm dark:border-sky-900 dark:bg-sky-950/40">
+      <span className="font-semibold">Catatan putusan Direktur</span> <span className="text-muted-foreground text-xs">({d.putusan.putusan} · {waktu(d.putusan.at)})</span>
+      <TeksKaya md={d.putusan.catatan} className="mt-1" />
+    </div>
+  );
+}
+
+/** Pesan galat pencocokan PKS yang boleh dimintakan restu Direktur (337). */
+const PKS_MENYIMPANG = /^(PKS tidak cocok dengan putusan|Di luar batas mandat|Mandat sudah kedaluwarsa)/;
+
 function FormPks({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
   const { sibuk, err, go } = useKirim(jalankan);
-  const [f, setF] = useState({ harga: "", tenor: "", volume: "" });
-  const [klausul, setKlausul] = useState<string[]>([]);
+  const m = d.mandat;
+  const sph = d.sph?.[0];
+  const wajib = m?.klausul_wajib ?? Object.keys(LABEL_PERLINDUNGAN);
+  // 18 Nov 2026: terisi dari yang disetujui Direktur (SPH yang terbit + mandat) — naskah sama = tinggal simpan
+  const [f, setF] = useState({
+    harga: String(sph?.harga_per_test ?? m?.harga_pembuka ?? ""),
+    tenor: String(sph?.tenor_bulan ?? m?.tenor_maks_bulan ?? ""),
+    volume: String(sph?.volume_minimum ?? m?.volume_minimum ?? ""),
+  });
+  const [klausul, setKlausul] = useState<string[]>([
+    ...wajib, ...d.klausul.map((x) => x.kode).filter((k) => !m?.klausul_dilarang.includes(k)),
+  ]);
+  const [alasan, setAlasan] = useState("");
   const isi = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
   const ubah = (k: string, ya: boolean) => setKlausul((x) => (ya ? [...new Set([...x, k])] : x.filter((y) => y !== k)));
-  const m = d.mandat;
-  const wajib = m?.klausul_wajib ?? Object.keys(LABEL_PERLINDUNGAN);
   const centang = (k: string, label: string, catatan?: string) => (
     <label key={k} className="flex items-start gap-2 text-sm">
       <Checkbox className="mt-0.5" checked={klausul.includes(k)} onCheckedChange={(v) => ubah(k, v === true)} />
       <span>{label}{catatan && <span className="text-muted-foreground text-xs"> — {catatan}</span>}</span>
     </label>
   );
+  const isian = { harga_deal: angka(f.harga), tenor_bulan: angka(f.tenor), volume_minimum: angka(f.volume), klausul };
+  const lengkap = !!f.harga.trim() && !!f.tenor.trim() && !!f.volume.trim();
+  const menunggu = d.pengecualian?.find((e) => e.status === "MENUNGGU");
   return (
     <Kotak judul="Cocokkan & catat PKS">
-      <p className="text-muted-foreground text-xs">Isi persis seperti naskah PKS. Putusan: lantai {rp(m?.harga_lantai)}/test · tenor maks {m?.tenor_maks_bulan ?? "—"} bln · volume min {m?.volume_minimum ?? "—"} test/bln.</p>
+      <CatatanDirektur d={d} />
+      <p className="text-muted-foreground text-xs">Terisi sesuai yang disetujui Direktur (SPH yang terbit dan mandat). Ubah hanya bila naskah PKS berbeda. Putusan: {m?.harga_lantai !== undefined ? <>lantai {rp(m?.harga_lantai)}/test · </> : null}tenor maks {m?.tenor_maks_bulan ?? "—"} bln · volume min {m?.volume_minimum ?? "—"} test/bln.</p>
+      {menunggu && (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          Menunggu restu Direktur sejak {waktu(menunggu.diminta_at)} — permintaan baru akan menggantikannya.
+        </p>
+      )}
       <div className="grid gap-2 sm:grid-cols-3">
         <div><Label>Harga per test di PKS (Rp)</Label><Input inputMode="numeric" value={f.harga} onChange={isi("harga")} /></div>
         <div><Label>Tenor di PKS (bulan)</Label><Input inputMode="numeric" value={f.tenor} onChange={isi("tenor")} /></div>
@@ -590,11 +624,64 @@ function FormPks({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
           m?.klausul_dilarang.includes(k.kode) ? "dilarang mandat" : d.klausul.some((x) => x.kode === k.kode) ? "sudah diusulkan" : "tidak pernah diusulkan"))}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
-      <Button disabled={!f.harga.trim() || !f.tenor.trim() || !f.volume.trim() || sibuk}
-        onClick={() => go("pks", { harga_deal: angka(f.harga), tenor_bulan: angka(f.tenor), volume_minimum: angka(f.volume), klausul })}>
-        Cocokkan & simpan
-      </Button>
+      <Button disabled={!lengkap || sibuk} onClick={() => go("pks", isian)}>Cocokkan & simpan</Button>
+      {err && PKS_MENYIMPANG.test(err) && (
+        <div className="space-y-2 rounded-lg border border-sky-200 bg-sky-50/60 p-3 dark:border-sky-900 dark:bg-sky-950/30">
+          <p className="text-sm"><b>Naskah PKS memang begini?</b> Mintakan restu Direktur. Bila disetujui, PKS langsung tercatat persis seperti isian di atas.</p>
+          <div><Label>Alasan (wajib)</Label><EditorTeks value={alasan} onChange={setAlasan} placeholder="mis. RS hanya sanggup 300 test/bln, sudah dinegosiasikan" /></div>
+          <Button variant="outline" disabled={!lengkap || !teksPolos(alasan).trim() || sibuk}
+            onClick={() => go("minta-pengecualian-pks", { ...isian, alasan })}>Minta persetujuan Direktur</Button>
+        </div>
+      )}
     </Kotak>
+  );
+}
+
+const STATUS_RESTU: Record<PengecualianPks["status"], [string, string]> = {
+  MENUNGGU: ["Menunggu restu Direktur", "text-amber-700 dark:text-amber-400"],
+  DISETUJUI: ["Disetujui Direktur — PKS tercatat", "text-emerald-700 dark:text-emerald-400"],
+  DITOLAK: ["Ditolak Direktur", "text-red-700 dark:text-red-400"],
+  DIBATALKAN: ["Digantikan permintaan baru", "text-muted-foreground"],
+};
+
+/** 337: riwayat permintaan restu PKS + form putusan untuk Direksi. */
+function BagianRestu({ tab, d, bolehAksi, jalankan }: { tab: TabKso; d: Detail; bolehAksi: boolean; jalankan: Jalankan }) {
+  const daftar = d.pengecualian ?? [];
+  if (daftar.length === 0) return null;
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold">PKS menyimpang dari putusan — restu Direktur</h3>
+      {daftar.map((e) => (
+        <div key={e.id} className="space-y-1.5 rounded-lg border p-3 text-sm">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className={cn("font-semibold", STATUS_RESTU[e.status][1])}>{STATUS_RESTU[e.status][0]}</span>
+            <span className="text-muted-foreground text-xs">diminta {waktu(e.diminta_at)}</span>
+          </div>
+          <p>Naskah PKS: harga {rp(e.harga_deal)}/test · tenor {e.tenor_bulan} bln · volume min {e.volume_minimum} test/bln
+            {e.klausul.length ? ` · klausul: ${e.klausul.map((k) => labelKlausul(d, k)).join(", ")}` : ""}</p>
+          <p className="text-red-700 dark:text-red-400">{e.selisih}</p>
+          <div><span className="text-muted-foreground text-xs">Alasan Sekretariat:</span><TeksKaya md={e.alasan} /></div>
+          {e.catatan_direksi && <div><span className="text-muted-foreground text-xs">Catatan Direktur ({waktu(e.diputus_at)}):</span><TeksKaya md={e.catatan_direksi} /></div>}
+          {tab === "direksi" && bolehAksi && e.status === "MENUNGGU" && <FormPutusRestu id={e.id} jalankan={jalankan} />}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function FormPutusRestu({ id, jalankan }: { id: number; jalankan: Jalankan }) {
+  const { sibuk, err, go } = useKirim(jalankan);
+  const [catatan, setCatatan] = useState("");
+  return (
+    <div className="space-y-2 border-t pt-2">
+      <div><Label>Catatan Direktur (wajib bila menolak)</Label><EditorTeks value={catatan} onChange={setCatatan} /></div>
+      {err && <p className="text-destructive text-sm">{err}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={sibuk} onClick={() => go("putus-pengecualian-pks", { pengecualian_id: id, setuju: true, catatan })}>Setujui — catat PKS</Button>
+        <Button variant="outline" disabled={sibuk || !teksPolos(catatan).trim()}
+          onClick={() => go("putus-pengecualian-pks", { pengecualian_id: id, setuju: false, catatan })}>Tolak</Button>
+      </div>
+    </div>
   );
 }
 
