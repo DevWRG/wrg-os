@@ -166,3 +166,14 @@ test("polaTerlarang menangkap GPM berangka, persen, rupiah, biaya, HPP, CPRR, ha
   assert.ok(polaTerlarang("harga pembuka 18.500").includes("harga mandat"));
   assert.deepEqual(polaTerlarang("D12 · RS A · Z3 · 4/7 HIJAU"), []);
 });
+
+test("338: opini Komite (NPV/IRR/arus kas) dibuang untuk tab yang disaring, utuh tanpa penyaring", async () => {
+  const { saringDetail } = await import("./kso-saring.js");
+  const d = { rencana: { id: 1, opini_komite: "NPV positif", opini_komite_oleh: "komite:x", opini_komite_at: "2026-11-18" }, mandat: null };
+  for (const mode of ["semua", "pembuka"] as const) {
+    const r = (saringDetail(d, mode) as { rencana: Record<string, unknown> }).rencana;
+    assert.equal(r.opini_komite, undefined, mode);
+    assert.equal(r.opini_komite_oleh, undefined, mode);
+  }
+  assert.equal(d.rencana.opini_komite, "NPV positif");
+});
