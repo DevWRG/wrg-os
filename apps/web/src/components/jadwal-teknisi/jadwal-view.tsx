@@ -23,9 +23,9 @@ export interface DataJadwal {
 }
 interface Pratinjau { populasi: number; jatuh_tempo: number; alat_jatuh_tempo?: number; alat_total?: number; hari_kerja: number; melebihi: number; per_wilayah: { wilayah: string; faskes: number }[]; per_teknisi: { teknisi: string; kunjungan: number; hari: number }[] }
 interface Wilayah { wilayah: string; faskes: number; alat: number; teknisi_id: string | null }
-interface IntervalTipe { tipe: string; kunci: string; alat: number; per_test: number; interval_bulan: number | null }
+interface IntervalTipe { tipe: string; kategori: string | null; kunci: string; alat: number; per_test: number; interval_bulan: number | null }
 interface IntervalAlat {
-  id: number; sn: string | null; nama: string | null; tipe: string | null; skema: string | null; faskes: string; account_id: number; wilayah: string;
+  id: number; sn: string | null; nama: string | null; tipe: string | null; kategori: string | null; skema: string | null; faskes: string; account_id: number; wilayah: string;
   interval: number; interval_alat: number | null; sumber_interval: "alat" | "faskes" | "tipe" | "default";
   pm_terakhir: string | null; pm_berikutnya: string | null; jatuh_tempo_bulan_depan: boolean;
 }
@@ -160,7 +160,9 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
     </select>);
   const muatIv = async () => setIv(await api<DataInterval>(`/api/jadwal-teknisi/interval`));
   const kolomTipe: DataColumn<IntervalTipe>[] = [
-    { id: "t", header: "Tipe alat", sortable: true, accessor: (t) => t.tipe, cell: (t) => <span className="font-medium">{t.tipe}</span> },
+    // 335: per MODEL alat (Clover A1c, Zybio Z52, …); kategori (POCT Clover, Hematology 5Diff, …) hanya keterangan.
+    { id: "t", header: "Tipe alat", sortable: true, accessor: (t) => `${t.tipe} ${t.kategori ?? ""}`, cell: (t) => (
+      <div><div className="font-medium">{t.tipe}</div>{t.kategori && t.kategori !== t.tipe && <div className="text-muted-foreground text-xs">{t.kategori}</div>}</div>) },
     { id: "n", header: "Alat", align: "right", sortable: true, accessor: (t) => t.alat, searchable: false, cell: (t) => <span className="tabular-nums">{t.alat}</span> },
     { id: "i", header: "Interval PM", sortable: true, accessor: (t) => t.interval_bulan ?? 0, searchable: false, cell: (t) => bisaUbah
       ? pilihInterval(t.interval_bulan, "Default skema (per tes 2 bln, lainnya 3 bln)", async (v) => {
@@ -169,8 +171,8 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       : <span>{t.interval_bulan ? `Tiap ${t.interval_bulan} bulan` : "Default skema"}</span> },
   ];
   const kolomAlatPm: DataColumn<IntervalAlat>[] = [
-    { id: "a", header: "Alat", sortable: true, accessor: (a) => `${a.nama ?? ""} ${a.sn ?? ""} ${a.tipe ?? ""}`, cell: (a) => (
-      <div><div className="font-medium">{a.nama ?? "—"}</div><div className="text-muted-foreground text-xs"><span className="font-mono">{a.sn ?? "tanpa SN"}</span>{a.tipe ? ` · ${a.tipe}` : ""}</div></div>) },
+    { id: "a", header: "Alat", sortable: true, accessor: (a) => `${a.nama ?? ""} ${a.sn ?? ""} ${a.kategori ?? ""}`, cell: (a) => (
+      <div><div className="font-medium">{a.nama ?? "—"}</div><div className="text-muted-foreground text-xs"><span className="font-mono">{a.sn ?? "tanpa SN"}</span>{a.kategori ? ` · ${a.kategori}` : ""}</div></div>) },
     { id: "f", header: "Faskes", sortable: true, accessor: (a) => a.faskes, cell: (a) => (
       <div><Link href={`/accounts/${a.account_id}`} className="hover:underline">{a.faskes}</Link><div className="text-muted-foreground text-xs">{a.wilayah}</div></div>) },
     { id: "pt", header: "PM terakhir", sortable: true, accessor: (a) => a.pm_terakhir ?? "", searchable: false,
@@ -295,12 +297,12 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       {tab === "interval" && iv && (
         <>
           <Card><CardContent className="space-y-2 pt-6">
-            <p className="text-muted-foreground text-xs">Interval PM per <b>tipe alat</b> — berlaku untuk semua alat tipe itu kecuali yang diatur khusus di bawah. Kosongkan untuk default skema (alat per tes tiap 2 bulan, lainnya tiap 3 bulan). Berlaku untuk penyusunan jadwal berikutnya.</p>
-            <DataTable columns={kolomTipe} data={iv.tipe} getKey={(t) => t.kunci} searchPlaceholder="Cari tipe alat…" empty="Tidak ada tipe alat." />
+            <p className="text-muted-foreground text-xs">Interval PM per <b>tipe alat</b> (model, mis. Clover A1c, Zybio Z52; kategorinya di bawah nama) — berlaku untuk semua alat tipe itu kecuali yang diatur khusus di bawah. Kosongkan untuk default skema (alat per tes tiap 2 bulan, lainnya tiap 3 bulan). Berlaku untuk penyusunan jadwal berikutnya.</p>
+            <DataTable columns={kolomTipe} data={iv.tipe} getKey={(t) => t.kunci} searchPlaceholder="Cari tipe / kategori alat…" empty="Tidak ada tipe alat." />
           </CardContent></Card>
           <Card><CardContent className="space-y-2 pt-6">
             <p className="text-muted-foreground text-xs">Per alat KSO operasional: PM terakhir (dari Riwayat Alat — #REPORT, Google Form lama, jadwal rutin) + interval = PM berikutnya. Interval khusus alat menimpa frekuensi faskes dan tipe alat. Alat tanpa riwayat disebar otomatis per faskes.</p>
-            <DataTable columns={kolomAlatPm} data={alatIv} getKey={(a) => String(a.id)} searchPlaceholder="Cari SN / alat / tipe / faskes…" empty="Tidak ada alat."
+            <DataTable columns={kolomAlatPm} data={alatIv} getKey={(a) => String(a.id)} searchPlaceholder="Cari SN / alat / kategori / faskes…" empty="Tidak ada alat."
               toolbar={<FilterSelect label="PM" value={fJatuh} onChange={setFJatuh}
                 options={[{ value: "ya", label: `Jatuh tempo ${lblBulan(iv.bulan_depan)}` }, { value: "tidak", label: "Belum jatuh tempo" }, { value: "baru", label: "Belum ada riwayat PM" }]} />} />
           </CardContent></Card>
