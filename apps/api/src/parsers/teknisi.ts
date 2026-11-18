@@ -14,8 +14,13 @@
 import { findDate, stripInvisible } from "./dailyplan.js";
 
 export const JENIS_TEKNISI = [
-  "PM", "Service", "Install", "Uji Fungsi", "Tarik Alat", "Training", "Kalibrasi", "Call",
+  "PM", "Service", "Install", "Uji Fungsi", "Tarik Alat", "Training", "Kalibrasi", "Call", "Prepare", "Administrasi",
 ] as const;
+/** Kegiatan di KANTOR (keputusan user 18 Nov 2026) — "Maintenance" = alias PM. */
+export const JENIS_KANTOR = ["Training", "PM", "Prepare", "Administrasi"] as const;
+const LABEL_JENIS_KANTOR = "Training · Maintenance · Prepare · Administrasi";
+/** Blok kegiatan kantor: judul / `RS:` diawali "Kantor" ("KANTOR Surabaya"). */
+export const KANTOR_RE = /^kantor\b/i;
 export type JenisTeknisi = (typeof JENIS_TEKNISI)[number];
 
 export const STATUS_TEKNISI = ["Selesai", "Pending", "Batal", "Revisit"] as const;
@@ -33,6 +38,8 @@ const JENIS_ALIAS: Record<string, JenisTeknisi> = {
   training: "Training", "refresh training": "Training", pelatihan: "Training",
   kalibrasi: "Kalibrasi", calibration: "Kalibrasi", kalib: "Kalibrasi",
   call: "Call", telepon: "Call", telp: "Call", "by phone": "Call", remote: "Call",
+  prepare: "Prepare", persiapan: "Prepare", prep: "Prepare", "persiapan alat": "Prepare",
+  administrasi: "Administrasi", admin: "Administrasi", adm: "Administrasi",
 };
 const JENIS_KEYS = Object.keys(JENIS_ALIAS).sort((a, b) => b.length - a.length);
 
@@ -151,6 +158,10 @@ export interface TeknisiReportBlok {
   nomor: number;
   /** Nomor item plan yang dirujuk (`#REPORT 1` / judul `#2`). */
   planNo: number | null;
+  /** Angka yang DITULIS di judul blok ("5. RSUD A" → 5); `nomor` = urutan blok di pesan. */
+  nomorTulis?: number | null;
+  /** Kegiatan di kantor (judul / `RS:` "KANTOR …") — tanpa plan, alat opsional, Jenis wajib. */
+  kantor?: boolean;
   sn: string | null;
   alat: string | null;
   jenis: JenisTeknisi | null;
@@ -199,8 +210,11 @@ const BLOK_LINE_SPASI = /^\s*(\d{1,2})\s+(\S.*\|.*)$/;
 // Awal nama faskes — segmen judul berawalan ini dibaca sebagai faskes (format #PLAN), bukan alat.
 const AWAL_FASKES = /^(rs[a-z]{0,3}|rumah\s+sakit|pkm|puskesmas|pustu|klinik|lab(?:kesda|oratorium)?|faskes|upt|dinkes|bkia|apotek|bp)\b\.?/i;
 // Judul blok alat yang jelas: kosong, memuat `|`, `#nomor-plan`, atau awalan SN.
+// Judul yang diawali nama faskes ("2. RS PTP Jember") juga jelas judul blok — tanpa ini ia tertelan sebagai
+// lanjutan Kegiatan/Catatan/Note blok sebelumnya.
 const judulBlokJelas = (t: string) =>
-  !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t);
+  !t.trim() || t.includes("|") || /^\s*#\s*\d/.test(t) || /^\s*(?:s\/?n|no\.?\s*seri|nomor\s+seri|serial)\b/i.test(t)
+  || AWAL_FASKES.test(t.trim()) || KANTOR_RE.test(t.trim());
 const TANPA = /^(-+|—|tidak ada|tdk ada|ga ada|gak ada|nihil|none|no|0|kosong|tidak)$/i;
 
 /** Teks status → status kanonik + alasan. */
@@ -231,7 +245,9 @@ function blokKosong(nomor: number): TeknisiReportBlok {
 function bacaJudul(b: TeknisiReportBlok, judul: string): string | null {
   const seg = judul.split(/\s*\|\s*/).map((x) => x.trim()).filter(Boolean);
   for (const [i, s] of seg.entries()) {
-    if (i === 0 && seg.length > 1 && AWAL_FASKES.test(s)) { b.faskes = s; continue; }
+    // Faskes di segmen pertama (format #PLAN "RS | SN | jenis"), atau judul yang HANYA nama faskes
+    // ("1. RSUD Trenggalek", 18 Nov 2026) — alatnya diambil dari #PLAN faskes itu di repo.
+    if (i === 0 && (AWAL_FASKES.test(s) || KANTOR_RE.test(s))) { b.faskes = s; continue; }
     const ref = s.match(/^#\s*(\d{1,2})$/);
     if (ref) { b.planNo = Number(ref[1]); continue; }
     const jt = pisahJenisTiket(s);
@@ -325,6 +341,7 @@ export function parseTeknisiReport(
     // alat baru — kecuali judulnya jelas judul alat (`|`, `#2`, `SN …`).
     if (bm && !(lanjutan && !jeda && !judulBlokJelas(bm[2]))) {
       cur = blokKosong(out.blok.length + 1);
+      cur.nomorTulis = Number(bm[1]);
       out.blok.push(cur);
       last = null;
       jeda = false;
@@ -372,7 +389,15 @@ export function parseTeknisiReport(
 
   for (const b of out.blok) {
     if (!b.jenis && opts.jenisDefault) b.jenis = opts.jenisDefault;
-    if (b.planNo == null && !b.sn && !b.alat) {
+    b.kantor = KANTOR_RE.test((b.faskes ?? out.faskes ?? "").trim());
+    if (b.kantor) {
+      // Kegiatan kantor: tanpa plan & alat; jenis wajib dan terbatas (Maintenance = PM).
+      if (!b.jenis) {
+        out.errors.push(`Blok ${b.nomor}: kegiatan kantor wajib \`Jenis:\` (${LABEL_JENIS_KANTOR}).`);
+      } else if (!(JENIS_KANTOR as readonly string[]).includes(b.jenis)) {
+        out.errors.push(`Blok ${b.nomor}: jenis "${b.jenis}" bukan kegiatan kantor. Pilih: ${LABEL_JENIS_KANTOR}.`);
+      }
+    } else if (b.planNo == null && !b.sn && !b.alat && !b.faskes) {
       out.errors.push(`Blok ${b.nomor}: identitas alat kosong — tulis nomor plan (\`#1\`) atau \`SN:\`/\`Alat:\`.`);
     }
     if (b.planNo == null && !out.faskes && !b.faskes) {
@@ -525,6 +550,15 @@ export const CONTOH_REPORT_TEKNISI = [
   "Kegiatan: bersihkan probe, kalibrasi",
   "Jumlah Tes: 2150",
   "Pergantian Sparepart: -",
+  "Note: analis minta cek ulang minggu depan",
+  "",
+  "atau nomor plan + nama RS:",
+  "#REPORT",
+  "1. RSUD Trenggalek",
+  "Status: Selesai",
+  "Kegiatan: PM bulanan",
+  "Jumlah Tes: 1200",
+  "Pergantian Sparepart: -",
   "",
   "atau tanpa plan:",
   "#REPORT",
@@ -548,6 +582,15 @@ export const CONTOH_REPORT_TEKNISI = [
   "2) #2",
   "Status: Pending sparepart",
   "Kegiatan: cek error tray",
+  "Jumlah Tes: -",
+  "Pergantian Sparepart: -",
+  "",
+  "kegiatan di kantor (Training · Maintenance · Prepare · Administrasi), tanpa plan:",
+  "#REPORT",
+  "1. KANTOR Surabaya",
+  "Jenis: Prepare",
+  "Status: Selesai",
+  "Kegiatan: siapkan alat & kit install RSUD Kediri",
   "Jumlah Tes: -",
   "Pergantian Sparepart: -",
   "",
@@ -596,6 +639,8 @@ export function balasanReportTeknisi(input: {
     tanpaStart?: boolean;
     /** Item plan sudah di-#REPORT sebelumnya (ditandai, tetap diterima). */
     sudahDilaporkan?: { planNo: number; jam: string } | null;
+    /** Kegiatan di kantor — tanpa alat pun sah. */
+    kantor?: boolean;
   }[];
   foto?: number;
   /** Bukti lokasi dari foto report: ada geotag / ada foto tanpa geotag / belum ada foto. */
@@ -605,7 +650,7 @@ export function balasanReportTeknisi(input: {
 }): string {
   const baris1 = (a: (typeof input.alat)[number]): string[] => {
     const sn = ekorSn(a.sn);
-    const nama = [a.alatLabel ?? "alat ?", sn ? `(${sn})` : null].filter(Boolean).join(" ");
+    const nama = [a.alatLabel ?? (a.kantor ? "Kegiatan kantor" : "alat ?"), sn ? `(${sn})` : null].filter(Boolean).join(" ");
     const status = a.alasan && a.status !== "Selesai" ? `${a.status} ${a.alasan}` : a.status;
     const durasi = fmtDurasi(a.durasiMenit);
     const out = [`${a.nomor}. ${nama} · ${a.jenis ?? "jenis ?"} · ${status}${durasi ? ` · ⏱ ${durasi}` : ""}`];
@@ -617,16 +662,17 @@ export function balasanReportTeknisi(input: {
     return out;
   };
   const n = input.alat.length;
+  const satuan = n > 0 && input.alat.every((a) => a.kantor) ? "kegiatan" : "alat";
   const multi = (input.kelompok?.length ?? 0) > 1;
   const baris: string[] = [];
   if (multi) {
-    baris.push(`✅ ${n} alat tercatat`);
+    baris.push(`✅ ${n} ${satuan} tercatat`);
     for (const g of input.kelompok!) {
       baris.push("", `🏥 ${g.faskes ?? "Faskes ?"}`);
       for (const a of input.alat.filter((x) => g.nomor.includes(x.nomor))) baris.push(...baris1(a));
     }
   } else {
-    baris.push(`✅ ${input.faskes ?? "Kunjungan"} — ${n} alat tercatat`);
+    baris.push(`✅ ${input.faskes ?? "Kunjungan"} — ${n} ${satuan} tercatat`);
     for (const a of input.alat) baris.push(...baris1(a));
   }
   if (input.foto) baris.push(`📷 ${input.foto} foto terlampir`);

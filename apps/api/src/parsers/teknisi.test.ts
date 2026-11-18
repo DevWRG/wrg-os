@@ -340,3 +340,53 @@ test("contoh #REPORT di balasan bot sendiri lolos validasi", () => {
     assert.deepEqual(parseTeknisiReport(teks).errors.filter((e) => !/RS:|identitas/.test(e)), [], teks);
   }
 });
+
+
+test("report: judul blok hanya nama faskes (\"1. RSUD Trenggalek\") + Note — 18 Nov 2026", () => {
+  const r = parseTeknisiReport(
+    "#REPORT\n1. RSUD Trenggalek\nStatus: Selesai\nKegiatan: PM bulanan\nJumlah Tes: 1200\nPergantian Sparepart: -\nNote: analis minta cek ulang"
+    + "\n2. RS PTP Jember\nStatus: Pending sparepart\nKegiatan: cek tray\nJumlah Tes: -\nPergantian Sparepart: -",
+  );
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.blok.map((b) => [b.nomor, b.faskes, b.planNo, b.sn, b.alat, b.status]),
+    [[1, "RSUD Trenggalek", null, null, null, "Selesai"], [2, "RS PTP Jember", null, null, null, "Pending"]]);
+  assert.equal(r.blok[0].catatan, "analis minta cek ulang");
+  // Angka tulisan disimpan terpisah dari urutan blok: "5. RS A" sebagai blok pertama → nomor 1, nomorTulis 5.
+  const lima = parseTeknisiReport("#REPORT\n5. RS A\nStatus: Batal tutup");
+  assert.deepEqual([lima.blok[0].nomor, lima.blok[0].nomorTulis], [1, 5]);
+  assert.equal(r.blok[0].jumlahTes, 1200);
+  // Judul bukan faskes & tanpa identitas tetap dibaca sebagai alat (perilaku lama).
+  assert.equal(parseTeknisiReport("#REPORT\nRS: RS A\n1) Mindray BS-240\nStatus: Batal tutup").blok[0].alat, "Mindray BS-240");
+});
+
+
+test("report: kegiatan KANTOR — Jenis wajib & terbatas, tanpa plan/alat, isian wajib tetap (18 Nov 2026)", () => {
+  const r = parseTeknisiReport(
+    "#REPORT\n1. KANTOR Surabaya\nJenis: Prepare\nStatus: Selesai\nKegiatan: siapkan kit install\nJumlah Tes: -\nPergantian Sparepart: -"
+    + "\n2. KANTOR Surabaya\nJenis: Maintenance\nSN: 0832\nStatus: Selesai\nKegiatan: ganti pompa\nJumlah Tes: 50\nPergantian Sparepart: pompa reagen"
+    + "\n3. RSUD Trenggalek\nStatus: Selesai\nKegiatan: PM\nJumlah Tes: 10\nPergantian Sparepart: -",
+  );
+  assert.deepEqual(r.errors, []);
+  assert.deepEqual(r.blok.map((b) => [b.kantor, b.jenis, b.faskes]),
+    [[true, "Prepare", "KANTOR Surabaya"], [true, "PM", "KANTOR Surabaya"], [false, null, "RSUD Trenggalek"]]);
+  // `RS: Kantor` di tingkat kunjungan + alias admin.
+  const rs = parseTeknisiReport("#REPORT\nRS: Kantor Malang\nJenis: admin\nStatus: Selesai\nKegiatan: rekap bon sparepart\nJumlah Tes: -\nPergantian Sparepart: -");
+  assert.deepEqual(rs.errors, []);
+  assert.deepEqual([rs.blok[0].kantor, rs.blok[0].jenis], [true, "Administrasi"]);
+  // Tanpa Jenis / jenis lapangan → ditolak; isian wajib tetap berlaku.
+  const tanpa = parseTeknisiReport("#REPORT\n1. KANTOR\nStatus: Selesai\nKegiatan: x\nJumlah Tes: -\nPergantian Sparepart: -");
+  assert.match(tanpa.errors.join(" "), /kegiatan kantor wajib `Jenis:`/);
+  const lapangan = parseTeknisiReport("#REPORT\n1. KANTOR\nJenis: Install\nStatus: Selesai\nKegiatan: x\nJumlah Tes: -\nPergantian Sparepart: -");
+  assert.match(lapangan.errors.join(" "), /bukan kegiatan kantor/);
+  const kurang = parseTeknisiReport("#REPORT\n1. KANTOR\nJenis: Training\nStatus: Selesai\nKegiatan: training Zybio");
+  assert.match(kurang.errors.join(" "), /`Jumlah Tes:`, `Pergantian Sparepart:` wajib diisi/);
+});
+
+
+test("balasan report: kegiatan kantor tanpa alat — bukan \"alat ?\"", () => {
+  const t = balasanReportTeknisi({
+    faskes: "KANTOR Surabaya",
+    alat: [{ nomor: 1, alatLabel: null, sn: null, jenis: "Prepare", status: "Selesai", alasan: null, masalah: null, kantor: true }],
+  });
+  assert.equal(t, "✅ KANTOR Surabaya — 1 kegiatan tercatat\n1. Kegiatan kantor · Prepare · Selesai");
+});
