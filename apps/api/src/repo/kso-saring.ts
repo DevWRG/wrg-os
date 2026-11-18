@@ -1,8 +1,9 @@
 // F170 Komite KSO — margin & HPP tak terlihat oleh peran yang tak berhak (keputusan product owner 10 Nov 2026).
 //
 //   "Pokoknya semua yang berhubungan dengan margin dan HPP dihilangkan dari penglihatan AM."
-//   Yang BOLEH melihat angka: HOD Business, Komite, Sekretariat, Direksi (+ admin/superuser, Finance pengisi angka).
-//   TIDAK boleh: AM, HOD Sales (kursi HOD jenis 'area'), Admin Sales, Teknik.
+//   Yang BOLEH melihat angka: HOD Business, Komite, Direksi (+ admin/superuser, Finance pengisi angka).
+//   TIDAK boleh: AM, HOD Sales (kursi HOD jenis 'area'), Admin Sales, Teknik — dan sejak 18 Nov 2026 tab Sekretariat
+//   (dipegang Admin Sales; "yang bisa lihat hanya Direktur dan Komite"), kecuali akunnya juga Komite/Direksi.
 //
 // Berkas ini MURNI (tanpa DB) supaya bisa diuji: alasan gerbang tanpa angka (balasan WA + layar), dan penyaring
 // respons API. Penyaring dipasang di API (repo/kso-komite.ts), bukan hanya disembunyikan di layar.
@@ -50,7 +51,7 @@ export function nilaiGerbangAman(no: number, status: string, nilai: string | nul
 /**
  * Mode penyaring per tab:
  *   "semua"   — AM, HOD Sales, Teknik: semua angka margin/HPP/mandat dibuang.
- *   "pembuka" — Admin Sales: sama, KECUALI harga pembuka mandat (= harga yang dicetak di penawaran yang mereka
+ *   "pembuka" — Admin Sales & Sekretariat: sama, KECUALI harga pembuka mandat (= harga yang dicetak di penawaran yang mereka
  *               terbitkan; form "Terbitkan penawaran" memakainya sebagai harga awal). Target & batas bawah dibuang.
  */
 export type ModeSaring = "semua" | "pembuka";
