@@ -23,6 +23,8 @@ interface RiwayatRow {
   jenis: string | null; status: string | null; faskes: string | null; teknisi: string | null; keluhan: string | null;
   kegiatan: string | null; sparepart: string | null; jumlah_tes: number | null; kondisi: string | null;
   catatan: string | null; alat: string | null; sn: string | null;
+  /** Foto #REPORT (336): tes = jumlah tes, kondisi = kondisi alat. */
+  foto?: { id: number; jenis: "tes" | "kondisi" }[];
 }
 interface PenempatanRow {
   id: number; faskes: string | null; customerRaw: string; mulai: string | null; selesai: string | null;
@@ -198,6 +200,7 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
         </div>
       ),
     },
+    { id: "foto", header: "Foto", sortable: false, searchable: false, accessor: (r) => r.foto?.length ?? 0, cell: (r) => <FotoLaporan foto={r.foto ?? []} /> },
     { id: "sumber", header: "Sumber", accessor: (r) => SUMBER[r.sumber], cell: (r) => <Badge variant="outline">{SUMBER[r.sumber]}</Badge> },
   ];
 
@@ -249,6 +252,24 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+/** Foto jumlah tes & kondisi alat dari #REPORT — klik untuk ukuran penuh (tab baru). */
+function FotoLaporan({ foto }: { foto: { id: number; jenis: "tes" | "kondisi" }[] }) {
+  if (!foto.length) return <span className="text-muted-foreground text-xs">—</span>;
+  return (
+    <div className="flex max-w-56 flex-wrap gap-1">
+      {foto.map((f) => (
+        <a key={f.id} href={`/api/riwayat-alat/foto/${f.id}`} target="_blank" rel="noreferrer" title={f.jenis === "tes" ? "Foto jumlah tes" : "Foto kondisi alat"}
+          className="relative block">
+          {/* eslint-disable-next-line @next/next/no-img-element -- foto dari BFF ber-gerbang, bukan aset statis */}
+          <img src={`/api/riwayat-alat/foto/${f.id}`} alt={f.jenis === "tes" ? "Foto jumlah tes" : "Foto kondisi alat"} loading="lazy"
+            className="h-12 w-12 rounded border object-cover" />
+          <span className="bg-background/90 absolute bottom-0 left-0 rounded-tr px-1 text-[10px] font-medium">{f.jenis === "tes" ? "Tes" : "Kondisi"}</span>
+        </a>
+      ))}
     </div>
   );
 }

@@ -74,6 +74,8 @@ import { cekAktif, runCekHarian } from "./repo/cek-keluar.js";
 import { runRekapKualitas } from "./repo/sales-command.js";
 import { tandaiTidakRealisasi } from "./repo/teknisi-efek.js";
 import { bersihkanFotoStart, ingatkanBelumReport, teknisiFotoStartRetensiAktif, teknisiStartReminderAktif } from "./repo/teknisi-start.js";
+import { ingatkanFotoKurang, teknisiFotoIngatAktif } from "./repo/teknisi-plan-report.js";
+import { sendViaWaGateway } from "./wasend.js";
 
 // Penjadwal agen in-process (Blueprint v2.3). Default MATI — aktif hanya bila
 // AGENT_SCHEDULE_ENABLED=true. Tiap run tetap menulis ke audit_log via repo
@@ -322,6 +324,8 @@ export function startScheduler(): ScheduleStatus {
   // F175 #START (323): pengingat start-belum-report + retensi foto start. Saklar sendiri, default mati.
   const teknisiStartReminderEnabled = teknisiStartReminderAktif();
   const teknisiFotoStartRetensiEnabled = teknisiFotoStartRetensiAktif();
+  // 336: pengingat foto wajib #REPORT (jumlah tes & kondisi alat) 30 menit sesudah report. Default mati.
+  const teknisiFotoIngatEnabled = teknisiFotoIngatAktif();
   // deal-dormant (migrasi 273) — Pipeline Dormant 45 hari + gugur ke Lost 15 hari
   // kemudian. Default MATI; begitu dinyalakan pun default DRY-RUN (hitung + log,
   // tanpa tulis DB / WA) sampai DEAL_DORMANT_DRY_RUN=false secara sadar.
@@ -411,12 +415,12 @@ export function startScheduler(): ScheduleStatus {
   const anyAgent = jobs.some((j) => agentOn(j.id));
 
   status = {
-    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || gaAduanScanEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || direkturInboxEnabled || salesAreaRingkasanEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || teknisiTidakRealisasiEnabled || teknisiStartReminderEnabled || teknisiFotoStartRetensiEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
+    enabled: anyAgent || remindersEnabled || accurateEnabled || monitorEnabled || notifTuaEnabled || dailySummaryEnabled || raportNarrativeEnabled || weeklyReportEnabled || detectLeaveEnabled || gaAduanScanEnabled || extractCompetitorEnabled || weekendBriefingEnabled || polaEnabled || listMembersEnabled || notifQuotaEnabled || salesAlertEvalEnabled || missEscalationEnabled || npkComputeEnabled || watchpointSnapshotEnabled || preVisitEnabled || geoSweepEnabled || cashinResumeEnabled || kpiMeasureEnabled || seninBriefEnabled || weeklyBriefingEnabled || direkturInboxEnabled || salesAreaRingkasanEnabled || accurateStockSyncEnabled || stockBranchEnabled || auditFindingReminderEnabled || invoiceReminderEnabled || soPacingEnabled || fixedAssetSyncEnabled || biayaAreaSyncEnabled || openRefreshEnabled || poSyncEnabled || pmKalibrasiEnabled || leadAgingEnabled || trialReminderEnabled || ksoKesehatanEnabled || ksoSuplaiEnabled || ksoJadwalEnabled || jadwalRutinEnabled || teknisiTidakRealisasiEnabled || teknisiStartReminderEnabled || teknisiFotoStartRetensiEnabled || teknisiFotoIngatEnabled || dealDormantEnabled || fakturisDiamEnabled || cekAktif(),
     timezone,
     jobs: jobs.map((j) => ({ id: j.id, expr: j.expr, valid: cron.validate(j.expr) })),
   };
 
-  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !gaAduanScanEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !direkturInboxEnabled && !salesAreaRingkasanEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !teknisiTidakRealisasiEnabled && !teknisiStartReminderEnabled && !teknisiFotoStartRetensiEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
+  if (!anyAgent && !remindersEnabled && !accurateEnabled && !monitorEnabled && !notifTuaEnabled && !dailySummaryEnabled && !raportNarrativeEnabled && !weeklyReportEnabled && !detectLeaveEnabled && !gaAduanScanEnabled && !extractCompetitorEnabled && !weekendBriefingEnabled && !polaEnabled && !listMembersEnabled && !notifQuotaEnabled && !salesAlertEvalEnabled && !missEscalationEnabled && !npkComputeEnabled && !watchpointSnapshotEnabled && !preVisitEnabled && !geoSweepEnabled && !cashinResumeEnabled && !kpiMeasureEnabled && !seninBriefEnabled && !weeklyBriefingEnabled && !direkturInboxEnabled && !salesAreaRingkasanEnabled && !accurateStockSyncEnabled && !stockBranchEnabled && !auditFindingReminderEnabled && !invoiceReminderEnabled && !soPacingEnabled && !fixedAssetSyncEnabled && !biayaAreaSyncEnabled && !openRefreshEnabled && !poSyncEnabled && !pmKalibrasiEnabled && !leadAgingEnabled && !trialReminderEnabled && !ksoKesehatanEnabled && !ksoSuplaiEnabled && !ksoJadwalEnabled && !jadwalRutinEnabled && !teknisiTidakRealisasiEnabled && !teknisiStartReminderEnabled && !teknisiFotoStartRetensiEnabled && !teknisiFotoIngatEnabled && !dealDormantEnabled && !fakturisDiamEnabled && !cekAktif()) {
     console.log("[scheduler] semua *_SCHEDULE/_ENABLED flag != true — tidak dijadwalkan");
     return status;
   }
@@ -1154,6 +1158,25 @@ export function startScheduler(): ScheduleStatus {
       { timezone },
     );
     live.push(`teknisi-foto-start-retensi=${teknisiFotoStartExpr}`);
+  }
+
+  // F175 foto wajib (336) — tiap 10 menit: kunjungan #REPORT ≥30 menit yang foto jumlah tes / kondisi alatnya
+  // masih kurang → satu pengingat di grup report. Tiap kunjungan diperiksa sekali (foto_ingat_at).
+  const teknisiFotoIngatExpr = process.env.TEKNISI_FOTO_INGAT_CRON ?? "*/10 * * * *";
+  if (teknisiFotoIngatEnabled && cron.validate(teknisiFotoIngatExpr)) {
+    cron.schedule(
+      teknisiFotoIngatExpr,
+      async () => {
+        try {
+          const r = await ingatkanFotoKurang(sendViaWaGateway);
+          if (r.diperiksa) console.log(`[scheduler] teknisi-foto-ingat ${JSON.stringify(r)}`);
+        } catch (e) {
+          console.error("[scheduler] teknisi-foto-ingat gagal:", (e as Error).message);
+        }
+      },
+      { timezone },
+    );
+    live.push(`teknisi-foto-ingat=${teknisiFotoIngatExpr}`);
   }
 
   // F170 Komite KSO — semua di belakang KSO_JADWAL_ENABLED. Forum Selasa/Kamis TIDAK dilewati saat

@@ -24,12 +24,13 @@ interface KerjaRow {
   faskes: string | null; di_luar_plan: boolean; plan_telat: boolean; started_at: string | null; selesai_at: string | null;
   status_report: string | null; durasi_menit: number | null; report_tanpa_start: boolean; start_tanpa_report: boolean;
   tanpa_laporan: boolean; berlokasi: boolean; lokasi_alamat: string | null; jumlah_foto: number;
+  foto_kurang: boolean; foto_tes: number; foto_kondisi: number;
   sla_respon_menit: number | null; sla_selesai_menit: number | null; lewat_eta: boolean | null;
 }
 interface Ringkasan {
   teknisi_id: string; teknisi_nama: string | null; pekerjaan: number; di_luar_plan: number; dimulai: number;
   dilaporkan: number; selesai: number; report_tanpa_start: number; start_tanpa_report: number; tanpa_laporan: number;
-  hari_plan_telat: number; report_berlokasi: number; rata_durasi_menit: number | null; tiket: number;
+  hari_plan_telat: number; report_berlokasi: number; foto_kurang: number; rata_durasi_menit: number | null; tiket: number;
   rata_sla_respon_menit: number | null; rata_sla_selesai_menit: number | null; lewat_eta: number;
 }
 
@@ -121,6 +122,9 @@ const EKSPOR_KERJA: ExportColumn<KerjaRow>[] = [
   { header: "Lokasi tercatat", value: (r) => yaTidak(r.selesai_at == null ? null : r.berlokasi) },
   { header: "Alamat lokasi", value: (r) => r.lokasi_alamat },
   { header: "Jumlah foto", value: (r) => r.jumlah_foto },
+  { header: "Foto jumlah tes", value: (r) => r.foto_tes },
+  { header: "Foto kondisi alat", value: (r) => r.foto_kondisi },
+  { header: "Foto kurang", value: (r) => yaTidak(r.foto_kurang) },
   { header: "Plan telat", value: (r) => yaTidak(r.plan_telat && !r.di_luar_plan) },
   { header: "Report tanpa #START", value: (r) => yaTidak(r.report_tanpa_start) },
   { header: "#START belum #REPORT", value: (r) => yaTidak(r.start_tanpa_report) },
@@ -267,7 +271,7 @@ function TabKerja({ query, filter, dari, sampai }: { query: string; filter: Reac
       cell: (r) => (r.tiket ? `${durasi(r.rata_sla_respon_menit)} / ${durasi(r.rata_sla_selesai_menit)}` : "—") },
     { id: "eta", header: "Lewat ETA", sortable: true, accessor: (r) => r.lewat_eta, className: "tabular-nums",
       cell: (r) => (r.tiket ? <span className={r.lewat_eta ? "font-semibold text-destructive" : ""}>{r.lewat_eta} / {r.tiket}</span> : "—") },
-    { id: "patuh", header: "Kepatuhan", accessor: (r) => r.report_tanpa_start + r.start_tanpa_report + r.tanpa_laporan + r.hari_plan_telat,
+    { id: "patuh", header: "Kepatuhan", accessor: (r) => r.report_tanpa_start + r.start_tanpa_report + r.tanpa_laporan + r.hari_plan_telat + r.foto_kurang,
       cell: (r) => <Kepatuhan r={r} /> },
   ];
 
@@ -338,6 +342,7 @@ function Kepatuhan({ r }: { r: Ringkasan }) {
   if (r.start_tanpa_report) tanda.push(`${r.start_tanpa_report} belum #REPORT`);
   if (r.tanpa_laporan) tanda.push(`${r.tanpa_laporan} tanpa laporan`);
   if (r.dilaporkan && r.report_berlokasi < r.dilaporkan) tanda.push(`${r.dilaporkan - r.report_berlokasi} report tanpa lokasi`);
+  if (r.foto_kurang) tanda.push(`${r.foto_kurang} foto kurang`);
   if (!tanda.length) return <span className="text-emerald-700 dark:text-emerald-400">✓ patuh</span>;
   return <span className="text-amber-700 dark:text-amber-400 text-xs">{tanda.join(" · ")}</span>;
 }
@@ -348,6 +353,7 @@ function TandaKerja({ r }: { r: KerjaRow }) {
   if (r.report_tanpa_start) t.push("tanpa #START");
   if (r.start_tanpa_report) t.push("belum #REPORT");
   if (r.tanpa_laporan) t.push("tanpa laporan");
+  if (r.foto_kurang) t.push(`foto kurang (tes ${r.foto_tes} · kondisi ${r.foto_kondisi})`);
   if (!t.length) return null;
   return <span className="text-amber-700 dark:text-amber-400 text-xs">{t.join(" · ")}</span>;
 }

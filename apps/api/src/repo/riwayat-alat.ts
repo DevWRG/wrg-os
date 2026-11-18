@@ -39,6 +39,8 @@ export interface RiwayatRow {
   catatan: string | null;
   alat: string | null;
   sn: string | null;
+  /** Foto laporan WA untuk alat ini (336) — jenis tes = jumlah tes, kondisi = kondisi alat. */
+  foto: { id: number; jenis: "tes" | "kondisi" }[];
 }
 
 export class RiwayatAlatError extends Error {
@@ -152,7 +154,35 @@ export async function detailAlat(snKey: string): Promise<{
     catatan: (r.catatan as string) ?? null,
     alat: (r.alat as string) ?? null,
     sn: (r.sn as string) ?? null,
+    foto: [],
   }));
+  // Foto #REPORT per alat (sumber wa): foto bertaut ke alat itu, atau foto umum kunjungan beralat tunggal.
+  const kaIds = riwayat.filter((r) => r.sumber === "wa").map((r) => Number(r.ref.slice(3))).filter(Number.isFinite);
+  if (kaIds.length) {
+    const fotos = await sql`
+      SELECT ka.id AS ka_id, f.id, COALESCE(f.jenis, 'kondisi') AS jenis
+      FROM teknisi_kunjungan_alat ka
+      JOIN teknisi_kunjungan_foto f ON f.kunjungan_id = ka.kunjungan_id
+        AND (f.kunjungan_alat_id = ka.id
+             OR (f.kunjungan_alat_id IS NULL
+                 AND (SELECT count(*) FROM teknisi_kunjungan_alat y WHERE y.kunjungan_id = ka.kunjungan_id) = 1))
+      WHERE ka.id IN ${sql(kaIds)}
+      ORDER BY f.jenis DESC NULLS LAST, f.id`;
+    const per = new Map<string, RiwayatRow["foto"]>();
+    for (const f of fotos) {
+      const k = `wa:${f.ka_id}`;
+      per.set(k, [...(per.get(k) ?? []), { id: Number(f.id), jenis: f.jenis === "tes" ? "tes" : "kondisi" }]);
+    }
+    for (const r of riwayat) r.foto = per.get(r.ref) ?? [];
+  }
   const penempatan = alat.kso_asset_id != null ? await penempatanAlat(alat.kso_asset_id) : [];
   return { alat, riwayat, penempatan };
+}
+
+
+/** Path berkas satu foto laporan teknisi (336) — untuk /riwayat-alat/foto/:id. null = tak ada. */
+export async function pathFotoTeknisi(id: number): Promise<string | null> {
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const [r] = await db()`SELECT media_path FROM teknisi_kunjungan_foto WHERE id = ${id}`;
+  return r?.media_path ? String(r.media_path) : null;
 }

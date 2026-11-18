@@ -358,7 +358,7 @@ import {
   listTeknisiReports,
 } from "./repo/readinessboard.js";
 import { KinerjaError, bacaRentang, cakupanKinerja, daftarTeknisi, hariIniWib, jadwalTeknisi, kerjaTeknisi, ringkasKerja } from "./repo/kinerja-teknisi.js";
-import { RiwayatAlatError, bacaKunci, daftarAlat, detailAlat } from "./repo/riwayat-alat.js";
+import { RiwayatAlatError, bacaKunci, daftarAlat, detailAlat, pathFotoTeknisi } from "./repo/riwayat-alat.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
 import { GalatKso, berkasLampiran, berkasSph, daftarFilter, riwayatForum, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
@@ -5045,6 +5045,22 @@ app.get("/riwayat-alat/alat", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const rows = await daftarAlat();
   return c.json({ count: rows.length, rows });
+});
+// 336: satu foto laporan teknisi per id (bukan path) — BFF menggerbang menu riwayat-alat; path dari DB tetap
+// divalidasi di bawah MEDIA_ROOT (anti traversal), jadi izin ini tak membuka foto WA lain.
+app.get("/riwayat-alat/foto/:id", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const p = await pathFotoTeknisi(Number(c.req.param("id")));
+  if (!p) return c.json({ error: "foto tidak ditemukan" }, 404);
+  const abs = resolve(p);
+  if (!isInsideRoot(abs, MEDIA_ROOT)) return c.json({ error: "berkas di luar root media" }, 403);
+  try {
+    const buf = await readFile(abs);
+    const ext = abs.split(".").pop()?.toLowerCase() ?? "";
+    return c.body(buf, 200, { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": "private, max-age=86400" });
+  } catch {
+    return c.json({ error: "file tak ditemukan" }, 404);
+  }
 });
 app.get("/riwayat-alat/alat/:kunci", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
