@@ -8,6 +8,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CardPagination, usePagedList } from "@/components/ui/card-pagination";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { TabKso } from "@/lib/kso-komite-access";
@@ -21,6 +23,10 @@ interface BarisRiwayat {
   rencana_id: number; nomor: string | null; am_nama: string | null; faskes_nama: string | null; alat_nama: string | null;
   capex: number | null; pola_gerbang: string | null; status: string; usulan: string | null; putusan: string | null;
 }
+
+/** Tanggal hari ini di WIB (YYYY-MM-DD) dan geser n hari — tanpa jebakan zona waktu peramban. */
+const hariIniWib = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+const geserHari = (t: string, n: number) => new Date(Date.parse(`${t}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 
 const PUTUSAN: Record<string, string> = { SETUJU: "Setuju", BERSYARAT: "Bersyarat", TOLAK: "Ditolak" };
 
@@ -38,11 +44,22 @@ export function RiwayatForum({ tab, cakupan, onBuka, segar = 0 }: {
     return () => { batal = true; };
   }, [tab, segar, muatUlang]);
 
+  // 18 Nov 2026 (permintaan user): saring tanggal forum — dari/sampai (YYYY-MM-DD, banding teks aman untuk format ISO)
+  const [dari, setDari] = useState("");
+  const [sampai, setSampai] = useState("");
   const forum = useMemo(() => {
     const m = new Map<number, BarisRiwayat[]>();
-    for (const b of baris ?? []) m.set(b.forum_id, [...(m.get(b.forum_id) ?? []), b]);
+    for (const b of baris ?? []) {
+      if ((dari && b.tanggal < dari) || (sampai && b.tanggal > sampai)) continue;
+      m.set(b.forum_id, [...(m.get(b.forum_id) ?? []), b]);
+    }
     return [...m.values()];
-  }, [baris]);
+  }, [baris, dari, sampai]);
+  const cepat = (hari: number | "bulan") => {
+    const kini = hariIniWib();
+    setSampai(kini);
+    setDari(hari === "bulan" ? `${kini.slice(0, 8)}01` : geserHari(kini, -hari));
+  };
   const { visible, page, pageSize, setPage, setPageSize } = usePagedList(forum, tab, 10);
 
   if (err) return (
@@ -50,11 +67,22 @@ export function RiwayatForum({ tab, cakupan, onBuka, segar = 0 }: {
       action={<Button size="sm" variant="outline" onClick={() => setMuatUlang((x) => x + 1)}>Coba lagi</Button>} />
   );
   if (!baris) return <p className="text-muted-foreground text-sm">Memuat…</p>;
-  if (forum.length === 0) return <EmptyState title="Belum ada riwayat forum" description="Forum terbit otomatis pukul 14.00 hari Selasa/Kamis." />;
+  if (baris.length === 0) return <EmptyState title="Belum ada riwayat forum" description="Forum terbit otomatis pukul 14.00 hari Selasa/Kamis." />;
 
   return (
     <section className="space-y-3">
       <p className="text-muted-foreground text-xs">Semua forum, terbaru dulu — {cakupan}. Klik usulan untuk melihat rinciannya.</p>
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border bg-white p-3 shadow-[var(--shadow-card)] dark:bg-card">
+        <div><Label htmlFor="riwayat-dari">Dari tanggal</Label><Input id="riwayat-dari" type="date" value={dari} max={sampai || undefined} onChange={(e) => setDari(e.target.value)} /></div>
+        <div><Label htmlFor="riwayat-sampai">Sampai tanggal</Label><Input id="riwayat-sampai" type="date" value={sampai} min={dari || undefined} onChange={(e) => setSampai(e.target.value)} /></div>
+        <div className="flex flex-wrap gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => cepat(7)}>7 hari</Button>
+          <Button size="sm" variant="outline" onClick={() => cepat(30)}>30 hari</Button>
+          <Button size="sm" variant="outline" onClick={() => cepat("bulan")}>Bulan ini</Button>
+          {(dari || sampai) && <Button size="sm" variant="ghost" onClick={() => { setDari(""); setSampai(""); }}>Semua tanggal</Button>}
+        </div>
+      </div>
+      {forum.length === 0 && <EmptyState title="Tidak ada forum di rentang tanggal ini" description="Ubah tanggal atau tekan Semua tanggal." />}
       {visible.map((isi) => {
         const f = isi[0];
         return (
