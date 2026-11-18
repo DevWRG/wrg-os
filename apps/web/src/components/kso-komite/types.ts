@@ -71,6 +71,8 @@ export interface Detail {
     faskes_baru?: boolean; faskes_kota?: string | null; alat_baru?: boolean;
     /** 329: diloloskan ke agenda forum walau isian belum lengkap (putusan Direktur 17 Nov 2026). */
     diloloskan_at?: string | null; diloloskan_alasan?: string | null;
+    /** 338: opini Komite untuk usulan Zona Direktur (markdown). Tidak ada di respons yang disaring. */
+    opini_komite?: string | null; opini_komite_oleh?: string | null; opini_komite_at?: string | null;
   };
   gerbang: { no: number; nama: string; status: string; nilai: string | null }[];
   pendukung: { nama: string; tipe: string; kontak_terakhir_tanggal: string | null; kontak_terakhir_cara: string | null }[];
