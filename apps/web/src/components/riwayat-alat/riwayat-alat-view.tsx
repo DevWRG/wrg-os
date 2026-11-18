@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { pecahSparepart } from "@/lib/riwayat-alat";
+import { gantiDariKegiatan, pecahSparepart } from "@/lib/riwayat-alat";
 
 // ───────── Tipe (cermin apps/api/src/repo/riwayat-alat.ts) ─────────
 interface AlatRow {
@@ -259,6 +259,7 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
     () => (data?.riwayat ?? []).filter((r) => !pekerjaan || r.jenis === pekerjaan),
     [data, pekerjaan],
   );
+  const nSparepart = useMemo(() => (data?.riwayat ?? []).filter((r) => itemSparepart(r).item.length > 0).length, [data]);
 
   const kolom: DataColumn<RiwayatRow>[] = [
     {
@@ -316,51 +317,69 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
             </CardContent>
           </Card>
 
-          {data.penempatan.length > 0 && (
-            <Card>
-              <CardHeader><CardTitle className="text-base">Riwayat penempatan</CardTitle></CardHeader>
-              <CardContent>
-                <DataTable columns={KOLOM_PENEMPATAN} data={data.penempatan} getKey={(r) => String(r.id)} pageSize={10}
-                  initialSort={{ id: "mulai", dir: "desc" }} searchPlaceholder="Cari faskes…" empty="Belum ada penempatan." />
-              </CardContent>
-            </Card>
-          )}
-
-          <RiwayatSparepart riwayat={data.riwayat} kunci={a.sn_key} />
-
-          <Card>
-            <CardHeader><CardTitle className="text-base">Riwayat pekerjaan</CardTitle></CardHeader>
-            <CardContent>
-              <DataTable columns={kolom} data={riwayat} getKey={(r) => r.ref} pageSize={10}
-                initialSort={{ id: "waktu", dir: "desc" }} searchPlaceholder="Cari keluhan / kegiatan / sparepart / teknisi…"
-                toolbar={<div className="flex flex-wrap items-center gap-3">
-                  <FilterSelect label="Pekerjaan" value={pekerjaan} onChange={setPekerjaan} semua="Semua pekerjaan"
-                    options={daftarPekerjaan.map((j) => ({ value: j, label: j }))} />
-                  <ExportButton filename={`riwayat-alat_${a.sn_key}`} columns={EKSPOR_RIWAYAT} data={riwayat} />
-                </div>}
-                empty="Belum ada riwayat pekerjaan untuk alat ini." />
-              <p className="text-muted-foreground mt-2 text-xs">
-                Faskes = lokasi alat saat pekerjaan itu. &quot;Form lama&quot; = Google Form Kegiatan Teknisi; &quot;WA #REPORT&quot; = laporan teknisi lewat WA.
-              </p>
-            </CardContent>
-          </Card>
+          <Tabs defaultValue="pekerjaan" className="space-y-4">
+            <TabsList>
+              <TabsTrigger value="pekerjaan">Riwayat pekerjaan · {data.riwayat.length}</TabsTrigger>
+              <TabsTrigger value="sparepart">Penggantian sparepart · {nSparepart}</TabsTrigger>
+              {data.penempatan.length > 0 && <TabsTrigger value="penempatan">Penempatan · {data.penempatan.length}</TabsTrigger>}
+            </TabsList>
+            <TabsContent value="pekerjaan">
+              <Card>
+                <CardHeader><CardTitle className="text-base">Riwayat pekerjaan</CardTitle></CardHeader>
+                <CardContent>
+                  <DataTable columns={kolom} data={riwayat} getKey={(r) => r.ref} pageSize={10}
+                    initialSort={{ id: "waktu", dir: "desc" }} searchPlaceholder="Cari keluhan / kegiatan / sparepart / teknisi…"
+                    toolbar={<div className="flex flex-wrap items-center gap-3">
+                      <FilterSelect label="Pekerjaan" value={pekerjaan} onChange={setPekerjaan} semua="Semua pekerjaan"
+                        options={daftarPekerjaan.map((j) => ({ value: j, label: j }))} />
+                      <ExportButton filename={`riwayat-alat_${a.sn_key}`} columns={EKSPOR_RIWAYAT} data={riwayat} />
+                    </div>}
+                    empty="Belum ada riwayat pekerjaan untuk alat ini." />
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Faskes = lokasi alat saat pekerjaan itu. &quot;Form lama&quot; = Google Form Kegiatan Teknisi; &quot;WA #REPORT&quot; = laporan teknisi lewat WA.
+                  </p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            <TabsContent value="sparepart"><RiwayatSparepart riwayat={data.riwayat} kunci={a.sn_key} /></TabsContent>
+            {data.penempatan.length > 0 && (
+              <TabsContent value="penempatan">
+              <Card>
+                <CardHeader><CardTitle className="text-base">Riwayat penempatan</CardTitle></CardHeader>
+                <CardContent>
+                  <DataTable columns={KOLOM_PENEMPATAN} data={data.penempatan} getKey={(r) => String(r.id)} pageSize={10}
+                    initialSort={{ id: "mulai", dir: "desc" }} searchPlaceholder="Cari faskes…" empty="Belum ada penempatan." />
+                </CardContent>
+              </Card>
+              </TabsContent>
+            )}
+          </Tabs>
         </>
       )}
     </div>
   );
 }
 
-interface BarisSparepart { ref: string; waktu: string | null; item: string[]; jenis: string | null; faskes: string | null; teknisi: string | null; sumber: RiwayatRow["sumber"] }
+/** Part yang diganti: dari isian Pergantian Sparepart; kalau kosong, dari frasa "ganti …" di Kegiatan. */
+function itemSparepart(r: RiwayatRow): { item: string[]; dariKegiatan: boolean } {
+  const isian = pecahSparepart(r.sparepart);
+  return isian.length ? { item: isian, dariKegiatan: false } : { item: gantiDariKegiatan(r.kegiatan), dariKegiatan: true };
+}
+
+interface BarisSparepart { ref: string; waktu: string | null; item: string[]; dariKegiatan: boolean; kegiatan: string | null; jenis: string | null; faskes: string | null; teknisi: string | null; sumber: RiwayatRow["sumber"] }
 
 /** Riwayat penggantian sparepart satu alat (dari #REPORT & Google Form lama), terbaru dulu. */
 function RiwayatSparepart({ riwayat, kunci }: { riwayat: RiwayatRow[]; kunci: string }) {
   const rows = useMemo<BarisSparepart[]>(() => riwayat
-    .map((r) => ({ ref: r.ref, waktu: r.waktu, item: pecahSparepart(r.sparepart), jenis: r.jenis, faskes: r.faskes, teknisi: r.teknisi, sumber: r.sumber }))
+    .map((r) => ({ ref: r.ref, waktu: r.waktu, ...itemSparepart(r), kegiatan: r.kegiatan, jenis: r.jenis, faskes: r.faskes, teknisi: r.teknisi, sumber: r.sumber }))
     .filter((r) => r.item.length > 0), [riwayat]);
   const kolom: DataColumn<BarisSparepart>[] = [
     { id: "waktu", header: "Tanggal", accessor: (r) => r.waktu ?? "", searchable: false, cell: (r) => <span className="whitespace-nowrap">{tgl(r.waktu)}</span> },
     { id: "item", header: "Sparepart diganti", accessor: (r) => r.item.join(" "), sortable: false, className: "min-w-64", cell: (r) => (
-      <ul className="list-disc space-y-0.5 pl-4 text-sm">{r.item.map((x, i) => <li key={i}>{x}</li>)}</ul>) },
+      <div className="space-y-1">
+        <ul className="list-disc space-y-0.5 pl-4 text-sm">{r.item.map((x, i) => <li key={i}>{x}</li>)}</ul>
+        {r.dariKegiatan && <p className="text-muted-foreground text-xs" title={r.kegiatan ?? ""}>dibaca dari Kegiatan (kolom sparepart kosong)</p>}
+      </div>) },
     { id: "jenis", header: "Pekerjaan", accessor: (r) => r.jenis, cell: (r) => strip(r.jenis) },
     { id: "faskes", header: "Faskes", accessor: (r) => r.faskes, className: "min-w-40" },
     { id: "teknisi", header: "Teknisi", accessor: (r) => r.teknisi },
@@ -369,6 +388,8 @@ function RiwayatSparepart({ riwayat, kunci }: { riwayat: RiwayatRow[]; kunci: st
   const ekspor: ExportColumn<BarisSparepart>[] = [
     { header: "Tanggal", value: (r) => r.waktu },
     { header: "Sparepart diganti", value: (r) => r.item.join("; ") },
+    { header: "Dibaca dari", value: (r) => (r.dariKegiatan ? "Kegiatan" : "Isian sparepart") },
+    { header: "Kegiatan", value: (r) => r.kegiatan },
     { header: "Pekerjaan", value: (r) => r.jenis },
     { header: "Faskes", value: (r) => r.faskes },
     { header: "Teknisi", value: (r) => r.teknisi },
@@ -382,7 +403,7 @@ function RiwayatSparepart({ riwayat, kunci }: { riwayat: RiwayatRow[]; kunci: st
           searchPlaceholder="Cari nama sparepart / teknisi / faskes…"
           toolbar={<ExportButton filename={`sparepart-alat_${kunci}`} columns={ekspor} data={rows} />}
           empty="Belum ada penggantian sparepart tercatat untuk alat ini." />
-        <p className="text-muted-foreground mt-2 text-xs">Dari isian Pergantian Sparepart di #REPORT teknisi dan Google Form lama. Bon Sparepart tidak ikut — bon belum tertaut ke alat (SN).</p>
+        <p className="text-muted-foreground mt-2 text-xs">Dari isian Pergantian Sparepart di #REPORT teknisi dan Google Form lama; bila isian itu kosong, dibaca dari kalimat &quot;ganti …&quot; di Kegiatan (ganti reagen/botol/kertas tidak dihitung). Bon Sparepart tidak ikut — bon belum tertaut ke alat (SN).</p>
       </CardContent>
     </Card>
   );
