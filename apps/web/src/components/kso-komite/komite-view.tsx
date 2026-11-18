@@ -125,6 +125,13 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
                   <Bagian judul="Negosiasi berjalan — cocokkan PKS atau catat kalah" catatan="PKS dicocokkan dengan putusan (harga, volume minimum, tenor, klausul) sebelum tanda tangan. Tidak cocok = tidak ditandatangani."
                     nada="amber" baris={(d.baris ?? []).filter((b) => b.antrean === "Sekretariat · Cocokkan PKS")} onBuka={setBuka} pilih={buka} />
                 </>
+              ) : t.tab === "direksi" ? (
+                <>
+                  <Bagian judul={JUDUL[t.tab]} catatan={CATATAN[t.tab]} nada="sky" baris={d.baris ?? []} onBuka={setBuka} pilih={buka} />
+                  {/* 337: naskah PKS menyimpang dari putusan — disetujui = PKS langsung tercatat */}
+                  <Bagian judul="Restu PKS — naskah menyimpang dari putusan" catatan="Sekretariat meminta restu karena naskah PKS dari RS berbeda dari putusan (mis. volume minimum lebih rendah). Setujui = PKS langsung tercatat; tolak = negosiasi ulang."
+                    nada="amber" baris={d.restu ?? []} onBuka={setBuka} pilih={buka} />
+                </>
               ) : (
                 <Bagian judul={JUDUL[t.tab]} catatan={CATATAN[t.tab]} nada="sky" baris={d.baris ?? []} onBuka={setBuka} pilih={buka} />
               )}

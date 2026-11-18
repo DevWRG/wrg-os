@@ -53,7 +53,7 @@ export type BarisKpi = Record<string, string | number | null> & { am_id: string;
  * Teknik. Kolom capex, GPM, harga bersih, harga minimum zona, harga mandat (Admin Sales: kecuali pembuka), biaya CPRR
  * tidak dikirim — layar menampilkan gerbang hijau/merah saja.
  */
-export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[]; antre?: BarisAntrean[]; forum_berikut?: string | null; tanpa_angka?: boolean }
+export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[]; antre?: BarisAntrean[]; restu?: BarisAntrean[]; forum_berikut?: string | null; tanpa_angka?: boolean }
 
 export interface Detail {
   rencana: Record<string, unknown> & {
@@ -96,11 +96,20 @@ export interface Detail {
   faskes_saran_master?: { id: string; nama: string; cabang: string | null; skor: number }[];
   /** 312: SPH KSO yang sudah terbit (terbaru dulu). */
   sph?: SphKso[];
+  /** 337: permintaan restu Direktur atas PKS yang menyimpang dari putusan (terbaru dulu). */
+  pengecualian?: PengecualianPks[];
   /** 312: pilihan penanda tangan SPH (akun Direktur) + default — hanya tab Sekretariat / Terbitkan Penawaran. */
   ttd_kandidat?: { userId: string; nama: string; jabatan: string | null }[];
   ttd_default?: string | null;
   /** Respons disaring (lihat DataTab.tanpa_angka). */
   tanpa_angka?: boolean;
+}
+
+/** 337: PKS menyimpang dari putusan yang dimintakan restu Direktur. selisih = kalimat layar (tanpa kode). */
+export interface PengecualianPks {
+  id: number; harga_deal: number; tenor_bulan: number; volume_minimum: number; klausul: string[]; selisih: string; alasan: string;
+  status: "MENUNGGU" | "DISETUJUI" | "DITOLAK" | "DIBATALKAN"; diminta_oleh: string; diminta_at: string;
+  diputus_oleh: string | null; diputus_at: string | null; catatan_direksi: string | null;
 }
 
 /** 312: snapshot SPH KSO (kso.sph). */

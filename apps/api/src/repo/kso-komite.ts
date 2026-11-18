@@ -77,8 +77,9 @@ export function refUntuk(u: PenggunaKso, tab: TabKso): { ok: true; ref: string |
 
 // ---------------------------------------------------------------- siapa boleh melihat margin & HPP (10 Nov 2026)
 
-/** Tab yang pemegangnya memang melihat angka (Komite, Sekretariat, Direksi; KPI = Komite). */
-const TAB_BERANGKA: TabKso[] = ["agenda", "sekretariat", "direksi", "kpi"];
+/** Tab yang pemegangnya memang melihat angka (Komite, Direksi; KPI = Komite). 18 Nov 2026 (user): Sekretariat DIKELUARKAN —
+ *  di produksi tab itu dipegang Admin Sales; margin, target, dan batas bawah hanya untuk Direktur dan Komite. */
+const TAB_BERANGKA: TabKso[] = ["agenda", "direksi", "kpi"];
 
 /** Bahan keputusan "boleh melihat margin/HPP" untuk satu pengguna. */
 export interface KonteksAngka {
@@ -113,9 +114,10 @@ export function bolehLihatAngka(k: KonteksAngka): boolean {
 export function modeSaringTab(tab: TabKso, k: KonteksAngka): ModeSaring | null {
   const peran = TAB_KSO[tab].peran;
   if (peran === "am") return "semua";
-  if (peran === "komite" || peran === "direksi" || peran === "sekretaris") return null;
+  if (peran === "komite" || peran === "direksi") return null;
   if (bolehLihatAngka(k)) return null;
-  return peran === "admin_sales" ? "pembuka" : "semua";
+  // Sekretariat & Admin Sales: harga pembuka (yang dicetak di SPH) tetap ada; target, batas bawah, GPM, capex dibuang
+  return peran === "admin_sales" || peran === "sekretaris" ? "pembuka" : "semua";
 }
 
 /** Bottom Line Alat (biaya, HPP, GPM per model) tertutup untuk AM, HOD Sales, Admin Sales — walau grupnya diberi centang lihat. */
@@ -216,7 +218,7 @@ const ANTREAN: Record<Exclude<TabKso, "kpi">, string[]> = {
 /** Penyaring margin/HPP untuk tab ini (null = tampil apa adanya). Dihitung di luar transaksi peran. */
 async function modeUntuk(u: PenggunaKso, eff: Effective, tab: TabKso): Promise<ModeSaring | null> {
   const peran = TAB_KSO[tab].peran;
-  if (peran === "komite" || peran === "direksi" || peran === "sekretaris") return null;
+  if (peran === "komite" || peran === "direksi") return null;
   return modeSaringTab(tab, await konteksAngka(u, eff));
 }
 
@@ -285,7 +287,18 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
       ? await tx`select min(d.t)::text as tanggal from (select kso.hari_ini() + g as t from generate_series(0, 7) g) d
                   where extract(isodow from d.t) in (2, 4) and not exists (select 1 from kso.forum fo where fo.tanggal = d.t)`
       : [];
-    return saring({ tab, ringkasan, baris, agenda, verifikasi, antre, forum_berikut: fb?.tanggal ?? null });
+    // 337: PKS menyimpang menunggu restu Direktur
+    const restu = tab === "direksi"
+      ? await tx`select 'Direksi · Restu PKS' as antrean, r.id::int as id, v.nomor, v.status::text as status, v.faskes_nama,
+                        v.alat_nama, v.capex::float8 as capex, e.diminta_at as sejak, null::timestamptz as batas, v.am_nama, v.cabang,
+                        v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
+                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota,
+                        (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru
+                   from kso.pengecualian_pks e join kso.rencana_kso r on r.id = e.rencana_id
+                   join kso.v_rencana v on v.id = r.id join kso.faskes f on f.id = r.faskes_id
+                  where e.status = 'MENUNGGU' order by e.diminta_at`
+      : [];
+    return saring({ tab, ringkasan, baris, agenda, verifikasi, antre, restu, forum_berikut: fb?.tanggal ?? null });
   });
 }
 
@@ -345,8 +358,13 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
     const [kd] = await bahanKurang(tx, [id]);
     // 312: SPH KSO yang sudah terbit (snapshot) + Direktur pemutus (default penanda tangan di form penawaran)
     const sph = await daftarSphKso(tx, id);
+    // 337: permintaan restu Direktur atas PKS yang menyimpang dari putusan (terbaru dulu)
+    const pengecualian = (await tx`select id::int, harga_deal::float8 as harga_deal, tenor_bulan, volume_minimum, klausul, selisih, alasan, status,
+                                          diminta_oleh, diminta_at::text, diputus_oleh, diputus_at::text, catatan_direksi
+                                     from kso.pengecualian_pks where rencana_id = ${id} order by diminta_at desc, id desc`)
+      .map((e) => ({ ...e, selisih: terjemahGalatWeb(String(e.selisih)).pesan }));
     const pemutus = TAB_SPH_TTD.includes(tab) ? await pemutusDireksi(tx, id) : null;
-    return { rencana: r, sph, pemutus_direksi: pemutus, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
+    return { rencana: r, sph, pengecualian, pemutus_direksi: pemutus, gerbang, pendukung, klausul, pendapat, mandat: mandat[0] ?? null, usulan, putusan: putusan[0] ?? null, riwayat,
              forum: agendaItem[0] ?? null, klausul_khusus: klausulKhusus, angka_gpm: angkaGpm ?? null,
              lampiran_terakhir: lampiran[0] ?? null, lampiran, kurang: kd ? kurangDari(kd) : [],
              ...(faskesSaranMaster ? { faskes_saran_master: faskesSaranMaster } : {}) };
@@ -458,7 +476,9 @@ export function pathBerkasLampiran(l: { media_path: string | null; berkas_dihapu
 export async function berkasLampiran(userId: string, tab: TabKso, id: number, lampiranId: number): Promise<string> {
   return sebagaiPengguna(userId, tab, "view", async (tx, u, eff) => {
     // PDF Simulator memuat capex, reagen, QC, base cost, CPRR per tes (HPP) → hanya untuk yang berhak melihat angka
-    if (await modeUntuk(u, eff, tab)) throw new GalatKso(403, "Berkas PDF Simulator memuat angka biaya — tidak dibuka untuk tab ini.");
+    // Sekretariat tetap boleh membuka: PDF itu sekaligus bukti volume yang wajib mereka verifikasi (aturan 285)
+    if (TAB_KSO[tab].peran !== "sekretaris" && await modeUntuk(u, eff, tab))
+      throw new GalatKso(403, "Berkas PDF Simulator memuat angka biaya — tidak dibuka untuk tab ini.");
     const [l] = await tx`select id, media_path, berkas_dihapus_at from kso.rencana_lampiran where id = ${lampiranId} and rencana_id = ${id}`;
     return pathBerkasLampiran(l as { media_path: string | null; berkas_dihapus_at: unknown } | undefined);
   });
@@ -502,7 +522,7 @@ export async function riwayatForum(userId: string, tab: TabKso): Promise<Record<
 
 export type AksiKso =
   | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima"
-  | "verifikasi-volume" | "tautkan-faskes" | "loloskan-forum";
+  | "verifikasi-volume" | "tautkan-faskes" | "loloskan-forum" | "minta-pengecualian-pks" | "putus-pengecualian-pks";
 
 /**
  * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
@@ -525,6 +545,9 @@ export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
   "tautkan-faskes": ["sekretariat", "agenda"],
   // 329: putusan Direktur 17 Nov — usulan belum lengkap boleh diloloskan ke agenda forum
   "loloskan-forum": ["agenda", "sekretariat", "direksi"],
+  // 337: PKS menyimpang dari putusan → Sekretariat minta restu, Direktur memutus (PKS langsung tercatat bila disetujui)
+  "minta-pengecualian-pks": ["sekretariat"],
+  "putus-pengecualian-pks": ["direksi"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -583,6 +606,16 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
     case "verifikasi-volume":
       if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
       return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
+    case "minta-pengecualian-pks":
+      if (!angka(b.harga_deal)) return "Harga per test di PKS wajib diisi.";
+      if (!angka(b.tenor_bulan)) return "Tenor di PKS (bulan) wajib diisi.";
+      if (angka(b.volume_minimum) === null) return "Volume minimum di PKS wajib diisi.";
+      if (!Array.isArray(b.klausul)) return "Centang klausul yang ada di naskah PKS.";
+      return teks(b.alasan) && String(b.alasan).length <= 5000 ? null : "Tulis alasan permintaan restu (paling panjang 5.000 huruf).";
+    case "putus-pengecualian-pks":
+      if (!Number.isInteger(b.pengecualian_id)) return "Permintaan restu tidak dikenal.";
+      if (typeof b.setuju !== "boolean") return "Pilih: setujui atau tolak.";
+      return b.setuju || teks(b.catatan) ? null : "Menolak wajib disertai alasan.";
     case "loloskan-forum":
       return b.alasan == null || (typeof b.alasan === "string" && b.alasan.length <= 5000) ? null : "Catatan paling panjang 5.000 huruf.";
     case "tautkan-faskes":
@@ -616,6 +649,11 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
+    [/PKS_SUDAH_COCOK/, 409, "PKS cocok dengan putusan — tidak perlu restu, catat langsung dengan Cocokkan & simpan."],
+    [/BUKAN_TAHAP_PKS/, 409, "Usulan ini tidak sedang di tahap PKS (penawaran terbit)."],
+    [/PENGECUALIAN_SUDAH_DIPUTUS/, 409, "Permintaan restu ini sudah diputus."],
+    [/PENGECUALIAN_TIDAK_ADA/, 404, "Permintaan restu tidak ada."],
+    [/ALASAN_WAJIB/, 400, "Alasan wajib diisi."],
     [/TIDAK_BISA_DILOLOSKAN/, 409, "Hanya draft atau usulan Ditahan yang bisa diloloskan ke agenda forum."],
     [/ALASAN_TERLALU_PANJANG/, 400, "Catatan paling panjang 5.000 huruf."],
     [/HOD_TIDAK_BERWENANG/, 403, "Rencana ini bukan wewenang kursi HOD Anda."],
@@ -707,6 +745,19 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
         case "verifikasi-volume":
           await tx`select kso.app_verifikasi_volume(${id}, ${b.sah === true}, ${teks(b.catatan)})`;
           return { ok: true };
+        case "minta-pengecualian-pks": {
+          const klausul = (b.klausul as unknown[]).map(String).filter((k) => /^[a-z_]{2,40}$/.test(k));
+          const [r] = await tx`select kso.app_minta_pengecualian_pks(${id}, ${angka(b.harga_deal)}, ${angka(b.tenor_bulan)}, ${angka(b.volume_minimum)},
+                               ${klausul}, ${teks(b.alasan)})::int as id`;
+          return { ok: true, pengecualian_id: r.id };
+        }
+        case "putus-pengecualian-pks": {
+          // permintaan harus milik rencana ini (id di URL) — cegah memutus permintaan rencana lain lewat URL rencana yang salah
+          const [e] = await tx`select id from kso.pengecualian_pks where id = ${Number(b.pengecualian_id)} and rencana_id = ${id}`;
+          if (!e) throw new GalatKso(404, "Permintaan restu tidak ada pada usulan ini.");
+          const [r] = await tx`select kso.app_putus_pengecualian_pks(${Number(b.pengecualian_id)}, ${b.setuju === true}, ${teks(b.catatan)}) as hasil`;
+          return { ok: true, hasil: r.hasil };
+        }
         case "loloskan-forum": {
           const [r] = await tx`select kso.app_loloskan_ke_forum(${id}, ${teks(b.alasan)}) as nomor`;
           return { ok: true, nomor: r.nomor };
