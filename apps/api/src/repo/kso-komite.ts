@@ -315,7 +315,8 @@ export async function detailRencana(userId: string, tab: TabKso, id: number): Pr
                                   hari_kerja, coalesce((select p.hari_kerja from public.kso_bottomline_parameter p where p.id = 1), 25)::int as hari_kerja_default,
                                   fee_persen::float8 as fee_persen, klausul_ada, klausul_detail, kompetitor_alat,
                                   (harga_per_test * (1 - coalesce(fee_persen, 0) / 100))::float8 as harga_bersih,
-                                  diloloskan_at::text as diloloskan_at, diloloskan_alasan
+                                  diloloskan_at::text as diloloskan_at, diloloskan_alasan,
+                                  opini_komite, opini_komite_oleh, opini_komite_at::text as opini_komite_at
                              from kso.rencana_kso where id = ${id}`;
     Object.assign(r, pks ?? {});
     // 303: faskes baru (calon customer) — penanda + kota; Sekretariat/Komite mendapat saran akun master untuk ditautkan
@@ -522,7 +523,7 @@ export async function riwayatForum(userId: string, tab: TabKso): Promise<Record<
 
 export type AksiKso =
   | "putus-hod" | "pendapat-hod" | "usulkan" | "tarik" | "putus-direksi" | "pks" | "penawaran" | "kalah" | "serah-terima"
-  | "verifikasi-volume" | "tautkan-faskes" | "loloskan-forum" | "minta-pengecualian-pks" | "putus-pengecualian-pks";
+  | "verifikasi-volume" | "tautkan-faskes" | "loloskan-forum" | "minta-pengecualian-pks" | "putus-pengecualian-pks" | "opini-komite";
 
 /**
  * Aksi → tab yang berwenang, urut prioritas. Satu aksi bisa dari lebih dari satu tab (penawaran &
@@ -548,6 +549,8 @@ export const AKSI_TAB: Record<AksiKso, TabKso[]> = {
   // 337: PKS menyimpang dari putusan → Sekretariat minta restu, Direktur memutus (PKS langsung tercatat bila disetujui)
   "minta-pengecualian-pks": ["sekretariat"],
   "putus-pengecualian-pks": ["direksi"],
+  // 338: opini Komite untuk usulan Zona Direktur (bahan putusan Direktur)
+  "opini-komite": ["agenda"],
 };
 export function isAksiKso(a: string): a is AksiKso {
   return a in AKSI_TAB;
@@ -606,6 +609,8 @@ export function validasiAksi(aksi: AksiKso, b: Record<string, unknown>): string 
     case "verifikasi-volume":
       if (typeof b.sah !== "boolean") return "Pilih: bukti sah atau ditolak.";
       return b.sah || teks(b.catatan) ? null : "Bukti ditolak wajib disertai alasan.";
+    case "opini-komite":
+      return typeof b.opini === "string" && b.opini.length <= 20000 ? null : "Opini paling panjang 20.000 huruf.";
     case "minta-pengecualian-pks":
       if (!angka(b.harga_deal)) return "Harga per test di PKS wajib diisi.";
       if (!angka(b.tenor_bulan)) return "Tenor di PKS (bulan) wajib diisi.";
@@ -649,6 +654,9 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
+    [/OPINI_HANYA_ZONA_DIREKTUR/, 409, "Opini Komite hanya untuk usulan Zona Direktur."],
+    [/OPINI_TERKUNCI/, 409, "Direksi sudah memutus — opini Komite tidak bisa diubah lagi."],
+    [/OPINI_TERLALU_PANJANG/, 400, "Opini paling panjang 20.000 huruf."],
     [/PKS_SUDAH_COCOK/, 409, "PKS cocok dengan putusan — tidak perlu restu, catat langsung dengan Cocokkan & simpan."],
     [/BUKAN_TAHAP_PKS/, 409, "Usulan ini tidak sedang di tahap PKS (penawaran terbit)."],
     [/PENGECUALIAN_SUDAH_DIPUTUS/, 409, "Permintaan restu ini sudah diputus."],
@@ -745,6 +753,10 @@ export async function jalankanAksi(userId: string, id: number, aksi: AksiKso, b:
         case "verifikasi-volume":
           await tx`select kso.app_verifikasi_volume(${id}, ${b.sah === true}, ${teks(b.catatan)})`;
           return { ok: true };
+        case "opini-komite": {
+          await tx`select kso.app_isi_opini_komite(${id}, ${String(b.opini)})`;
+          return { ok: true };
+        }
         case "minta-pengecualian-pks": {
           const klausul = (b.klausul as unknown[]).map(String).filter((k) => /^[a-z_]{2,40}$/.test(k));
           const [r] = await tx`select kso.app_minta_pengecualian_pks(${id}, ${angka(b.harga_deal)}, ${angka(b.tenor_bulan)}, ${angka(b.volume_minimum)},

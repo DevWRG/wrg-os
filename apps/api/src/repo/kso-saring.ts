@@ -57,7 +57,9 @@ export function nilaiGerbangAman(no: number, status: string, nilai: string | nul
 export type ModeSaring = "semua" | "pembuka";
 
 /** Kolom rencana / baris daftar yang memuat margin atau HPP. capex = harga PO alat × jumlah (HPP alat). */
-const KOLOM_RENCANA = ["capex", "payback_bulan", "biaya_instalasi", "gpm_deal", "zona_dasar", "harga_bersih", "harga_standar"] as const;
+// 338: opini Komite memuat NPV, IRR, arus kas → ikut dibuang
+const KOLOM_RENCANA = ["capex", "payback_bulan", "biaya_instalasi", "gpm_deal", "zona_dasar", "harga_bersih", "harga_standar",
+  "opini_komite", "opini_komite_oleh", "opini_komite_at"] as const;
 /** Kolom mandat yang berupa harga/biaya. harga_pembuka hanya disisakan untuk mode "pembuka". */
 const HARGA_MANDAT = ["harga_lantai", "harga_target", "harga_pembuka", "capex_maks"] as const;
 /** Isian OCR PDF Simulator yang berupa biaya (CPRR & pecahannya, markup, capex). */
