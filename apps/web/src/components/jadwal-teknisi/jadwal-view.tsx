@@ -21,8 +21,16 @@ export interface DataJadwal {
   bulan: string; status: "draft" | "terbit" | null; disusun_at: string | null; terbit_at: string | null; terbit_oleh: string | null;
   hari_kerja: string[]; kalender_libur_ada: boolean; baris: Baris[]; teknisi: Teknisi[];
 }
-interface Pratinjau { populasi: number; jatuh_tempo: number; hari_kerja: number; melebihi: number; per_wilayah: { wilayah: string; faskes: number }[]; per_teknisi: { teknisi: string; kunjungan: number; hari: number }[] }
+interface Pratinjau { populasi: number; jatuh_tempo: number; alat_jatuh_tempo?: number; alat_total?: number; hari_kerja: number; melebihi: number; per_wilayah: { wilayah: string; faskes: number }[]; per_teknisi: { teknisi: string; kunjungan: number; hari: number }[] }
 interface Wilayah { wilayah: string; faskes: number; alat: number; teknisi_id: string | null }
+interface IntervalTipe { tipe: string; kategori: string | null; kunci: string; alat: number; per_test: number; interval_bulan: number | null }
+interface IntervalAlat {
+  id: number; sn: string | null; nama: string | null; tipe: string | null; kategori: string | null; skema: string | null; faskes: string; account_id: number; wilayah: string;
+  interval: number; interval_alat: number | null; sumber_interval: "alat" | "faskes" | "tipe" | "default";
+  pm_terakhir: string | null; pm_berikutnya: string | null; jatuh_tempo_bulan_depan: boolean;
+}
+interface DataInterval { bulan_depan: string; tipe: IntervalTipe[]; alat: IntervalAlat[] }
+const SUMBER_IV: Record<IntervalAlat["sumber_interval"], string> = { alat: "khusus alat", faskes: "frekuensi faskes", tipe: "tipe alat", default: "default skema" };
 interface Frekuensi { account_id: string; nama: string; wilayah: string; skema: string[]; alat: number; interval_default: number; interval_bulan: number | null; terakhir: string | null }
 
 const BLN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
@@ -46,7 +54,9 @@ async function api<T>(url: string, method = "GET", body?: unknown): Promise<T> {
 }
 
 export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null; bisaUbah: boolean }) {
-  const [tab, setTab] = useState<"jadwal" | "wilayah" | "frekuensi">("jadwal");
+  const [tab, setTab] = useState<"jadwal" | "interval" | "wilayah" | "frekuensi">("jadwal");
+  const [iv, setIv] = useState<DataInterval | null>(null);
+  const [fJatuh, setFJatuh] = useState("");
   const [data, setData] = useState<DataJadwal | null>(awal);
   const [prev, setPrev] = useState<Pratinjau | null>(null);
   const [wil, setWil] = useState<{ wilayah: Wilayah[]; teknisi: Teknisi[] } | null>(null);
@@ -67,6 +77,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
   const bukaTab = async (t: typeof tab) => {
     setTab(t);
     if (t === "wilayah" && !wil) await jalan(async () => setWil(await api(`/api/jadwal-teknisi/wilayah`)));
+    if (t === "interval" && !iv) await jalan(async () => setIv(await api<DataInterval>(`/api/jadwal-teknisi/interval`)));
     if (t === "frekuensi" && !frek) await jalan(async () => setFrek((await api<{ faskes: Frekuensi[] }>(`/api/jadwal-teknisi/frekuensi`)).faskes));
   };
 
@@ -103,7 +114,11 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
         <div className="text-muted-foreground text-xs">{[b.wilayah, `${b.alat.length} alat`, b.sumber === "manual" ? "diubah manual" : null].filter(Boolean).join(" · ")}</div>
         {b.catatan && <div className="text-xs text-amber-700 dark:text-amber-400">{b.catatan}</div>}
       </div>) },
-    { id: "alat", header: "Alat", cell: (b) => <div className="text-muted-foreground max-w-56 text-xs">{b.alat.slice(0, 3).map((a) => a.nama).join(", ")}{b.alat.length > 3 ? ` +${b.alat.length - 3}` : ""}</div> },
+    // Alat yang jatuh tempo PM di kunjungan ini, per alat dengan SN (18 Nov 2026).
+    { id: "alat", header: "Alat jatuh tempo", accessor: (b) => b.alat.map((a) => `${a.nama} ${a.sn}`).join(" "), cell: (b) => (
+      <ul className="text-muted-foreground max-w-72 space-y-0.5 text-xs">
+        {b.alat.map((a, i) => <li key={`${a.sn}-${i}`}>{a.nama}{a.sn ? <span className="font-mono"> · {a.sn}</span> : null}</li>)}
+      </ul>) },
     { id: "teknisi", header: "Teknisi", sortable: true, accessor: (b) => b.teknisi ?? "", cell: (b) => bisaUbah && b.status !== "selesai"
       ? <select className={cn(SEL, !b.teknisi_id && "border-amber-500")} value={b.teknisi_id ?? ""} disabled={sibuk} onChange={(e) => void ubah(b, { teknisi_id: e.target.value || null })}>
           <option value="">— pilih teknisi —</option>
@@ -137,6 +152,47 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
         </select>
       : <span>{w.teknisi_id ? tekNama.get(w.teknisi_id) ?? w.teknisi_id : "—"}</span> },
   ];
+  // ── Interval PM (334): per tipe alat + per alat ──
+  const pilihInterval = (nilai: number | null, dflt: string, onUbah: (v: number | null) => void) => (
+    <select className={SEL} value={nilai ?? ""} disabled={sibuk} onChange={(e) => onUbah(e.target.value ? Number(e.target.value) : null)}>
+      <option value="">{dflt}</option>
+      {[1, 2, 3, 4, 6, 12].map((n) => <option key={n} value={n}>Tiap {n} bulan</option>)}
+    </select>);
+  const muatIv = async () => setIv(await api<DataInterval>(`/api/jadwal-teknisi/interval`));
+  const kolomTipe: DataColumn<IntervalTipe>[] = [
+    // 335: per MODEL alat (Clover A1c, Zybio Z52, …); kategori (POCT Clover, Hematology 5Diff, …) hanya keterangan.
+    { id: "t", header: "Tipe alat", sortable: true, accessor: (t) => `${t.tipe} ${t.kategori ?? ""}`, cell: (t) => (
+      <div><div className="font-medium">{t.tipe}</div>{t.kategori && t.kategori !== t.tipe && <div className="text-muted-foreground text-xs">{t.kategori}</div>}</div>) },
+    { id: "n", header: "Alat", align: "right", sortable: true, accessor: (t) => t.alat, searchable: false, cell: (t) => <span className="tabular-nums">{t.alat}</span> },
+    { id: "i", header: "Interval PM", sortable: true, accessor: (t) => t.interval_bulan ?? 0, searchable: false, cell: (t) => bisaUbah
+      ? pilihInterval(t.interval_bulan, "Default skema (per tes 2 bln, lainnya 3 bln)", async (v) => {
+          const r = await jalan(() => api(`/api/jadwal-teknisi/interval-tipe`, "PUT", { type_alat: t.kunci, interval_bulan: v }), () => `Interval ${t.tipe} disimpan`);
+          if (r) await jalan(muatIv); })
+      : <span>{t.interval_bulan ? `Tiap ${t.interval_bulan} bulan` : "Default skema"}</span> },
+  ];
+  const kolomAlatPm: DataColumn<IntervalAlat>[] = [
+    { id: "a", header: "Alat", sortable: true, accessor: (a) => `${a.nama ?? ""} ${a.sn ?? ""} ${a.kategori ?? ""}`, cell: (a) => (
+      <div><div className="font-medium">{a.nama ?? "—"}</div><div className="text-muted-foreground text-xs"><span className="font-mono">{a.sn ?? "tanpa SN"}</span>{a.kategori ? ` · ${a.kategori}` : ""}</div></div>) },
+    { id: "f", header: "Faskes", sortable: true, accessor: (a) => a.faskes, cell: (a) => (
+      <div><Link href={`/accounts/${a.account_id}`} className="hover:underline">{a.faskes}</Link><div className="text-muted-foreground text-xs">{a.wilayah}</div></div>) },
+    { id: "pt", header: "PM terakhir", sortable: true, accessor: (a) => a.pm_terakhir ?? "", searchable: false,
+      cell: (a) => <span className="tabular-nums">{a.pm_terakhir ? lblBulan(a.pm_terakhir) : <span className="text-muted-foreground">belum ada riwayat</span>}</span> },
+    { id: "pb", header: "PM berikutnya", sortable: true, accessor: (a) => a.pm_berikutnya ?? "", searchable: false, cell: (a) => (
+      <span className={cn("tabular-nums", a.jatuh_tempo_bulan_depan && "font-semibold text-amber-700 dark:text-amber-400")}>
+        {a.pm_berikutnya ? lblBulan(a.pm_berikutnya) : "disebar otomatis"}{a.jatuh_tempo_bulan_depan ? " · masuk jadwal bulan depan" : ""}
+      </span>) },
+    { id: "i", header: "Interval", sortable: true, accessor: (a) => a.interval, searchable: false, cell: (a) => (
+      <div className="space-y-0.5">
+        {bisaUbah
+          ? pilihInterval(a.interval_alat, `Ikut ${SUMBER_IV[a.sumber_interval === "alat" ? "tipe" : a.sumber_interval]}`, async (v) => {
+              const r = await jalan(() => api(`/api/jadwal-teknisi/interval-alat`, "PUT", { kso_asset_id: a.id, interval_bulan: v }), () => `Interval ${a.sn ?? a.nama} disimpan`);
+              if (r) await jalan(muatIv); })
+          : null}
+        <div className="text-muted-foreground text-xs">Tiap {a.interval} bulan · {SUMBER_IV[a.sumber_interval]}</div>
+      </div>) },
+  ];
+  const alatIv = (iv?.alat ?? []).filter((a) => !fJatuh || (fJatuh === "ya" ? a.jatuh_tempo_bulan_depan : fJatuh === "baru" ? !a.pm_terakhir : !a.jatuh_tempo_bulan_depan));
+
   const kolomFrek: DataColumn<Frekuensi>[] = [
     { id: "n", header: "Faskes", sortable: true, accessor: (f) => f.nama, cell: (f) => (
       <div><Link href={`/accounts/${f.account_id}`} className="font-medium hover:underline">{f.nama}</Link><div className="text-muted-foreground text-xs">{f.wilayah} · {f.alat} alat · {f.skema.join(", ")}</div></div>) },
@@ -157,7 +213,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       <Card className="py-0">
         <CardContent className="flex flex-wrap items-center gap-2 px-3 py-2.5">
           <div className="inline-flex rounded-md border p-0.5" role="tablist" aria-label="Bagian jadwal teknisi">
-            {([["jadwal", "Jadwal bulanan"], ["wilayah", "Wilayah teknisi"], ["frekuensi", "Frekuensi per faskes"]] as const).map(([k, l]) => (
+            {([["jadwal", "Jadwal bulanan"], ["interval", "Interval PM per alat"], ["wilayah", "Wilayah teknisi"], ["frekuensi", "Frekuensi per faskes"]] as const).map(([k, l]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => void bukaTab(k)}
                 className={cn("rounded px-3 py-1.5 text-sm font-medium transition-colors", tab === k ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent")}>{l}</button>
             ))}
@@ -203,7 +259,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
           {!data.kalender_libur_ada && <p className="text-xs text-amber-700 dark:text-amber-400">Kalender libur tahun {bulan.slice(0, 4)} belum diisi (menu Holidays) — hari libur nasional belum dilewati.</p>}
           {prev && (
             <Card><CardContent className="space-y-1 py-3 text-sm">
-              <div><b>Pratinjau {lblBulan(bulan)}:</b> {prev.jatuh_tempo} dari {prev.populasi} faskes KSO jatuh tempo, {prev.hari_kerja} hari kerja{prev.melebihi ? ` · ${prev.melebihi} melebihi hari kerja` : ""}.</div>
+              <div><b>Pratinjau {lblBulan(bulan)}:</b> {prev.jatuh_tempo} dari {prev.populasi} faskes KSO dikunjungi{prev.alat_jatuh_tempo != null ? ` (${prev.alat_jatuh_tempo} dari ${prev.alat_total} alat jatuh tempo PM)` : ""}, {prev.hari_kerja} hari kerja{prev.melebihi ? ` · ${prev.melebihi} melebihi hari kerja` : ""}.</div>
               <div className="text-muted-foreground text-xs">Per teknisi: {prev.per_teknisi.map((t) => `${t.teknisi} ${t.kunjungan} faskes/${t.hari} hari`).join(" · ") || "—"}</div>
               <div className="text-muted-foreground text-xs">Per wilayah: {prev.per_wilayah.map((w) => `${w.wilayah} ${w.faskes}`).join(" · ")}</div>
             </CardContent></Card>
@@ -223,7 +279,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
           <Card>
             <CardContent className="space-y-2 pt-6">
               <p className="text-muted-foreground text-xs">
-                Faskes dengan alat KSO operasional, jatuh tempo menurut frekuensinya (default: ada alat per tes → tiap 2 bulan, beli reagen → tiap 3 bulan). Satu wilayah = satu trip, maksimal 3 faskes per hari.
+                PM dihitung per alat: PM terakhir alat itu (Riwayat Alat) + interval alat (tab Interval PM per alat). Alat satu faskes yang jatuh tempo di bulan yang sama digabung satu kunjungan; kolom Alat jatuh tempo hanya memuat alat itu. Satu wilayah = satu trip, maksimal 3 faskes per hari.
                 {" Terbitkan = status jadi Terbit (tak bisa disusun ulang, edit per baris), jadwal dikirim ke WA tiap teknisi bila saklar WA aktif, dan teknisi bisa melihatnya lewat #JADWAL."}
                 {data.status === "terbit" ? ` Terbit ${data.terbit_at ? new Date(data.terbit_at).toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : ""}${data.terbit_oleh ? ` oleh ${data.terbit_oleh}` : ""} — perubahan sesudah terbit tidak dikirim ulang otomatis; teknisi bisa cek lewat #JADWAL.` : " Draft bisa diedit; terbitkan sebelum tanggal 1."}
               </p>
@@ -238,6 +294,20 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
         </>
       )}
 
+      {tab === "interval" && iv && (
+        <>
+          <Card><CardContent className="space-y-2 pt-6">
+            <p className="text-muted-foreground text-xs">Interval PM per <b>tipe alat</b> (model, mis. Clover A1c, Zybio Z52; kategorinya di bawah nama) — berlaku untuk semua alat tipe itu kecuali yang diatur khusus di bawah. Kosongkan untuk default skema (alat per tes tiap 2 bulan, lainnya tiap 3 bulan). Berlaku untuk penyusunan jadwal berikutnya.</p>
+            <DataTable columns={kolomTipe} data={iv.tipe} getKey={(t) => t.kunci} searchPlaceholder="Cari tipe / kategori alat…" empty="Tidak ada tipe alat." />
+          </CardContent></Card>
+          <Card><CardContent className="space-y-2 pt-6">
+            <p className="text-muted-foreground text-xs">Per alat KSO operasional: PM terakhir (dari Riwayat Alat — #REPORT, Google Form lama, jadwal rutin) + interval = PM berikutnya. Interval khusus alat menimpa frekuensi faskes dan tipe alat. Alat tanpa riwayat disebar otomatis per faskes.</p>
+            <DataTable columns={kolomAlatPm} data={alatIv} getKey={(a) => String(a.id)} searchPlaceholder="Cari SN / alat / kategori / faskes…" empty="Tidak ada alat."
+              toolbar={<FilterSelect label="PM" value={fJatuh} onChange={setFJatuh}
+                options={[{ value: "ya", label: `Jatuh tempo ${lblBulan(iv.bulan_depan)}` }, { value: "tidak", label: "Belum jatuh tempo" }, { value: "baru", label: "Belum ada riwayat PM" }]} />} />
+          </CardContent></Card>
+        </>
+      )}
       {tab === "wilayah" && wil && (
         <Card><CardContent className="space-y-2 pt-6">
           <p className="text-muted-foreground text-xs">Wilayah = area faskes. Tiap wilayah dipegang satu teknisi; faskes di wilayah tanpa teknisi tetap disusun tapi jadwal belum bisa diterbitkan sebelum teknisinya ditetapkan.</p>
@@ -246,7 +316,7 @@ export function JadwalTeknisiView({ awal, bisaUbah }: { awal: DataJadwal | null;
       )}
       {tab === "frekuensi" && frek && (
         <Card><CardContent className="space-y-2 pt-6">
-          <p className="text-muted-foreground text-xs">Seberapa sering tiap faskes dikunjungi rutin. Kosongkan untuk memakai default (alat per tes → tiap 2 bulan, beli reagen → tiap 3 bulan). Berlaku untuk penyusunan berikutnya.</p>
+          <p className="text-muted-foreground text-xs">Interval untuk SEMUA alat di satu faskes — menimpa interval tipe alat, tapi kalah oleh interval khusus alat (tab Interval PM per alat). Kosongkan untuk mengikuti interval tipe alat. Berlaku untuk penyusunan berikutnya.</p>
           <DataTable columns={kolomFrek} data={frek} getKey={(f) => f.account_id} searchPlaceholder="Cari faskes…" empty="Tidak ada faskes KSO." />
         </CardContent></Card>
       )}
