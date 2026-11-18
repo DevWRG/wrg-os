@@ -110,6 +110,9 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
                   <Agenda baris={d.agenda ?? []} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Diagendakan — rumuskan usulan ke Direksi" nada="sky"
                     baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Agenda Forum")} onBuka={setBuka} pilih={buka} />
+                  <Bagian judul="Antre forum berikutnya"
+                    catatan={`Masuk Agenda A otomatis pukul 14.00${d.forum_berikut ? ` ${hariTanggal(d.forum_berikut)}` : " hari forum"} — paling banyak 3 usulan; yang diloloskan didahulukan. Bukti volume yang belum diperiksa Sekretariat menunggu verifikasi dulu.`}
+                    nada="sky" baris={d.antre ?? []} onBuka={setBuka} pilih={buka} />
                   <Bagian judul="Mandat kedaluwarsa — tarik kembali ke forum" nada="amber"
                     baris={(d.baris ?? []).filter((b) => b.antrean === "Komite · Mandat Kedaluwarsa")} onBuka={setBuka} pilih={buka} />
                 </>
@@ -254,10 +257,12 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
                     </span>
                   )}
                 </div>
-                {(b.batas || b.volume_terverifikasi === true) && (
+                {(b.batas || b.volume_terverifikasi === true || b.diloloskan || b.tunggu_verifikasi) && (
                   <div className="mt-1.5 flex flex-wrap gap-x-3 text-xs">
                     {b.batas && <span className="font-medium text-amber-700 dark:text-amber-400">Batas {waktu(b.batas)}</span>}
                     {b.volume_terverifikasi === true && <span className="text-emerald-700 dark:text-emerald-400">Volume terverifikasi</span>}
+                    {b.diloloskan && <span className="font-medium text-sky-700 dark:text-sky-400">Diloloskan ke forum — didahulukan</span>}
+                    {b.tunggu_verifikasi && <span className="font-medium text-amber-700 dark:text-amber-400">Menunggu verifikasi bukti volume</span>}
                   </div>
                 )}
               </button>
@@ -267,6 +272,11 @@ function Bagian({ judul, catatan, baris, onBuka, pilih }: {
       )}
     </section>
   );
+}
+
+/** "2026-11-19" → "Kamis 19 Nov" (tanggal forum, tanpa geser zona waktu). */
+function hariTanggal(t: string): string {
+  return new Date(`${t}T12:00:00+07:00`).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "short", timeZone: "Asia/Jakarta" });
 }
 
 function Agenda({ baris, onBuka }: { baris: BarisAgenda[]; onBuka: (id: number) => void; pilih?: number | null }) {

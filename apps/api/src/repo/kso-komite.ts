@@ -261,7 +261,31 @@ export async function daftarTab(userId: string, tab: TabKso): Promise<Record<str
                     and r.status in ('DIAJUKAN','JALUR_FORUM','DIAGENDAKAN')
                   order by r.diajukan_at`
       : [];
-    return saring({ tab, ringkasan, baris, agenda, verifikasi });
+    // 18 Nov 2026 (laporan user: usulan yang diloloskan "tidak muncul di forum"): usulan JALUR_FORUM baru masuk Agenda A
+    // saat agenda disusun (14.00 hari forum). Sebelum itu ia tampil di "Antre forum berikutnya", urut sama dengan
+    // kso.susun_agenda (diloloskan, pernah ditahan, capex, waktu diajukan). tunggu_verifikasi = tertahan aturan 285.
+    const antre = tab === "agenda"
+      ? await tx`select 'Komite · Antre Forum' as antrean, r.id::int as id, v.nomor, v.status::text as status, v.faskes_nama,
+                        v.alat_nama, v.capex::float8 as capex, r.diajukan_at as sejak, null::timestamptz as batas, v.am_nama, v.cabang,
+                        v.jalur::text as jalur, v.pola_gerbang, v.gerbang_merah, v.volume_sumber,
+                        r.zona, r.gpm_deal::float8 as gpm_deal, r.volume_terverifikasi, f.baru as faskes_baru, f.kota as faskes_kota,
+                        (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru,
+                        r.diloloskan_at is not null as diloloskan,
+                        (r.diloloskan_at is null and r.zona in ('forum','direktur') and r.volume_sumber_label = 'data'
+                         and r.volume_terverifikasi is null) as tunggu_verifikasi
+                   from kso.rencana_kso r join kso.v_rencana v on v.id = r.id join kso.faskes f on f.id = r.faskes_id
+                  where r.status = 'JALUR_FORUM'
+                  order by (r.diloloskan_at is not null) desc,
+                           exists (select 1 from kso.riwayat_status s where s.rencana_id = r.id and s.dari = 'DITAHAN') desc,
+                           (select a.harga_po * r.jumlah + coalesce(r.biaya_instalasi, 0) from kso.alat a where a.kode = r.alat_kode) desc nulls last,
+                           r.diajukan_at asc`
+      : [];
+    // forum berikutnya = Selasa/Kamis terdekat (mulai hari ini) yang agendanya belum terbit
+    const [fb] = tab === "agenda"
+      ? await tx`select min(d.t)::text as tanggal from (select kso.hari_ini() + g as t from generate_series(0, 7) g) d
+                  where extract(isodow from d.t) in (2, 4) and not exists (select 1 from kso.forum fo where fo.tanggal = d.t)`
+      : [];
+    return saring({ tab, ringkasan, baris, agenda, verifikasi, antre, forum_berikut: fb?.tanggal ?? null });
   });
 }
 

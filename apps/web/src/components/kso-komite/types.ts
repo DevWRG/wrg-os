@@ -18,6 +18,8 @@ export interface BarisAntrean {
   zona?: Zona | null; gpm_deal?: number | null; volume_terverifikasi?: boolean | null;
   /** 303: faskes baru (calon customer) + kotanya. */
   faskes_baru?: boolean; faskes_kota?: string | null; alat_baru?: boolean;
+  /** Antre forum berikutnya (18 Nov 2026): diloloskan ke forum (329) / tertahan verifikasi bukti volume (285). */
+  diloloskan?: boolean; tunggu_verifikasi?: boolean;
 }
 
 export type Zona = "am" | "hod" | "forum" | "direktur";
@@ -51,7 +53,7 @@ export type BarisKpi = Record<string, string | number | null> & { am_id: string;
  * Teknik. Kolom capex, GPM, harga bersih, harga minimum zona, harga mandat (Admin Sales: kecuali pembuka), biaya CPRR
  * tidak dikirim — layar menampilkan gerbang hijau/merah saja.
  */
-export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[]; tanpa_angka?: boolean }
+export interface DataTab { tab: TabKso; ringkasan: Ringkasan; baris?: BarisAntrean[]; agenda?: BarisAgenda[]; kpi?: BarisKpi[]; verifikasi?: BarisAntrean[]; antre?: BarisAntrean[]; forum_berikut?: string | null; tanpa_angka?: boolean }
 
 export interface Detail {
   rencana: Record<string, unknown> & {
