@@ -12,6 +12,11 @@ import { accountIdDariTulisan } from "./akun-faskes.js";
 import { normSn } from "./asetTetapRekon.js";
 import { computeIsLate } from "./todo.js";
 import { terapkanEfek } from "./teknisi-efek.js";
+import { KANTOR_RE } from "../parsers/teknisi.js";
+
+// Nomor item "di luar plan" mulai 51 — SAMA dengan URUT_DI_LUAR_PLAN di teknisi-start.ts (tak diimpor: modul itu
+// mengimpor modul ini).
+const URUT_DI_LUAR_PLAN = 51;
 import type {
   JenisTeknisi, StatusTeknisi, TeknisiPlanItem, TeknisiReportParse,
 } from "../parsers/teknisi.js";
@@ -222,6 +227,8 @@ export interface AlatTerlapor {
   tanpaStart: boolean;
   /** Item plan ini SUDAH di-#REPORT sebelumnya (laporan dobel/susulan) — diterima, ditandai. */
   sudahDilaporkan: { planNo: number; jam: string } | null;
+  /** Kegiatan di kantor (18 Nov 2026). */
+  kantor: boolean;
 }
 
 /** Foto dari pengirim yang sama dalam jendela ini sebelum #REPORT ikut jadi foto kunjungan. */
@@ -237,7 +244,9 @@ export async function simpanReportTeknisi(input: {
   /** Untuk menjodohkan foto yang dikirim SEBELUM teks report (WA mengirimnya terpisah). */
   pengirim?: { groupJid: string; senderName: string | null } | null;
 }): Promise<{
-  duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number; lokasi: "ada" | "tanpa-geotag" | "tanpa-foto";
+  duplikat: boolean; faskes: string | null; alat: AlatTerlapor[]; foto: number;
+  /** null = semua kegiatan di kantor (bukti lokasi tak diminta). */
+  lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" | null;
   /** Satu #REPORT bisa memuat >1 faskes → satu kunjungan per faskes (keputusan user 16 Nov 2026). */
   kelompok: { faskes: string | null; nomor: number[] }[];
 }> {
@@ -255,25 +264,30 @@ export async function simpanReportTeknisi(input: {
     WHERE p.teknisi_id = ${input.teknisiId} AND p.tanggal = ${input.tanggal}`;
   const planPerUrut = new Map(plan.map((p) => [Number(p.urut), p]));
 
-  let acc = parse.faskes ? await accountIdDariTulisan(parse.faskes) : null;
+  // `RS: Kantor …` = kegiatan kantor (18 Nov 2026) — bukan faskes, jangan dicari di Accurate.
+  const rsKantor = !!parse.faskes && KANTOR_RE.test(parse.faskes.trim());
+  let acc = parse.faskes && !rsKantor ? await accountIdDariTulisan(parse.faskes) : null;
   let faskesLabel = parse.faskes;
-  const masalahFaskes = parse.faskes && !acc ? `faskes "${parse.faskes}" tak dikenali` : null;
+  const masalahFaskes = parse.faskes && !rsKantor && !acc ? `faskes "${parse.faskes}" tak dikenali` : null;
 
   const baris: {
     b: TeknisiReportParse["blok"][number]; planId: number | null; assetId: number | null; unitId: string | null;
     label: string | null; snTampil: string | null; jenis: JenisTeknisi | null; masalah: string | null;
     /** Faskes blok: judul blok > item plan tertaut > alat > `RS:` kunjungan. */
     akun: number | null; faskesBlok: string | null;
+    /** Kegiatan kantor: tanpa faskes/plan/efek, tak butuh #START & foto geotag. */
+    kantor: boolean;
   }[] = [];
   for (const b of parse.blok) {
     const masalah: string[] = [];
     // Faskes di judul blok (format #PLAN "RS A | SN | jenis") didahulukan dari `RS:` kunjungan.
-    const accJudul = b.faskes ? await accountIdDariTulisan(b.faskes) : null;
+    const kantor = !!b.kantor;
+    const accJudul = b.faskes && !kantor ? await accountIdDariTulisan(b.faskes) : null;
     let p = b.planNo != null ? planPerUrut.get(b.planNo) : undefined;
     if (b.planNo != null && !p) masalah.push(`plan #${b.planNo} tanggal ini tak ada`);
     // Judul blok HANYA nama faskes ("1. RSUD Trenggalek", 18 Nov 2026): nomor blok = nomor plan bila item itu
     // memang di faskes tersebut; selain itu satu-satunya item plan (belum dilaporkan) di faskes itu hari ini.
-    if (!p && b.planNo == null && !b.sn && !b.alat && b.faskes) {
+    if (!kantor && !p && b.planNo == null && !b.sn && !b.alat && b.faskes) {
       const k = (t: unknown) => String(t ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
       const diFaskes = plan.filter((x) =>
         accJudul ? Number(x.account_id) === accJudul : k(x.faskes_teks) === k(b.faskes));
@@ -291,8 +305,8 @@ export async function simpanReportTeknisi(input: {
     let label: string | null = p ? (p.asset_nama ?? p.alat_teks ?? p.sn_teks ?? null) : null;
     let snTampil: string | null = p ? (p.asset_sn ?? p.sn_teks ?? null) : null;
     let planId: number | null = p ? Number(p.id) : null;
-    if (b.faskes && !accJudul) masalah.push(`faskes "${b.faskes}" tak dikenali`);
-    const accBlok = accJudul ?? acc ?? (p?.account_id != null ? Number(p.account_id) : null);
+    if (b.faskes && !kantor && !accJudul) masalah.push(`faskes "${b.faskes}" tak dikenali`);
+    const accBlok = kantor ? null : accJudul ?? acc ?? (p?.account_id != null ? Number(p.account_id) : null);
     if (!faskesLabel && b.faskes) faskesLabel = b.faskes;
     if (!faskesLabel && p) faskesLabel = String(p.faskes_teks);
 
@@ -309,18 +323,19 @@ export async function simpanReportTeknisi(input: {
       } else {
         assetId = a.kso_asset_id ?? assetId;
         unitId = a.installation_unit_id ?? unitId;
-        if (!acc && a.account_id) acc = a.account_id;
-        if (a.account_id) akunAlat = a.account_id;
+        // Alat yang dikerjakan di kantor tetap tercatat di kantor, bukan di faskes tempat alat terpasang.
+        if (!kantor && !acc && a.account_id) acc = a.account_id;
+        if (!kantor && a.account_id) akunAlat = a.account_id;
       }
       label = a.label ?? label ?? b.alat;
       snTampil = a.sn ?? b.sn ?? snTampil;
     } else if (p && !assetId && !unitId && p.catatan_cocok) {
       masalah.push("alat di plan belum dikenali");
     }
-    if (masalahFaskes && !p) masalah.push(masalahFaskes);
+    if (masalahFaskes && !p && !kantor) masalah.push(masalahFaskes);
 
     // Laporan tanpa nomor plan tapi alatnya ada di plan hari ini → tautkan otomatis.
-    if (!planId && !p && (assetId || unitId)) {
+    if (!kantor && !planId && !p && (assetId || unitId)) {
       const cocokPlan = plan.filter((x) =>
         (assetId && Number(x.kso_asset_id) === assetId) || (unitId && x.installation_unit_id === unitId));
       if (cocokPlan.length === 1) planId = Number(cocokPlan[0].id);
@@ -329,8 +344,9 @@ export async function simpanReportTeknisi(input: {
     const akunPlan = planTaut?.account_id != null ? Number(planTaut.account_id) : null;
     baris.push({
       b, planId, assetId, unitId, label, snTampil,
-      akun: accJudul ?? akunPlan ?? akunAlat ?? acc,
+      akun: kantor ? null : accJudul ?? akunPlan ?? akunAlat ?? acc,
       faskesBlok: b.faskes ?? (planTaut ? String(planTaut.faskes_teks) : null) ?? parse.faskes ?? null,
+      kantor,
       // Jenis: tulisan blok > plan via nomor > plan yang tertaut otomatis lewat SN/alat.
       jenis: (b.jenis ?? (p?.jenis as JenisTeknisi | undefined)
         ?? (planId ? (plan.find((x) => Number(x.id) === planId)?.jenis as JenisTeknisi | undefined) : undefined)
@@ -347,19 +363,20 @@ export async function simpanReportTeknisi(input: {
   }
 
   // Kelompokkan blok per faskes (urut kemunculan). Satu faskes = perilaku lama (satu kunjungan).
-  const grup: { akun: number | null; label: string | null; baris: typeof baris }[] = [];
+  const grup: { akun: number | null; label: string | null; kantor: boolean; baris: typeof baris }[] = [];
   for (const x of baris) {
-    const akun = x.akun ?? (grup.length === 0 ? acc : null);
+    const akun = x.kantor ? null : x.akun ?? (grup.length === 0 ? acc : null);
     const kunci = (g: { akun: number | null; label: string | null }) =>
       g.akun != null ? `a${g.akun}` : `t${(g.label ?? "").toLowerCase().replace(/[^a-z0-9]/g, "")}`;
     const label = x.faskesBlok ?? faskesLabel;
     const ada = grup.find((g) => kunci(g) === kunci({ akun, label }));
-    if (ada) ada.baris.push(x); else grup.push({ akun, label, baris: [x] });
+    if (ada) ada.baris.push(x); else grup.push({ akun, label, kantor: x.kantor, baris: [x] });
   }
-  if (grup.length === 1) { grup[0].akun = grup[0].akun ?? acc; grup[0].label = grup[0].label ?? faskesLabel; }
+  if (grup.length === 1 && !grup[0].kantor) { grup[0].akun = grup[0].akun ?? acc; grup[0].label = grup[0].label ?? faskesLabel; }
 
   const hasil = await sql.begin(async (tx) => {
     const kunjunganIds: number[] = [];
+    const kantorIds: number[] = [];
     for (const [gi, g] of grup.entries()) {
       // wa_message_id UNIK per kunjungan: kunjungan ke-2+ dari pesan yang sama diberi akhiran #n.
       const waId = gi === 0 ? input.waMessageId : input.waMessageId ? `${input.waMessageId}#${gi + 1}` : null;
@@ -370,12 +387,29 @@ export async function simpanReportTeknisi(input: {
         ON CONFLICT (wa_message_id) DO NOTHING
         RETURNING id`;
       if (k.length === 0) {
-        if (gi === 0) return { duplikat: true, kunjunganIds: [] as number[], foto: 0 };
+        if (gi === 0) return { duplikat: true, kunjunganIds: [] as number[], foto: 0, kantorIds: [] as number[] };
         continue;
       }
       const kid = Number(k[0].id);
       kunjunganIds.push(kid);
+      if (g.kantor) kantorIds.push(kid);
       for (const x of g.baris) {
+        // Report tanpa plan (kunjungan mendadak / kegiatan kantor) → item "di luar plan" (urut 51+), supaya
+        // tampil di Kinerja Teknisi. Jenis wajib ada (kolom NOT NULL); tanpa jenis tetap seperti dulu.
+        if (!x.planId && x.jenis) {
+          const [pi] = await tx`
+            INSERT INTO teknisi_plan_item
+              (teknisi_id, tanggal, urut, account_id, faskes_teks, kso_asset_id, installation_unit_id, sn_teks, alat_teks,
+               jenis, catatan_cocok, wa_message_id, is_late, di_luar_plan, kantor, reported_at)
+            SELECT ${input.teknisiId}, ${input.tanggal},
+                   GREATEST(${URUT_DI_LUAR_PLAN - 1}, COALESCE(max(urut), 0)) + 1,
+                   ${g.akun}, ${g.label ?? (x.kantor ? "KANTOR" : "-")}, ${x.assetId}, ${x.unitId}, ${x.b.sn}, ${x.b.alat},
+                   ${x.jenis}, ${x.masalah}, ${waId}, false, true, ${x.kantor},
+                   COALESCE(${input.receivedAt}::timestamptz, now())
+            FROM teknisi_plan_item WHERE teknisi_id = ${input.teknisiId} AND tanggal = ${input.tanggal}
+            RETURNING id`;
+          x.planId = Number(pi.id);
+        }
         await tx`
           INSERT INTO teknisi_kunjungan_alat
             (kunjungan_id, nomor_blok, plan_item_id, kso_asset_id, installation_unit_id, sn_teks, alat_teks, jenis,
@@ -419,14 +453,18 @@ export async function simpanReportTeknisi(input: {
         RETURNING id`;
       foto += f.length;
     }
-    return { duplikat: false, kunjunganIds, foto };
+    return { duplikat: false, kunjunganIds, foto, kantorIds };
   });
 
   const efek = new Map<number, string>();
-  for (const kid of hasil.kunjunganIds) for (const [no, t] of await terapkanEfek(kid)) efek.set(no, t);
+  // Kegiatan kantor tidak menyentuh jadwal PM / tiket / instalasi faskes.
+  for (const kid of hasil.kunjunganIds) {
+    if (hasil.kantorIds.includes(kid)) continue;
+    for (const [no, t] of await terapkanEfek(kid)) efek.set(no, t);
+  }
   // Bukti lokasi = foto report ber-geotag (OCR Geo-Tagging Camera di wa-bridge → wa_message.geo_*).
   // Foto susulan sesudah balasan ini tetap terhitung di teknisi_kerja_v (325).
-  let lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" = "tanpa-foto";
+  let lokasi: "ada" | "tanpa-geotag" | "tanpa-foto" | null = "tanpa-foto";
   if (hasil.kunjunganIds.length && hasil.foto > 0) {
     const [g] = await sql`
       SELECT bool_or(w.geo_lat IS NOT NULL AND w.geo_lon IS NOT NULL) AS ada
@@ -434,6 +472,7 @@ export async function simpanReportTeknisi(input: {
       WHERE f.kunjungan_id IN ${sql(hasil.kunjunganIds)}`;
     lokasi = g?.ada ? "ada" : "tanpa-geotag";
   }
+  if (hasil.kunjunganIds.length && hasil.kantorIds.length === hasil.kunjunganIds.length) lokasi = null;
   // Waktu kerja = jam report − jam #START item plan yang ditaut (alat tanpa start ditandai).
   const startPerPlan = new Map(plan.map((p) => [Number(p.id), p.started_at ? new Date(p.started_at as string) : null]));
   const selesai = input.receivedAt ? new Date(input.receivedAt) : new Date();
@@ -459,7 +498,8 @@ export async function simpanReportTeknisi(input: {
     alat: baris.map((x) => ({
       nomor: x.b.nomor, alatLabel: x.label, sn: x.snTampil, jenis: x.jenis,
       status: x.b.status!, alasan: x.b.alasan, masalah: x.masalah, efek: efek.get(x.b.nomor) ?? null,
-      durasiMenit: durasi(x.planId), tanpaStart: !(x.planId && startPerPlan.get(x.planId)),
+      durasiMenit: durasi(x.planId), tanpaStart: !x.kantor && !(x.planId && startPerPlan.get(x.planId)),
+      kantor: x.kantor,
       sudahDilaporkan: sudahDilaporkan(x.planId),
     })),
   };
