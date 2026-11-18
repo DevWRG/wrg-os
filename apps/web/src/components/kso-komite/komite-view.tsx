@@ -18,7 +18,7 @@ import { PolaGerbang } from "./pola-gerbang";
 import { PortofolioPanel } from "./portofolio";
 import { RencanaDialog, RencanaPanel } from "./rencana-dialog";
 import { RiwayatForum } from "./riwayat-forum";
-import { SusunanPanel } from "./susunan-panel";
+import { TombolSusunan } from "./susunan-panel";
 import {
   LABEL_ZONA, ZONA_CLS, kirim, persen, rpJt, waktu,
   type BarisAgenda, type BarisAntrean, type BarisKpi, type DataTab, type Ringkasan, type TabBoleh,
@@ -77,10 +77,9 @@ export function KomiteView({ tabs: tabsAkses, bottomLine = false }: { tabs: TabB
 
   return (
     <Tabs value={tab} onValueChange={(v) => { setTab(v as TabLayar); setBuka(null); }} className="gap-4">
-      {tabs.length > 0 && <SusunanPanel />}
       <div className="flex flex-wrap items-start gap-2">
         <DeretTab kelompok={kelompok} />
-        {tabs.length > 0 && <TombolFormatKso />}
+        {tabs.length > 0 && <div className="flex flex-wrap gap-2"><TombolSusunan /><TombolFormatKso /></div>}
       </div>
       {err && <p className="text-destructive text-sm">{err}</p>}
       {tabs.map((t) => (
