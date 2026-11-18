@@ -11,6 +11,7 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // ───────── Tipe (cermin apps/api/src/repo/riwayat-alat.ts) ─────────
 interface AlatRow {
@@ -98,7 +99,94 @@ export function RiwayatAlatView() {
     router.push(`${pathname}${q.toString() ? `?${q.toString()}` : ""}`, { scroll: true });
   }, [params, pathname, router]);
 
-  return sn ? <DetailAlat kunci={sn} kembali={() => pilih(null)} /> : <DaftarAlat pilih={pilih} />;
+  if (sn) return <DetailAlat kunci={sn} kembali={() => pilih(null)} />;
+  return (
+    <Tabs defaultValue="daftar" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="daftar">Daftar alat</TabsTrigger>
+        <TabsTrigger value="idle">Alat siap pasang</TabsTrigger>
+      </TabsList>
+      <TabsContent value="daftar"><DaftarAlat pilih={pilih} /></TabsContent>
+      <TabsContent value="idle"><AlatSiapPasang pilih={pilih} /></TabsContent>
+    </Tabs>
+  );
+}
+
+// ───────── Alat siap pasang (idle) — 18 Nov 2026 ─────────
+interface AlatIdleRow {
+  kunci: string; sn_key: string | null; sn: string | null; nomor_aset: string | null; alat: string | null; lokasi: string | null;
+  kategori: "ditarik" | "gudang" | "stok_kantor" | "backup" | "not_ready" | "perlu_cek" | "belum_tertaut";
+  tgl_perolehan: string | null; kso_asset_id: number | null;
+  riwayat_terakhir: string | null; riwayat_terakhir_jenis: string | null; riwayat_terakhir_faskes: string | null;
+}
+const KATEGORI_IDLE: Record<AlatIdleRow["kategori"], { label: string; ket: string }> = {
+  ditarik: { label: "Ditarik", ket: "pekerjaan terakhir Tarik Alat, belum dipasang lagi" },
+  gudang: { label: "Di gudang", ket: "lokasi Accurate: gudang" },
+  stok_kantor: { label: "Stok kantor", ket: "Daftar Alat: stok kantor" },
+  backup: { label: "Backup", ket: "Daftar Alat: alat backup" },
+  not_ready: { label: "Belum siap", ket: "Daftar Alat: not ready" },
+  perlu_cek: { label: "Perlu cek", ket: "Daftar Alat: status perlu dicek" },
+  belum_tertaut: { label: "Belum tertaut", ket: "aset Accurate belum tertaut ke alat KSO & tak ada kunjungan 12 bulan" },
+};
+const EKSPOR_IDLE: ExportColumn<AlatIdleRow>[] = [
+  { header: "Status", value: (r) => KATEGORI_IDLE[r.kategori].label },
+  { header: "Alat", value: (r) => r.alat },
+  { header: "SN", value: (r) => r.sn },
+  { header: "Nomor aset", value: (r) => r.nomor_aset },
+  { header: "Lokasi", value: (r) => r.lokasi },
+  { header: "Tanggal perolehan", value: (r) => r.tgl_perolehan },
+  { header: "Pekerjaan terakhir", value: (r) => r.riwayat_terakhir_jenis },
+  { header: "Tanggal terakhir", value: (r) => r.riwayat_terakhir },
+  { header: "Faskes terakhir", value: (r) => r.riwayat_terakhir_faskes },
+];
+
+function AlatSiapPasang({ pilih }: { pilih: (kunci: string) => void }) {
+  const { data, err } = useMuat<{ rows: AlatIdleRow[] }>("/api/riwayat-alat/idle");
+  const [kat, setKat] = useState("");
+  const rows = useMemo(() => (data?.rows ?? []).filter((r) => (kat ? r.kategori === kat : r.kategori !== "belum_tertaut")), [data, kat]);
+  const jumlah = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of data?.rows ?? []) m.set(r.kategori, (m.get(r.kategori) ?? 0) + 1);
+    return m;
+  }, [data]);
+  const kolom: DataColumn<AlatIdleRow>[] = [
+    { id: "alat", header: "Alat", accessor: (r) => `${r.alat ?? ""} ${r.sn ?? ""} ${r.nomor_aset ?? ""}`, cell: (r) => (
+      <div><div className="font-medium">{r.alat ?? "—"}</div>
+        <div className="text-muted-foreground text-xs"><span className="font-mono">{r.sn ?? "tanpa SN"}</span>{r.nomor_aset ? ` · ${r.nomor_aset}` : ""}</div></div>) },
+    { id: "kategori", header: "Status", accessor: (r) => KATEGORI_IDLE[r.kategori].label, cell: (r) => (
+      <Badge variant={r.kategori === "belum_tertaut" ? "outline" : "secondary"} title={KATEGORI_IDLE[r.kategori].ket}>{KATEGORI_IDLE[r.kategori].label}</Badge>) },
+    { id: "lokasi", header: "Lokasi", accessor: (r) => r.lokasi, cell: (r) => <span className="text-sm">{strip(r.lokasi)}</span> },
+    { id: "terakhir", header: "Pekerjaan terakhir", accessor: (r) => r.riwayat_terakhir ?? "", searchable: false, cell: (r) => (r.riwayat_terakhir
+      ? <span className="text-xs">{tgl(r.riwayat_terakhir)} · {r.riwayat_terakhir_jenis ?? "—"}<span className="text-muted-foreground block">{r.riwayat_terakhir_faskes ?? ""}</span></span>
+      : <span className="text-muted-foreground text-xs">—</span>) },
+    { id: "perolehan", header: "Perolehan", accessor: (r) => r.tgl_perolehan ?? "", searchable: false, cell: (r) => <span className="text-xs tabular-nums">{tgl(r.tgl_perolehan)}</span> },
+  ];
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Alat siap pasang</CardTitle></CardHeader>
+      <CardContent>
+        {err ? <EmptyState title="Gagal memuat" description={err} /> : !data ? (
+          <p className="text-muted-foreground py-8 text-center text-sm">Memuat…</p>
+        ) : (
+          <DataTable columns={kolom} data={rows} getKey={(r) => r.kunci} pageSize={10}
+            searchPlaceholder="Cari alat / SN / nomor aset / lokasi…"
+            onRowClick={(r) => { if (r.sn_key) pilih(r.sn_key); }}
+            toolbar={<div className="flex flex-wrap items-center gap-3">
+              <FilterSelect label="Status" value={kat} onChange={setKat} semua="Semua (kecuali belum tertaut)"
+                options={(Object.keys(KATEGORI_IDLE) as AlatIdleRow["kategori"][]).map((k) => ({ value: k, label: `${KATEGORI_IDLE[k].label} (${jumlah.get(k) ?? 0})` }))} />
+              <ExportButton filename="alat-siap-pasang" columns={EKSPOR_IDLE} data={rows} />
+            </div>}
+            empty="Tidak ada alat dengan status ini." />
+        )}
+        <p className="text-muted-foreground mt-2 text-xs">
+          Alat milik WRG (aset KSO di Accurate, dicatat Accounting) yang belum terpasang di customer. <b>Ditarik</b> = pekerjaan terakhirnya Tarik Alat;
+          <b> Di gudang</b> = lokasi Accurate gudang; Stok kantor / Backup / Belum siap / Perlu cek = status Daftar Alat. <b>Belum tertaut</b> = aset Accurate
+          yang belum tertaut ke alat KSO dan tak ada kunjungan teknisi 12 bulan — bisa jadi idle, bisa jadi datanya belum dirapikan (tautkan di menu Aset Tetap).
+          Klik baris untuk melihat riwayat alat.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function DaftarAlat({ pilih }: { pilih: (kunci: string) => void }) {

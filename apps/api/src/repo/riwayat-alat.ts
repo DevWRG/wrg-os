@@ -186,3 +186,90 @@ export async function pathFotoTeknisi(id: number): Promise<string | null> {
   const [r] = await db()`SELECT media_path FROM teknisi_kunjungan_foto WHERE id = ${id}`;
   return r?.media_path ? String(r.media_path) : null;
 }
+
+// ── Alat siap pasang (idle) — keputusan user 18 Nov 2026 ─────────────────────
+// Alat milik WRG (aset tetap KSO-n di Accurate, dicatat Accounting) yang BELUM terpasang di customer.
+// Status per aset Accurate (prefiks KSO/KS, belum dilepas):
+//   tertaut ke alat KSO (fixed_asset_override F34, atau SN di `notes` = kso_asset.sn_key) → ikut status Daftar Alat:
+//     operasional = terpasang (tak tampil); stok_kantor / backup / not_ready / perlu_cek = tampil.
+//   tak tertaut: pekerjaan terakhir di Riwayat Alat = Tarik Alat → "ditarik"; lokasi Accurate "GUDANG …" → "gudang";
+//   ada kunjungan teknisi lain ≤12 bulan → dianggap terpasang (tak tampil); selain itu "belum_tertaut" (perlu dicek).
+//   Uji dev 18 Nov: 706 aset "Kantor Pusat" tak tertaut, 222 di antaranya punya kunjungan teknisi = terpasang.
+// Ditambah alat Daftar Alat yang non-operasional tapi tak punya aset Accurate.
+
+export type KategoriIdle = "ditarik" | "gudang" | "stok_kantor" | "backup" | "not_ready" | "perlu_cek" | "belum_tertaut";
+
+export interface AlatIdleRow {
+  kunci: string;
+  sn_key: string | null;
+  sn: string | null;
+  nomor_aset: string | null;
+  alat: string | null;
+  lokasi: string | null;
+  kategori: KategoriIdle;
+  tgl_perolehan: string | null;
+  kso_asset_id: number | null;
+  riwayat_terakhir: string | null;
+  riwayat_terakhir_jenis: string | null;
+  riwayat_terakhir_faskes: string | null;
+}
+
+export async function daftarAlatIdle(): Promise<AlatIdleRow[]> {
+  if (!isDbEnabled()) return [];
+  const rows = await db()`
+    WITH acc AS (
+      SELECT f.id, f.number, f.description, f.notes, f.location_name,
+             COALESCE(f.usage_date, f.trans_date) AS tgl,
+             COALESCE(o.kso_asset_id, ks.id) AS kso_id
+      FROM accurate_fixed_asset f
+      LEFT JOIN fixed_asset_override o ON o.accurate_id = f.id
+      LEFT JOIN LATERAL (
+        SELECT a.id FROM kso_asset a
+        WHERE o.kso_asset_id IS NULL AND alat_sn_key(f.notes) IS NOT NULL AND a.sn_key = alat_sn_key(f.notes)
+        ORDER BY a.aktif DESC, a.id LIMIT 1
+      ) ks ON true
+      WHERE f.prefix IN ('KSO', 'KS') AND NOT f.disposed
+    ), gab AS (
+      SELECT 'acc:' || acc.id AS kunci, COALESCE(a.sn_key, alat_sn_key(acc.notes)) AS sn_key,
+             COALESCE(a.sn_raw, NULLIF(btrim(acc.notes), '')) AS sn, acc.number AS nomor_aset,
+             COALESCE(NULLIF(a.nama_alat, ''), a.type_alat, acc.description) AS alat,
+             CASE WHEN v.status_kode IS NOT NULL AND v.status_kode <> 'operasional'
+                  THEN COALESCE(NULLIF(btrim(a.customer_raw), ''), acc.location_name) ELSE acc.location_name END AS lokasi,
+             v.status_kode, acc.location_name AS lokasi_acc,
+             acc.tgl, acc.kso_id
+      FROM acc
+      LEFT JOIN kso_asset a ON a.id = acc.kso_id
+      LEFT JOIN kso_asset_status_v v ON v.id = a.id
+      UNION ALL
+      SELECT 'kso:' || a.id, a.sn_key, a.sn_raw, NULL, COALESCE(NULLIF(a.nama_alat, ''), a.type_alat),
+             NULLIF(btrim(a.customer_raw), ''), v.status_kode, NULL, NULL::date, a.id
+      FROM kso_asset a JOIN kso_asset_status_v v ON v.id = a.id
+      WHERE v.status_kode <> 'operasional' AND NOT EXISTS (SELECT 1 FROM acc WHERE acc.kso_id = a.id)
+    )
+    SELECT * FROM (
+    SELECT g.*, to_char(g.tgl, 'YYYY-MM-DD') AS tgl_perolehan,
+           CASE WHEN g.status_kode = 'operasional' THEN NULL
+                WHEN g.status_kode IS NOT NULL THEN g.status_kode
+                WHEN r.jenis ILIKE 'tarik%' THEN 'ditarik'
+                WHEN g.lokasi_acc ILIKE 'gudang%' THEN 'gudang'
+                WHEN r.waktu > now() - interval '12 months' THEN NULL
+                ELSE 'belum_tertaut' END AS kategori,
+           to_char(r.waktu AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM-DD') AS riwayat_terakhir, r.jenis AS riwayat_jenis, r.faskes AS riwayat_faskes
+    FROM gab g
+    LEFT JOIN LATERAL (
+      SELECT waktu, jenis, faskes FROM alat_riwayat_v rv WHERE g.sn_key IS NOT NULL AND rv.sn_key = g.sn_key
+      ORDER BY waktu DESC NULLS LAST LIMIT 1
+    ) r ON true
+    ) z
+    WHERE z.kategori IS NOT NULL
+    ORDER BY CASE z.kategori WHEN 'ditarik' THEN 0 WHEN 'gudang' THEN 1 WHEN 'stok_kantor' THEN 2 WHEN 'backup' THEN 3
+                             WHEN 'not_ready' THEN 4 WHEN 'perlu_cek' THEN 5 ELSE 6 END, z.lokasi NULLS LAST, z.alat NULLS LAST`;
+  return rows.map((r) => ({
+    kunci: String(r.kunci), sn_key: (r.sn_key as string) ?? null, sn: (r.sn as string) ?? null,
+    nomor_aset: (r.nomor_aset as string) ?? null, alat: (r.alat as string) ?? null, lokasi: (r.lokasi as string) ?? null,
+    kategori: r.kategori as KategoriIdle, tgl_perolehan: (r.tgl_perolehan as string) ?? null,
+    kso_asset_id: r.kso_id == null ? null : Number(r.kso_id),
+    riwayat_terakhir: (r.riwayat_terakhir as string) ?? null, riwayat_terakhir_jenis: (r.riwayat_jenis as string) ?? null,
+    riwayat_terakhir_faskes: (r.riwayat_faskes as string) ?? null,
+  }));
+}
