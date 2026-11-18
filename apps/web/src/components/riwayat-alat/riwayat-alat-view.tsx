@@ -12,12 +12,13 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pecahSparepart } from "@/lib/riwayat-alat";
 
 // ───────── Tipe (cermin apps/api/src/repo/riwayat-alat.ts) ─────────
 interface AlatRow {
   sn_key: string; sn: string | null; alat: string | null; jenis_alat: "KSO" | "Beli" | null;
   kso_asset_id: number | null; installation_unit_id: string | null; faskes: string | null; kota: string | null;
-  aktif: boolean | null; kunjungan: number; terakhir: string | null; terakhir_jenis: string | null;
+  aktif: boolean | null; kunjungan: number; ganti_sparepart: number; terakhir: string | null; terakhir_jenis: string | null;
 }
 interface RiwayatRow {
   sumber: "wa" | "form" | "jadwal" | "pm" | "install" | "servis"; ref: string; waktu: string | null;
@@ -70,6 +71,7 @@ const EKSPOR_ALAT: ExportColumn<AlatRow>[] = [
   { header: "Faskes", value: (r) => r.faskes },
   { header: "Kota", value: (r) => r.kota },
   { header: "Jumlah riwayat", value: (r) => r.kunjungan },
+  { header: "Ganti sparepart (kali)", value: (r) => r.ganti_sparepart },
   { header: "Terakhir", value: (r) => r.terakhir },
   { header: "Pekerjaan terakhir", value: (r) => r.terakhir_jenis },
 ];
@@ -213,6 +215,8 @@ function DaftarAlat({ pilih }: { pilih: (kunci: string) => void }) {
     },
     { id: "kota", header: "Kota", accessor: (r) => r.kota },
     { id: "kunjungan", header: "Riwayat", align: "right", accessor: (r) => r.kunjungan, searchable: false },
+    { id: "sparepart", header: "Ganti sparepart", align: "right", accessor: (r) => r.ganti_sparepart, searchable: false,
+      cell: (r) => (r.ganti_sparepart ? <span className="tabular-nums">{r.ganti_sparepart}×</span> : <span className="text-muted-foreground">—</span>) },
     {
       id: "terakhir", header: "Terakhir", accessor: (r) => r.terakhir ?? "", searchable: false,
       cell: (r) => (r.terakhir ? <span>{tgl(r.terakhir)}<span className="text-muted-foreground block text-xs">{r.terakhir_jenis}</span></span> : "—"),
@@ -322,6 +326,8 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
             </Card>
           )}
 
+          <RiwayatSparepart riwayat={data.riwayat} kunci={a.sn_key} />
+
           <Card>
             <CardHeader><CardTitle className="text-base">Riwayat pekerjaan</CardTitle></CardHeader>
             <CardContent>
@@ -341,6 +347,44 @@ function DetailAlat({ kunci, kembali }: { kunci: string; kembali: () => void }) 
         </>
       )}
     </div>
+  );
+}
+
+interface BarisSparepart { ref: string; waktu: string | null; item: string[]; jenis: string | null; faskes: string | null; teknisi: string | null; sumber: RiwayatRow["sumber"] }
+
+/** Riwayat penggantian sparepart satu alat (dari #REPORT & Google Form lama), terbaru dulu. */
+function RiwayatSparepart({ riwayat, kunci }: { riwayat: RiwayatRow[]; kunci: string }) {
+  const rows = useMemo<BarisSparepart[]>(() => riwayat
+    .map((r) => ({ ref: r.ref, waktu: r.waktu, item: pecahSparepart(r.sparepart), jenis: r.jenis, faskes: r.faskes, teknisi: r.teknisi, sumber: r.sumber }))
+    .filter((r) => r.item.length > 0), [riwayat]);
+  const kolom: DataColumn<BarisSparepart>[] = [
+    { id: "waktu", header: "Tanggal", accessor: (r) => r.waktu ?? "", searchable: false, cell: (r) => <span className="whitespace-nowrap">{tgl(r.waktu)}</span> },
+    { id: "item", header: "Sparepart diganti", accessor: (r) => r.item.join(" "), sortable: false, className: "min-w-64", cell: (r) => (
+      <ul className="list-disc space-y-0.5 pl-4 text-sm">{r.item.map((x, i) => <li key={i}>{x}</li>)}</ul>) },
+    { id: "jenis", header: "Pekerjaan", accessor: (r) => r.jenis, cell: (r) => strip(r.jenis) },
+    { id: "faskes", header: "Faskes", accessor: (r) => r.faskes, className: "min-w-40" },
+    { id: "teknisi", header: "Teknisi", accessor: (r) => r.teknisi },
+    { id: "sumber", header: "Sumber", accessor: (r) => SUMBER[r.sumber], cell: (r) => <Badge variant="outline">{SUMBER[r.sumber]}</Badge> },
+  ];
+  const ekspor: ExportColumn<BarisSparepart>[] = [
+    { header: "Tanggal", value: (r) => r.waktu },
+    { header: "Sparepart diganti", value: (r) => r.item.join("; ") },
+    { header: "Pekerjaan", value: (r) => r.jenis },
+    { header: "Faskes", value: (r) => r.faskes },
+    { header: "Teknisi", value: (r) => r.teknisi },
+    { header: "Sumber", value: (r) => SUMBER[r.sumber] },
+  ];
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-base">Riwayat penggantian sparepart <span className="text-muted-foreground text-sm font-normal">· {rows.length}×</span></CardTitle></CardHeader>
+      <CardContent>
+        <DataTable columns={kolom} data={rows} getKey={(r) => r.ref} pageSize={10} initialSort={{ id: "waktu", dir: "desc" }}
+          searchPlaceholder="Cari nama sparepart / teknisi / faskes…"
+          toolbar={<ExportButton filename={`sparepart-alat_${kunci}`} columns={ekspor} data={rows} />}
+          empty="Belum ada penggantian sparepart tercatat untuk alat ini." />
+        <p className="text-muted-foreground mt-2 text-xs">Dari isian Pergantian Sparepart di #REPORT teknisi dan Google Form lama. Bon Sparepart tidak ikut — bon belum tertaut ke alat (SN).</p>
+      </CardContent>
+    </Card>
   );
 }
 
