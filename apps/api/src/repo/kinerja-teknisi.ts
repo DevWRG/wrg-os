@@ -134,10 +134,23 @@ export async function jadwalTeknisi(c: CakupanKinerja, q: { teknisi?: string | n
       LEFT JOIN master_user mt ON mt.am_id = tc.am_id
       WHERE ms.due_date <= ${q.sampai}::date ${tek(sql`tc.am_id`)}
       UNION ALL
-      SELECT jr.tanggal, 'Kunjungan rutin', jr.teknisi_id, COALESCE(NULLIF(mu.panggilan, ''), mu.nama),
-             ac.name, jsonb_array_length(COALESCE(jr.alat, '[]'::jsonb)) || ' alat', jr.status, jr.id::text,
-             jr.status = 'rencana'
+      -- Kunjungan rutin PER ALAT (18 Nov 2026): satu baris per alat (nama · SN) di kunjungan faskes itu. Alat
+      -- dianggap selesai bila kunjungannya selesai ATAU alat itu sudah di-#REPORT PM Selesai di bulan jadwal.
+      SELECT jr.tanggal, 'Kunjungan rutin', jr.teknisi_id, COALESCE(NULLIF(mu.panggilan, ''), mu.nama), ac.name,
+             CASE WHEN x.el IS NULL THEN 'tanpa daftar alat' ELSE concat_ws(' · ', NULLIF(x.el->>'nama', ''), NULLIF(x.el->>'sn', '')) END,
+             CASE WHEN jr.status = 'rencana' AND alat_ok.ada THEN 'selesai' ELSE jr.status END,
+             jr.id::text || ':' || COALESCE(x.ord, 0)::text,
+             jr.status = 'rencana' AND NOT COALESCE(alat_ok.ada, false)
       FROM jadwal_rutin jr
+      LEFT JOIN LATERAL jsonb_array_elements(COALESCE(jr.alat, '[]'::jsonb)) WITH ORDINALITY AS x(el, ord) ON true
+      LEFT JOIN LATERAL (
+        SELECT true AS ada FROM teknisi_kunjungan_alat ka
+        JOIN teknisi_kunjungan k ON k.id = ka.kunjungan_id
+        JOIN kso_asset a ON a.id = ka.kso_asset_id
+        WHERE x.el IS NOT NULL AND a.sn_key = alat_sn_key(x.el->>'sn') AND ka.jenis = 'PM' AND ka.status = 'Selesai'
+          AND date_trunc('month', k.tanggal)::date = jr.bulan
+        LIMIT 1
+      ) alat_ok ON true
       LEFT JOIN master_user mu ON mu.am_id = jr.teknisi_id
       LEFT JOIN accurate_customer ac ON ac.id = jr.account_id
       WHERE jr.status <> 'batal' AND jr.tanggal <= ${q.sampai}::date
@@ -163,8 +176,8 @@ export async function jadwalTeknisi(c: CakupanKinerja, q: { teknisi?: string | n
     ) j
     -- PM: hanya yang jatuh tempo di rentang ATAU sudah lewat (selalu "terbuka" sampai dikerjakan).
     WHERE NOT (jenis = 'PM' AND tanggal < ${q.dari}::date AND tanggal >= ${hariIni}::date)
-    ORDER BY tanggal, jenis, teknisi_nama NULLS LAST
-    LIMIT 2000`;
+    ORDER BY tanggal, jenis, teknisi_nama NULLS LAST, faskes NULLS LAST, alat NULLS LAST
+    LIMIT 10000`;
   return rows.map((r) => {
     const tanggal = String(r.tanggal instanceof Date ? r.tanggal.toISOString().slice(0, 10) : r.tanggal).slice(0, 10);
     return {
