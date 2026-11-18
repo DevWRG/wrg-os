@@ -358,7 +358,7 @@ import {
 import { KinerjaError, bacaRentang, cakupanKinerja, daftarTeknisi, hariIniWib, jadwalTeknisi, kerjaTeknisi, ringkasKerja } from "./repo/kinerja-teknisi.js";
 import { RiwayatAlatError, bacaKunci, daftarAlat, detailAlat } from "./repo/riwayat-alat.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
-import { GalatKso, berkasLampiran, berkasSph, daftarFilter, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
+import { GalatKso, berkasLampiran, berkasSph, daftarFilter, riwayatForum, daftarTab, detailRencana, isAksiKso, isFilterKso, isTabKso, jalankanAksi, tabBoleh } from "./repo/kso-komite.js";
 import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-susunan.js";
 import { namaFileSphKso, sphKsoPdf } from "./repo/kso-sph-pdf.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, bacaRincianHargaBeli, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
@@ -2427,6 +2427,15 @@ app.get("/kso-komite/:tab/rencana/:id", async (c) => {
   if (!u) return c.json({ error: "x-user-id wajib" }, 401);
   if (!isTabKso(tab) || !Number.isInteger(id) || id <= 0) return c.json({ error: "permintaan tidak sah" }, 400);
   try { return c.json(await detailRencana(u, tab, id)); } catch (e) { return ksoKomiteErr(c, e); }
+});
+// 17 Nov 2026: riwayat forum (semua forum + status/usulan/putusan tiap usulan), dalam akses tab.
+app.get("/kso-komite/:tab/riwayat-forum", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const u = ksoUser(c);
+  const tab = c.req.param("tab");
+  if (!u) return c.json({ error: "x-user-id wajib" }, 401);
+  if (!isTabKso(tab)) return c.json({ error: "permintaan tidak sah" }, 400);
+  try { return c.json(await riwayatForum(u, tab)); } catch (e) { return ksoKomiteErr(c, e); }
 });
 // 302: daftar "Belum lengkap" (DRAFT/DITAHAN + kurang) dan "Lolos tanpa forum" (DIPUTUS_AM/DIPUTUS_HOD + mandat), dalam akses tab.
 app.get("/kso-komite/:tab/daftar/:filter", async (c) => {
