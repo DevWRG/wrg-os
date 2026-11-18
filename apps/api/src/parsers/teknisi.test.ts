@@ -5,10 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  normalizeJenis, parseStatus, parseTeknisiPlan, parseTeknisiReport, pisahJenisTiket, pisahSnAlat,
-  balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah, CONTOH_PLAN_TEKNISI, CONTOH_REPORT_TEKNISI,
-} from "./teknisi.js";
+import { normalizeJenis, parseStatus, parseTeknisiPlan, parseTeknisiReport, pisahJenisTiket, pisahSnAlat, balasanPlanTeknisi, balasanReportTeknisi, balasanFormatSalah, CONTOH_PLAN_TEKNISI, CONTOH_REPORT_TEKNISI, bacaCaptionFoto, captionKurang } from "./teknisi.js";
 
 // Tes format di bawah menguji cara parser MEMBACA pesan; isian wajib (Kegiatan / Jumlah Tes / Sparepart,
 // 17 Nov 2026) diuji tersendiri di tes "isian wajib" — galat itu disaring di sini.
@@ -389,4 +386,31 @@ test("balasan report: kegiatan kantor tanpa alat — bukan \"alat ?\"", () => {
     alat: [{ nomor: 1, alatLabel: null, sn: null, jenis: "Prepare", status: "Selesai", alasan: null, masalah: null, kantor: true }],
   });
   assert.equal(t, "✅ KANTOR Surabaya — 1 kegiatan tercatat\n1. Kegiatan kantor · Prepare · Selesai");
+});
+
+
+test("caption foto #REPORT: nomor/SN + jenis (tes / kondisi), default kondisi (336)", () => {
+  const c = (x: string) => { const r = bacaCaptionFoto(x); return `${r.ref ?? "-"}/${r.jenis}`; };
+  assert.equal(c("1 tes"), "1/tes");
+  assert.equal(c("tes 1"), "1/tes");
+  assert.equal(c("1t"), "1/tes");
+  assert.equal(c("2 kondisi"), "2/kondisi");
+  assert.equal(c("2k"), "2/kondisi");
+  assert.equal(c("0832 tes"), "0832/tes");
+  assert.equal(c("SN 0832 counter"), "0832/tes");
+  assert.equal(c("jumlah tes 3"), "3/tes");
+  assert.equal(c("kondisi"), "-/kondisi");
+  assert.equal(c("2"), "2/kondisi");
+  assert.equal(c(""), "-/kondisi");
+  assert.equal(c("*1 tes*"), "1/tes");
+  assert.equal(captionKurang([{ nomor: 1, tes: true, kondisi: true }, { nomor: 2, tes: false, kondisi: true }]), "1 tes · 1 kondisi · 2 kondisi");
+});
+
+test("balasan #REPORT menyebut foto wajib yang belum ada; lengkap → konfirmasi (336)", () => {
+  const alat = [{ nomor: 1, alatLabel: "EXC200", sn: "0832", jenis: "PM", status: "Selesai", alasan: null, masalah: null }];
+  const kurang = balasanReportTeknisi({ faskes: "RS A", alat, lokasi: "tanpa-foto", fotoKurang: [{ nomor: 1, tes: true, kondisi: true }] });
+  assert.match(kurang, /📷 Kirim foto \(Geo-Tagging Camera\), caption nomor \+ jenis: 1 tes · 1 kondisi$/);
+  assert.doesNotMatch(kurang, /boleh menyusul/);
+  const lengkap = balasanReportTeknisi({ faskes: "RS A", alat, foto: 2, lokasi: "ada", fotoKurang: [] });
+  assert.match(lengkap, /📷 Foto jumlah tes & kondisi alat lengkap$/);
 });
