@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /products/intelligence (intelijen produk A7).
 export async function GET() {
+  const g = await requireFeature("/products");
+  if (!g.ok) return g.res;
   try {
     const res = await gatewayFetch("/products/intelligence");
     const data = await res.json();

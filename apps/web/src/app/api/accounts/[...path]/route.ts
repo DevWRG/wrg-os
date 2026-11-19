@@ -1,13 +1,18 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
-import { sessionUser } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
-// Gateway → apps/api /accounts/* (F62). GET di balik auth middleware; mutasi
-// (account fields + contact CRUD) butuh sesi login. x-user-id selalu diteruskan
-// → backend menerapkan row-level scope by pemilik akun (crm_account.owner_am_id)
+// Gateway → apps/api /accounts/* (F62). SEMUA method ikut izin menu Accounts —
+// dulu cuma cek sesi, jadi user login tanpa menu Accounts (teknisi, GA) bisa
+// mengubah akun & menghapus kontak lewat curl. x-user-id selalu diteruskan →
+// backend menerapkan row-level scope by pemilik akun (crm_account.owner_am_id)
 // sekaligus write-guard (AM tak boleh memindah kepemilikan).
+//
+// Mutasi sengaja masih memeriksa aksi "view", bukan create/edit/delete: siapa
+// yang boleh menulis belum diputuskan di matriks Akses Grup, dan memakai aksi
+// tulis sekarang bisa memotong AM yang hari ini menyunting kontaknya sendiri.
 async function forward(sub: string, method: string, userId: string, req?: Request): Promise<Response> {
   try {
     const body = req ? await req.text() : undefined;
@@ -27,9 +32,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
   const qs = new URL(req.url).searchParams.toString();
-  const me = await sessionUser();
+  const g = await requireFeature("/accounts");
+  if (!g.ok) return g.res;
   try {
-    const res = await gatewayFetch(`/accounts/${sub}${qs ? `?${qs}` : ""}`, me ? { headers: { "x-user-id": me.id } } : undefined);
+    const res = await gatewayFetch(`/accounts/${sub}${qs ? `?${qs}` : ""}`, { headers: { "x-user-id": g.me.id } });
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
@@ -38,11 +44,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ path: string[] 
 }
 
 async function guarded(method: string, req: Request | undefined, ctx: { params: Promise<{ path: string[] }> }): Promise<Response> {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const g = await requireFeature("/accounts");
+  if (!g.ok) return g.res;
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
-  return forward(sub, method, me.id, req);
+  return forward(sub, method, g.me.id, req);
 }
 export const POST = (req: Request, ctx: { params: Promise<{ path: string[] }> }) => guarded("POST", req, ctx);
 export const PATCH = (req: Request, ctx: { params: Promise<{ path: string[] }> }) => guarded("PATCH", req, ctx);
