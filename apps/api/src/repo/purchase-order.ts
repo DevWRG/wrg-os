@@ -968,6 +968,12 @@ export interface AccuratePoHeader {
  * disamarkan, jadi sinkron ke dev tak membawa nama vendor asli kembali.
  * Baris manual dengan po_number yang sama tak disentuh: konflik unik
  * po_number dilewati dan dihitung sebagai `skipped`.
+ *
+ * Kecuali baris itu sendiri cermin Accurate dengan accurate_id LAIN: artinya PO
+ * dibuat ulang di Accurate dengan nomor sama (id lama sudah tak ada — detail.do
+ * gagal terus). Baris lama disambungkan ke id baru supaya item, approval, dan
+ * tautan forecast tetap utuh. Sebelumnya baris itu beku selamanya dan sinkron
+ * mencatat bentrok tiap 30 menit (3 PO di prod, Okt–Nov 2026).
  */
 export async function upsertAccuratePurchaseOrders(rows: AccuratePoHeader[]): Promise<{ upserted: number; skipped: number }> {
   const sql = db();
@@ -1006,8 +1012,32 @@ export async function upsertAccuratePurchaseOrders(rows: AccuratePoHeader[]): Pr
       if ((e as { code?: string }).code === "23505") return null;
       throw e;
     });
-    if (res && res.length) upserted++;
-    else skipped++;
+    if (res && res.length) { upserted++; continue; }
+    const relinked = await sql`
+      UPDATE purchase_order SET
+        accurate_id = ${r.accurate_id},
+        vendor_id = (SELECT id FROM accurate_vendor WHERE id = ${r.vendor_id}),
+        vendor_name = COALESCE((SELECT NULLIF(name, '') FROM accurate_vendor WHERE id = ${r.vendor_id}), ${r.vendor_name}),
+        order_date = ${r.order_date},
+        eta_date = ${r.eta_date},
+        notes = ${r.description},
+        accurate_status = ${r.accurate_status},
+        accurate_approval = ${r.accurate_approval},
+        percent_shipped = ${r.percent_shipped},
+        total_amount = ${r.total_amount},
+        accurate_last_update = ${r.last_update},
+        synced_at = now(),
+        updated_at = now()
+      WHERE po_number = ${r.po_number} AND source = 'accurate'
+        AND accurate_id IS DISTINCT FROM ${r.accurate_id}
+        -- id baru sudah dipegang baris lain (bentrok nomor dua arah) → lewati saja
+        AND NOT EXISTS (SELECT 1 FROM purchase_order WHERE accurate_id = ${r.accurate_id})
+      RETURNING id
+    `;
+    if (relinked.length) {
+      console.log(`[accurate-po-sync] PO ${r.po_number} dibuat ulang di Accurate → disambung ke id ${r.accurate_id}`);
+      upserted++;
+    } else skipped++;
   }
   return { upserted, skipped };
 }
