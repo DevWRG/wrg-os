@@ -113,7 +113,14 @@ const terdaftar = new Map<string, SlotJob>();
 let slotTerakhir: SlotJob | null = null;
 
 const cron = {
-  validate: nodeCron.validate,
+  // Ekspresi tak valid dulu dilewati DIAM-DIAM (pola `if (enabled && cron.validate(expr))`
+  // di bawah) — Senin Brief hilang 8 hari tanpa jejak karena env berkutip. Sekarang
+  // tercatat di log; JSON.stringify memperlihatkan kutip/spasi yang menyusup.
+  validate(expr: string): boolean {
+    const ok = nodeCron.validate(expr);
+    if (!ok) console.warn(`[scheduler] ekspresi cron TIDAK VALID, job dilewati: ${JSON.stringify(expr)}`);
+    return ok;
+  },
   schedule(expr: string, fn: () => unknown, opts?: Parameters<typeof nodeCron.schedule>[2]): ScheduledTask {
     const slot: SlotJob = { nama: null, expr };
     const task = nodeCron.schedule(
