@@ -16,7 +16,10 @@ function loadEnv(file) {
   try {
     for (const line of fs.readFileSync(file, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (m) env[m[1]] = m[2];
+      // Buang kutip pembungkus ("…" / '…'), seperti dotenv. Tanpa ini nilai
+      // berkutip terbawa apa adanya: SENIN_BRIEF_CRON="10 7 * * 1" (11 Nov 2026)
+      // gagal cron.validate dan Senin Brief tak terjadwal 8 hari tanpa log.
+      if (m) env[m[1]] = /^(["']).*\1$/.test(m[2]) ? m[2].slice(1, -1) : m[2];
     }
   } catch {
     /* .env.prod belum ada → app pakai default (mode dev/stub) */
