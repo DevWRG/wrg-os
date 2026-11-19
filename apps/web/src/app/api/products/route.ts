@@ -1,14 +1,16 @@
 import { gatewayFetch, relay } from "@/lib/gateway";
-import { sessionUser } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /accurate/items (katalog produk Accurate, mirror).
 // Dipakai form Deal (dropdown Produk). Katalog bersama (bukan data ber-scope),
-// cukup guard auth.
+// tapi tetap ikut izin menu: pemegang Pipeline (form Deal) atau Products. JANGAN
+// tambah /inventory — halaman Inventory membaca katalog lewat gatewayFetch di
+// server, jadi menambahkannya cuma melebarkan akses.
 export async function GET() {
-  const me = await sessionUser();
-  if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
+  const g = await requireFeature(["/products", "/pipeline"]);
+  if (!g.ok) return g.res;
   try {
     return relay(await gatewayFetch(`/accurate/items?limit=10000`));
   } catch {
