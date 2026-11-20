@@ -4,6 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
+import { NAV } from "@/lib/nav";
+
+// Judul menu dari katalog NAV menang — satu sumber judul untuk sidebar dan
+// breadcrumb (dulu breadcrumb punya daftar sendiri dan jatuh ke "Ga Helpdesk",
+// "Atk Stock In"). Daftar di bawah hanya untuk segmen yang bukan url menu.
+const JUDUL_MENU: Record<string, string> = Object.fromEntries(NAV.flatMap((g) => g.items.map((it) => [it.url, it.title])));
+
 // Label per segmen rute (gaya WRG-CRM). Fallback: kapitalisasi segmen.
 const LABELS: Record<string, string> = {
   "plan-report": "Resume Plan & Report",
@@ -65,7 +72,7 @@ const PATH_LABELS: Record<string, string> = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const labelOf = (seg: string, href: string) =>
-  PATH_LABELS[href] ?? LABELS[seg] ?? (UUID_RE.test(seg) ? "Detail" : null) ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  PATH_LABELS[href] ?? JUDUL_MENU[href] ?? LABELS[seg] ?? (UUID_RE.test(seg) ? "Detail" : null) ?? seg.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 export function Breadcrumbs() {
   const pathname = usePathname();
@@ -74,7 +81,7 @@ export function Breadcrumbs() {
   return (
     <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
       <Link href="/" className="text-muted-foreground hover:text-foreground shrink-0">
-        WRG CRM
+        WRG OS
       </Link>
       {segs.map((seg, i) => {
         const href = "/" + segs.slice(0, i + 1).join("/");
