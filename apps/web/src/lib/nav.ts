@@ -6,7 +6,7 @@
 import { CalendarCheck, Inbox,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
-  Send, FileText, ScrollText, UsersRound, Network,
+  Send, FileText, ScrollText, UsersRound,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
@@ -339,16 +339,19 @@ export const NAV: NavGroup[] = [
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
-      { title: "Spider Network", url: "/network", icon: Network },
-      // F157 — data 6 form PIC Divisi (migrasi 168/170/171). Sengaja menu
-      // TERSENDIRI, bukan tab di RACI Matrix / Spider Network: dua menu itu
-      // ber-grain KARYAWAN (raci_assignment) dan OBSERVASI chat WA
-      // (message_annotation), sedangkan ini grain POSISI & deklaratif dari form.
-      // Menumpangkannya akan membuat dua-duanya kehilangan makna.
-      // featureKey(url) = "sop-otomasi" → butuh Sync Fitur sekali di prod
-      // supaya barisnya muncul di matriks Akses Grup; sebelum itu hanya
-      // admin/superuser yang melihatnya (anti-lockout can()).
-      { title: "SOP & Otomasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW" },
+      // F157 — data 6 form PIC Divisi (migrasi 168/170/171): SOP & tingkat otomasi,
+      // RACI grain POSISI, kelengkapan form. RACI Matrix (grain KARYAWAN, bisa diedit)
+      // tetap menu sendiri.
+      //
+      // K14 (evaluasi menu 19 Nov 2026): Spider Network dilebur jadi tab "Peta
+      // Koordinasi". Premis lama ("Spider = observasi chat WA") sudah usang sejak
+      // 7 Sep 2026 — kedua menu membaca data form PIC yang sama. Key `network` tetap
+      // (features + path lama); tabKetat: accounting (network saja) & HoD (sop saja)
+      // masing-masing hanya melihat tabnya. /network/graph (A9) tetap dicadangkan.
+      {
+        title: "SOP & Peta Koordinasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW", tabKetat: true,
+        features: [{ key: "network", name: "SOP & Peta Koordinasi — tab Peta Koordinasi", path: "/network" }],
+      },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
       // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
       // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
