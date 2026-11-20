@@ -198,33 +198,38 @@ export function AsetTetapView({ ringkasan, canEdit }: { ringkasan: Ringkasan; ca
         </div>
       )}
       {err && <div className="text-destructive text-sm">Gagal memuat daftar: {err}</div>}
-      <DataTable
-        columns={columns}
-        data={data?.rows ?? []}
-        getKey={(r) => String(r.id)}
-        searchPlaceholder="Cari nomor / nama aset…"
-        empty={data ? "Tidak ada aset yang cocok." : "Memuat…"}
-        onRowClick={(r) => setBuka(r.id)}
-        toolbar={
-          <div className="flex flex-wrap items-center gap-2">
-            <FilterSelect label="Kelompok" value={prefix} onChange={(v) => { setPrefix(v); setPage(0); }} options={prefixOpsi} />
-            <FilterSelect label="Tipe" value={tipe} onChange={(v) => { setTipe(v); setPage(0); }} options={tipeOpsi} />
-            <FilterSelect label="Status" value={status} onChange={(v) => { setStatus(v); setPage(0); }} options={STATUS_OPSI} semua="Aktif" />
-          </div>
-        }
-        server={{
-          totalRows: data?.total_rows ?? 0,
-          page,
-          pageSize: size,
-          sort,
-          q,
-          pending,
-          onPageChange: setPage,
-          onPageSizeChange: (n) => { setSize(n); setPage(0); },
-          onSortChange: (s) => { setSort(s); setPage(0); },
-          onSearchChange: (v) => { setQ(v); setPage(0); },
-        }}
-      />
+      <Card>
+        <CardHeader><CardTitle className="text-base">Daftar aset</CardTitle></CardHeader>
+        <CardContent>
+          <DataTable
+            columns={columns}
+            data={data?.rows ?? []}
+            getKey={(r) => String(r.id)}
+            searchPlaceholder="Cari nomor / nama aset…"
+            empty={data ? "Tidak ada aset yang cocok." : "Memuat…"}
+            onRowClick={(r) => setBuka(r.id)}
+            toolbar={
+              <div className="flex flex-wrap items-center gap-2">
+                <FilterSelect label="Kelompok" value={prefix} onChange={(v) => { setPrefix(v); setPage(0); }} options={prefixOpsi} />
+                <FilterSelect label="Tipe" value={tipe} onChange={(v) => { setTipe(v); setPage(0); }} options={tipeOpsi} />
+                <FilterSelect label="Status" value={status} onChange={(v) => { setStatus(v); setPage(0); }} options={STATUS_OPSI} semua="Aktif" />
+              </div>
+            }
+            server={{
+              totalRows: data?.total_rows ?? 0,
+              page,
+              pageSize: size,
+              sort,
+              q,
+              pending,
+              onPageChange: setPage,
+              onPageSizeChange: (n) => { setSize(n); setPage(0); },
+              onSortChange: (s) => { setSort(s); setPage(0); },
+              onSearchChange: (v) => { setQ(v); setPage(0); },
+            }}
+          />
+        </CardContent>
+      </Card>
 
       <AsetDialog key={buka ?? "tutup"} id={buka} canEdit={canEdit} onClose={() => setBuka(null)} onSaved={(nomor) => { setTersimpan(nomor); void muat(); }} />
     </div>
