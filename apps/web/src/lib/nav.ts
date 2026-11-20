@@ -379,16 +379,25 @@ export const NAV: NavGroup[] = [
       // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
       // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
       { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
-      { title: "Digest History", url: "/digests", icon: History },
     ],
   },
   {
     label: "Monitor",
     items: [
-      { title: "Rekap", url: "/monitor/rekap", icon: MessagesSquare },
-      { title: "Resume", url: "/monitor/resume", icon: ScrollText },
-      { title: "Pola Komunikasi", url: "/monitor/pola", icon: Network },
-      { title: "Members", url: "/monitor/members", icon: Users },
+      // K1 (evaluasi menu 19 Nov 2026): Rekap + Resume + Pola Komunikasi + Members +
+      // Digest History → satu menu lima tab (repo/proxy monitor & tabel monitor_digest
+      // yang sama). Kelima key tetap (features + path lama; monitorGate & /api/digests
+      // memeriksa izin yang sama); tabKetat: pemegang Resume saja (Komite) tak membuka
+      // Rekap/digest.
+      {
+        title: "Monitor Grup WA", url: "/monitor/rekap", icon: MessagesSquare, tabKetat: true,
+        features: [
+          { key: "monitor-resume", name: "Monitor Grup WA — tab Resume Harian (AI)", path: "/monitor/resume" },
+          { key: "monitor-pola", name: "Monitor Grup WA — tab Pola Komunikasi", path: "/monitor/pola" },
+          { key: "monitor-members", name: "Monitor Grup WA — tab Anggota Grup WA", path: "/monitor/members" },
+          { key: "digests", name: "Monitor Grup WA — tab Riwayat Digest", path: "/digests" },
+        ],
+      },
     ],
   },
   {
