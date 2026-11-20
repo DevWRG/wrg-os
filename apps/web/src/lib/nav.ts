@@ -21,7 +21,6 @@ import {
   Hourglass,
   FileCheck2,
   Car,
-  ArrowLeftRight,
   Archive,
   Handshake,
   ClipboardList,
@@ -526,7 +525,10 @@ export const NAV: NavGroup[] = [
       // ke F132 juga di level MENU. Tab Tiket IT dicabut 11 Nov 2026 (diserap
       // Helpdesk GA, migrasi 306) — fitur "it-asset" ikut dibuang dari katalog.
       {
-        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        // K6 (evaluasi menu 19 Nov 2026): Relokasi Aset dilebur jadi tab "Riwayat
+        // Relokasi". Key `ga-relokasi` tetap (features + path lama); tabKetat:
+        // pemegang tab relokasi saja tak membuka data Aset GA.
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW", tabKetat: true,
         // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
         // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
         // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
@@ -534,14 +536,12 @@ export const NAV: NavGroup[] = [
         // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
         features: [
           { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
+          { key: "ga-relokasi", name: "Aset GA — tab Riwayat Relokasi", path: "/ga-relokasi" },
         ],
       },
       // F53 Stiker Aset & F50 Kendaraan Operasional — dulu di grup Operations,
       // dipindah ke General Affairs atas arahan user 5 Okt 2026 (pengelolanya
       // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
-      // Relokasi aset GA + berita acara bertanda tangan (13 Okt 2026) —
-      // menggantikan F40 "Relokasi Inventaris" (teks bebas, batch magang).
-      { title: "Relokasi Aset", url: "/ga-relokasi", icon: ArrowLeftRight, badge: "NEW" },
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
@@ -656,12 +656,16 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 export const adalahAdmin = (me: AccessUser | null): boolean => me?.role === "admin" || me?.superuser === true;
 
 // Izin atas menu INDUK saja: key induk + gate identitas induk sendiri, tak pernah
-// key/gate tab. Dipakai untuk data induk pada menu `tabKetat`.
+// key/gate tab hasil peleburan. Dipakai untuk data induk pada menu `tabKetat`.
+// Entri `features` TANPA `path` (mis. ga-finance-approval di Aset GA) adalah
+// sub-izin aksi di halaman induk itu sendiri, bukan menu lain yang dilebur —
+// tetap dihitung izin induk, supaya memasang tabKetat tak mencabut aksesnya.
 export function navOwnVisible(me: AccessUser | null, it: NavItem): boolean {
   if (it.hanyaAdmin) return adalahAdmin(me);
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
-  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+  if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
+  return (it.features ?? []).some((f) => !f.path && tabVisible(me, f));
 }
 
 // Izin atas satu tab (entri `features`) — key tab + gate identitas tab itu sendiri.

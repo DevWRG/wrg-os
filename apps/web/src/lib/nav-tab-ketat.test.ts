@@ -76,3 +76,10 @@ test("katalog fitur NAV asli tetap utuh: tiap key sekali, termasuk entri feature
   assert.equal(new Set(keys).size, keys.length);
   assert.ok(keys.includes("pricelist") && keys.includes("pricebook"));
 });
+
+test("entri features tanpa path = sub-izin induk (tetap izin induk saat tabKetat)", () => {
+  const it: NavItem = { ...INDUK, features: [...INDUK.features!, { key: "aksi-induk", name: "Induk — aksi" }] };
+  const me = u({ permissions: { "aksi-induk": perm() } });
+  assert.equal(navOwnVisible(me, it), true);
+  assert.equal(navGate(me, it), true, "BFF data induk");
+});
