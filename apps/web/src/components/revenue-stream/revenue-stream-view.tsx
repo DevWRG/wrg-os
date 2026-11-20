@@ -72,7 +72,7 @@ export function RevenueStreamView({ data, periode }: { data: StreamPayload | nul
           id="periode"
           className="border-input bg-background h-9 rounded-md border px-3 text-sm"
           value={periode}
-          onChange={(e) => router.push(`/revenue-stream?periode=${e.target.value}`)}
+          onChange={(e) => router.push(`/product-scorecard?tab=lini&periode=${e.target.value}`)}
         >
           {opsiPeriode(data.to).map((o) => (
             <option key={o.value} value={o.value}>{o.label}</option>
