@@ -15,7 +15,6 @@ import {
   Wrench,
   CalendarClock,
   Ticket,
-  PackageCheck,
   PenLine,
   PackagePlus, PackageMinus,
   CalendarCheck,
@@ -451,13 +450,20 @@ export const NAV: NavGroup[] = [
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
       { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
-      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
       // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
       // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
-      { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
+      //
+      // K3 (evaluasi menu 19 Nov 2026): Inbound Receiving (F36) dilebur jadi tab
+      // "Checklist Penerimaan" di sini. Key `inbound-receiving` TETAP (features +
+      // path lama → semua requireFeature("/inbound-receiving") memeriksa izin yang
+      // sama); tabKetat: pemegang tab Penerimaan saja tak bisa membuka data PO.
+      {
+        title: "PO & Penerimaan Barang", url: "/purchase-orders", icon: ClipboardList, badge: "NEW", tabKetat: true,
+        features: [{ key: "inbound-receiving", name: "PO & Penerimaan — tab Checklist Penerimaan", path: "/inbound-receiving" }],
+      },
       // F19 — scan buffer (di sini) + ED (F38) → usulan forecast, Supply
       // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
