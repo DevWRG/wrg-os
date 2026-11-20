@@ -225,8 +225,14 @@ export const NAV: NavGroup[] = [
       // grup dicentang di Akses Grup fallback-nya masih masuk akal (HoD/Direktur)
       // dan bukan tertutup untuk semua orang.
       { title: "Insentif Tim", url: "/insentif/tim", icon: Coins, badge: "NEW", show: canViewInsentifTim },
-      { title: "Customers", url: "/customers", icon: Building2 },
-      { title: "Accounts", url: "/accounts", icon: Contact, badge: "NEW" },
+      // K9 (evaluasi menu 19 Nov 2026): Customers (revenue/churn/win-back per pelanggan)
+      // dilebur ke Accounts jadi "Customer & Akun". Key `customers` tetap (features +
+      // path lama /customers → ?tab=revenue); tabKetat: pemegang customers saja tidak
+      // ikut membuka profil/kontak akun (/accounts/[id], /api/accounts).
+      {
+        title: "Customer & Akun", url: "/accounts", icon: Contact, badge: "NEW", tabKetat: true,
+        features: [{ key: "customers", name: "Customer & Akun — tab Revenue, Churn & Win-back", path: "/customers" }],
+      },
       { title: "AR Aging", url: "/ar", icon: Receipt },
       { title: "Sales Docs", url: "/sales-docs", icon: FileText, matchPrefix: ["/sph"] },
       { title: "Collection Drafts", url: "/collection-drafts", icon: Send },
