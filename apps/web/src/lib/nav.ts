@@ -179,7 +179,14 @@ export const NAV: NavGroup[] = [
       // F90 #ORDER — antrean pesanan AM dari WhatsApp untuk Admin Sales; izin sendiri (Sync Fitur).
       { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
-      { title: "Product Scorecard", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard },
+      // K15 (evaluasi menu 19 Nov 2026): Revenue per Lini (data sama: baris faktur ×
+      // lini) dilebur jadi tab di sini → menu "Kinerja Produk". Key `revenue-stream`
+      // tetap (features + path lama); tabKetat: pemegang tab lini saja (mis. Direktur)
+      // tak membuka data/API Scorecard.
+      {
+        title: "Kinerja Produk", url: "/product-scorecard", icon: TrendingUp, badge: "NEW", show: canViewProductScorecard, tabKetat: true,
+        features: [{ key: "revenue-stream", name: "Kinerja Produk — tab Revenue per Lini", path: "/revenue-stream" }],
+      },
       // F171 Permintaan Produk Non-Master — log Komite Product Development (permintaan lapangan di
       // luar 1.000 SKU). Izin sendiri, tertutup default; sub-fitur putusan Direksi & ambang.
       { title: "Permintaan Produk", url: "/permintaan-produk", icon: PackageSearch, badge: "NEW", show: canViewPermintaanProduk,
@@ -372,8 +379,6 @@ export const NAV: NavGroup[] = [
       // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
       // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
       { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
-      // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
-      { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
     ],
   },
