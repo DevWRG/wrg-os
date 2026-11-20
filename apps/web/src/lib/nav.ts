@@ -168,7 +168,13 @@ export const NAV: NavGroup[] = [
     label: "Sales",
     items: [
       { title: "Sales Calendar", url: "/calendar", icon: CalendarRange },
-      { title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW" },
+      // K12 (evaluasi menu 19 Nov 2026): Sales Alerts dilebur jadi tab "Aturan Alert".
+      // Key `sales-alerts` tetap (features + path lama; BFF alert = lib/sales-analytics-
+      // access → /sales-alerts). tabKetat: pemegang alert saja tak membaca data analitik.
+      {
+        title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW", tabKetat: true,
+        features: [{ key: "sales-alerts", name: "Sales Analytics — tab Aturan Alert", path: "/sales-alerts" }],
+      },
       { title: "Sales Command Center", url: "/sales-command", icon: Gauge, badge: "NEW", show: canViewSalesCommand },
       // F90 #ORDER — antrean pesanan AM dari WhatsApp untuk Admin Sales; izin sendiri (Sync Fitur).
       { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
@@ -178,7 +184,6 @@ export const NAV: NavGroup[] = [
       // luar 1.000 SKU). Izin sendiri, tertutup default; sub-fitur putusan Direksi & ambang.
       { title: "Permintaan Produk", url: "/permintaan-produk", icon: PackageSearch, badge: "NEW", show: canViewPermintaanProduk,
         features: [FITUR_PUTUSAN_PERMINTAAN] },
-      { title: "Sales Alerts", url: "/sales-alerts", icon: Bell, badge: "NEW" },
       { title: "Competitor Intel", url: "/competitor", icon: Swords },
       // F65 Leads DICABUT dari menu 13 Okt 2026 (keputusan user): #LEADS kini
       // langsung jadi deal Prospecting di Pipeline. Tanpa item menu, Sync Fitur
