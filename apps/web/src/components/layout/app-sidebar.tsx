@@ -128,7 +128,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
               aria-label="Cari menu"
               className="pr-10 pl-8"
             />
-            <kbd className="bg-muted text-muted-foreground pointer-events-none absolute top-[calc(50%+2px)] right-4 -translate-y-1/2 rounded border px-1 text-[10px] font-medium select-none">
+            <kbd className="bg-muted text-muted-foreground pointer-events-none absolute top-[calc(50%+2px)] right-4 -translate-y-1/2 rounded border px-1 text-[10px] font-medium select-none max-md:hidden">
               ⌘K
             </kbd>
           </div>
@@ -140,7 +140,7 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
           // Saat mencari atau sidebar diciutkan (ikon saja), semua grup terbuka.
           const buka = ciut || cari.trim() !== "" || group.label === grupAktif || terbuka.has(group.label);
           return (
-          <SidebarGroup key={group.label}>
+          <SidebarGroup key={group.label} className={buka ? undefined : "py-0"}>
             <SidebarGroupLabel
               render={<button type="button" />}
               onClick={() => toggleGrup(group.label)}
