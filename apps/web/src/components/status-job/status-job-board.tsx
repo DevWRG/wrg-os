@@ -49,6 +49,7 @@ export function StatusJobBoard() {
   const [jobs, setJobs] = useState<BarisJob[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sibuk, setSibuk] = useState(false);
+  const [buka, setBuka] = useState<string | null>(null);
 
   const muat = useCallback(async () => {
     setSibuk(true);
@@ -129,8 +130,12 @@ export function StatusJobBoard() {
                     <TableCell className="text-right whitespace-nowrap tabular-nums">
                       {j.jalan_7_hari}×{j.gagal_7_hari ? <span className="text-destructive"> · {j.gagal_7_hari} gagal</span> : null}
                     </TableCell>
-                    <TableCell className="max-w-md">
-                      <p className={`line-clamp-2 text-xs ${j.terakhir?.galat ? "text-destructive" : "text-muted-foreground"}`} title={j.terakhir?.galat ?? j.terakhir?.ringkasan ?? ""}>
+                    <TableCell className="max-w-md min-w-64 whitespace-normal">
+                      <p
+                        className={`cursor-pointer text-xs break-words [overflow-wrap:anywhere] ${buka === j.job ? "" : "line-clamp-2"} ${j.terakhir?.galat ? "text-destructive" : "text-muted-foreground"}`}
+                        title={j.terakhir?.galat ?? j.terakhir?.ringkasan ?? ""}
+                        onClick={() => setBuka((b) => (b === j.job ? null : j.job))}
+                      >
                         {j.terakhir?.galat ?? j.terakhir?.ringkasan ?? ""}
                       </p>
                     </TableCell>
