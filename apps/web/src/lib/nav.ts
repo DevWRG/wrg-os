@@ -429,9 +429,14 @@ export const NAV: NavGroup[] = [
     // mendefinisikan standar cetak dokumen.
     label: "Shipping",
     items: [
-      { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
-      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
+      // K4 (evaluasi menu 19 Nov 2026): Kurir Performance (F43, agregat atas data
+      // tracking ini) dilebur jadi tab "Kinerja Kurir". Key `courier-performance`
+      // tetap (features + path lama); tabKetat.
+      {
+        title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW", tabKetat: true,
+        features: [{ key: "courier-performance", name: "Tracking Pengiriman — tab Kinerja Kurir", path: "/courier-performance" }],
+      },
       // DOC — rekap dokumen per transaksi (7 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur/Arsip.
       { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC). Beda dari Shipments
