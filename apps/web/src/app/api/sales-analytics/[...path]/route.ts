@@ -2,6 +2,7 @@ import { gatewayFetch } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
 import { sessionUser } from "@/lib/admin-guard";
 import { featureAllowed } from "@/lib/feature-guard";
+import { salesAnalyticsMenus } from "@/lib/sales-analytics-access";
 
 export const dynamic = "force-dynamic";
 
@@ -16,23 +17,17 @@ export const dynamic = "force-dynamic";
 // memanggil /api/sales-analytics/* langsung dan melihat revenue seluruh
 // perusahaan. Ketahuan saat menambah tab E-Catalog (F72), 13 Okt 2026.
 //
-// BFF ini dipakai TIGA menu, jadi gerbangnya per sub-path — gerbang tunggal
-// /sales-analytics akan mematikan Kinerja Saya & Sales Alerts bagi yang punya
-// menu itu tapi tak punya Sales Analytics.
-function menuUntuk(sub0: string): string[] {
-  if (sub0 === "alerts") return ["/sales-alerts", "/sales-analytics"];
-  if (sub0 === "overview" || sub0 === "per-customer" || sub0 === "my-ar") return ["/sales-analytics", "/me"];
-  return ["/sales-analytics"];
-}
+// Peta sub-path → menu ada di lib/sales-analytics-access (alert = Sales Alerts
+// saja; evaluate = admin).
 
 async function proxy(req: Request, path: string[], method: string) {
   const me = await sessionUser();
   if (!me) return Response.json({ error: "unauthenticated" }, { status: 401 });
-  if (!menuUntuk(path[0] ?? "").some((m) => featureAllowed(me, m, "view"))) {
-    return Response.json({ error: "forbidden — tak punya izin untuk menu ini" }, { status: 403 });
-  }
   const sub = safeSubpath(path);
   if (sub === null) return badSubpath();
+  const menus = salesAnalyticsMenus(sub);
+  const boleh = menus ? menus.some((m) => featureAllowed(me, m, "view")) : me.role === "admin" || me.superuser === true;
+  if (!boleh) return Response.json({ error: "forbidden — tak punya izin untuk menu ini" }, { status: 403 });
   const { searchParams } = new URL(req.url);
   const qs = searchParams.toString();
   const headers: Record<string, string> = { "x-user-id": me.id };

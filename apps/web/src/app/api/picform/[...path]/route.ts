@@ -1,5 +1,8 @@
 import { gatewayFetch } from "@/lib/gateway";
 import { safeSubpath, badSubpath } from "@/lib/safe-subpath";
+import { requireAdmin } from "@/lib/admin-guard";
+import { requireFeature } from "@/lib/feature-guard";
+import { picformGate } from "@/lib/picform-access";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +15,10 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
   const sub = safeSubpath((await ctx.params).path);
   if (sub === null) return badSubpath();
+  // Izin per sub-path (lib/picform-access); segmen di luar peta = admin saja.
+  const menus = picformGate(sub);
+  const g = menus ? await requireFeature(menus) : await requireAdmin();
+  if (!g.ok) return g.res;
   const qs = new URL(req.url).searchParams.toString();
   try {
     const res = await gatewayFetch(`/picform/${sub}${qs ? `?${qs}` : ""}`);

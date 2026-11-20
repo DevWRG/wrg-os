@@ -1,9 +1,12 @@
 import { gatewayFetch } from "@/lib/gateway";
+import { requireFeature } from "@/lib/feature-guard";
 
 export const dynamic = "force-dynamic";
 
 // Gateway → apps/api GET /coaching/notes?am_id= (catatan coaching A11).
 export async function GET(req: Request) {
+  const g = await requireFeature("/coaching");
+  if (!g.ok) return g.res;
   const amId = new URL(req.url).searchParams.get("am_id");
   const qs = amId ? `?am_id=${encodeURIComponent(amId)}` : "";
   try {
