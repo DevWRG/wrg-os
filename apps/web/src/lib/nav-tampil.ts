@@ -18,7 +18,7 @@ export const GRUP_TAMPIL: { label: string; urls: string[] }[] = [
   { label: "Penjualan", urls: ["/pipeline", "/customers", "/accounts", "/ar", "/sales-docs", "/order-wa", "/demo-trial", "/permintaan-produk", "/lpse-tender", "/insentif/tim"] },
   { label: "Marketing", urls: ["/kampanye", "/pameran", "/brosur", "/competitor"] },
   { label: "Analitik", urls: ["/sales-analytics", "/product-scorecard", "/revenue-stream", "/pmf-scorecard", "/kohort", "/profitabilitas-area", "/report-library"] },
-  { label: "Produk & Harga", urls: ["/pricebook", "/pricebook/ringkasan", "/pricebook/setup", "/klasifikasi-produk", "/products", "/inventory"] },
+  { label: "Produk & Harga", urls: ["/pricebook", "/pricebook/ringkasan", "/pricebook/setup", "/klasifikasi-produk", "/products"] },
   { label: "KSO & HD", urls: ["/kso-komite", "/kso-kontrak", "/kso-alat", "/kso-produktivitas", "/kso-simulator", "/proyek-hd", "/hd-simulator"] },
   { label: "Aftersales & Teknisi", urls: ["/installations", "/service-tickets", "/maintenance", "/jadwal-teknisi", "/kinerja-teknisi", "/riwayat-alat", "/bon-sparepart", "/proficiency-tests"] },
   { label: "Gudang & Pembelian", urls: ["/stok-gudang", "/ed-watch", "/purchase-orders", "/forecast-submission", "/supplier-eta", "/suppliers"] },

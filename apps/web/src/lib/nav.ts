@@ -415,12 +415,17 @@ export const NAV: NavGroup[] = [
   {
     label: "Operations",
     items: [
-      { title: "Products", url: "/products", icon: Package },
+      // K2 (evaluasi menu 19 Nov 2026): Inventory (sumber sama: cermin accurate_item)
+      // dilebur jadi tab "Stok". Key `inventory` tetap (features + path lama); tabKetat.
+      // Stok Gudang & ED Watch sengaja TIDAK ikut (dipecah agar bisa di-grant terpisah).
+      {
+        title: "Katalog & Stok (Accurate)", url: "/products", icon: Package, tabKetat: true,
+        features: [{ key: "inventory", name: "Katalog & Stok — tab Stok", path: "/inventory" }],
+      },
       // Master klasifikasi 4 level + penerbit kode produk KK.PP.CC.SSS.NNNN
       // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
       // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
       { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
-      { title: "Inventory", url: "/inventory", icon: Boxes },
       { title: "Orders", url: "/orders", icon: ShoppingCart },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
