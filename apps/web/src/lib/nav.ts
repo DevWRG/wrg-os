@@ -565,10 +565,14 @@ export const NAV: NavGroup[] = [
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
       // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
       // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
-      { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
-      // F10 — alarm fakturis diam + beban akun fakturis, dari createDate/createdBy cermin Accurate.
-      // Kunci izin sendiri ("penerbitan-faktur"), default tertutup: butuh Sync Fitur + centang.
-      { title: "Penerbitan Faktur", url: "/penerbitan-faktur", icon: FileClock, badge: "NEW", show: canViewPenerbitanFaktur },
+      // K7 (evaluasi menu 19 Nov 2026): Penerbitan Faktur (F10 — alarm fakturis diam,
+      // beban akun fakturis, faktur revisi) dilebur jadi tab menu "Faktur" ini. Key
+      // `penerbitan-faktur` tetap (features + path lama); tabKetat: pemegang satu tab
+      // tak membuka data tab lainnya.
+      {
+        title: "Faktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur, tabKetat: true,
+        features: [{ key: "penerbitan-faktur", name: "Faktur — tab Penerbitan & Revisi Faktur", path: "/penerbitan-faktur", show: canViewPenerbitanFaktur }],
+      },
       // F10 (ambil alih F29) — register cek/giro keluar: kasir input → HoD Finance setuju → serahkan → cair.
       // Kunci izin sendiri ("register-cek"): tambah = kasir, ubah = penyetuju. Default tertutup.
       { title: "Register Cek", url: "/register-cek", icon: Banknote, badge: "NEW", show: canViewRegisterCek },
