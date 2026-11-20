@@ -35,10 +35,6 @@ export function RentangPeriode({ rentang, onGanti, memuat = false, galat }: {
   return (
     <Card>
       <CardContent className="flex flex-wrap items-center gap-2 py-3">
-        {PRESET.map(([k, l]) => (
-          <button key={k} type="button" disabled={memuat} onClick={() => ganti(presetRentang(k))}
-            className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50">{l}</button>
-        ))}
         <label className="text-muted-foreground flex items-center gap-1.5 text-xs">Dari
           <input type="date" value={rentang.from} disabled={memuat} onChange={(e) => ganti({ ...rentang, from: e.target.value })}
             className="border-input bg-background text-foreground rounded-md border px-2 py-1 text-xs" />
@@ -47,6 +43,10 @@ export function RentangPeriode({ rentang, onGanti, memuat = false, galat }: {
           <input type="date" value={rentang.to} disabled={memuat} onChange={(e) => ganti({ ...rentang, to: e.target.value })}
             className="border-input bg-background text-foreground rounded-md border px-2 py-1 text-xs" />
         </label>
+        {PRESET.map(([k, l]) => (
+          <button key={k} type="button" disabled={memuat} onClick={() => ganti(presetRentang(k))}
+            className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50">{l}</button>
+        ))}
         {memuat && <span className="text-muted-foreground text-xs">Memuat…</span>}
         {galat && <span className="text-xs text-rose-700 dark:text-rose-400">{galat}</span>}
       </CardContent>
