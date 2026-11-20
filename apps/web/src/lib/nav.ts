@@ -7,7 +7,7 @@ import {
   Banknote,
   LayoutDashboard, LayoutGrid, Building2, Package, Boxes, ShoppingCart, Truck,
   Factory, Workflow, Receipt, BarChart3, ClipboardCheck, History, Settings,
-  Send, FileText, ScrollText, GraduationCap, UsersRound, Network,
+  Send, FileText, ScrollText, UsersRound, Network,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
@@ -349,7 +349,12 @@ export const NAV: NavGroup[] = [
       // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
       { title: "NPK AM", url: "/npk/am", icon: Award, badge: "NEW", exact: true, show: canViewNpkAm },
       { title: "NPK AM (Saya)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
-      { title: "Raport Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList },
+      // K18 opsi C (evaluasi menu 19 Nov 2026): Coaching Notes dilebur jadi tab "Catatan
+      // Coaching". Key `coaching` tetap (features + path lama); tabKetat.
+      {
+        title: "Raport Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList, tabKetat: true,
+        features: [{ key: "coaching", name: "Raport Karyawan 360 — tab Catatan Coaching", path: "/coaching" }],
+      },
       { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
       { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
@@ -367,7 +372,6 @@ export const NAV: NavGroup[] = [
       // F59 — antrean approval yang menunggu Direktur. Izin 'direktur-inbox': fallback
       // role direktur/admin/superuser; butuh Sync Fitur + centang grup Direktur setelah deploy.
       { title: "Direktur Inbox", url: "/direktur-inbox", icon: Inbox, badge: "NEW", show: canViewDirekturInbox },
-      { title: "Coaching Notes", url: "/coaching", icon: GraduationCap },
       // Revenue per lini produk — dasar metric `revstream` (kartu Fafa, WatchPoint).
       { title: "Revenue per Lini", url: "/revenue-stream", icon: Coins, badge: "NEW" },
       { title: "Digest History", url: "/digests", icon: History },
