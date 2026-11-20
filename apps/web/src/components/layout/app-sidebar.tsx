@@ -7,6 +7,7 @@ import { ChevronDown, Search } from "lucide-react";
 
 import { NAV, devOnlyBadge, navVisible } from "@/lib/nav";
 import { lencanaMenu } from "@/lib/nav-baru";
+import { susunNav } from "@/lib/nav-tampil";
 import { grupTerbukaAwal, menuAktif, saringMenu } from "@/lib/sidebar-nav";
 import { type SessionUser } from "@/lib/use-session";
 import {
@@ -62,7 +63,8 @@ export function AppSidebar({ me }: { me: SessionUser | null }) {
   const ciut = state === "collapsed" && !isMobile;
 
   const nav = useMemo(
-    () => NAV.map((g) => ({ ...g, items: g.items.filter((it) => navVisible(me, it)) })).filter((g) => g.items.length > 0),
+    // Saring izin dulu, lalu susun ke grup & nama tampil (lib/nav-tampil).
+    () => susunNav(NAV.map((g) => ({ ...g, items: g.items.filter((it) => navVisible(me, it)) })).filter((g) => g.items.length > 0)),
     [me],
   );
 
