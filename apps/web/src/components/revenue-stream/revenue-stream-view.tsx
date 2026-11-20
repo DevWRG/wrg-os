@@ -1,6 +1,8 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { RentangPeriode, type Rentang } from "@/components/product-scorecard/rentang-periode";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -30,31 +32,24 @@ export interface StreamPayload {
   };
 }
 
-const BULAN = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
-];
 
-/** 8 bulan terakhir dihitung dari `akhir` (YYYY-MM-DD) — bukan dari waktu klien,
- *  supaya daftar periode tak bergeser saat tab dibuka lewat tengah malam. */
-function opsiPeriode(akhir: string): { value: string; label: string }[] {
-  const [y, m] = akhir.slice(0, 7).split("-").map(Number);
-  const out: { value: string; label: string }[] = [];
-  for (let i = 0; i < 8; i += 1) {
-    const d = new Date(Date.UTC(y, m - 1 - i, 1));
-    const val = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    out.push({ value: val, label: `${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()}` });
-  }
-  return out;
-}
 
 const pct = (v: number): string => `${v.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
 
-export function RevenueStreamView({ data, periode }: { data: StreamPayload | null; periode: string }) {
+// Periode memakai kontrol bersama Kinerja Produk (RentangPeriode, sama dengan tab
+// Scorecard) dan disimpan di URL (?tab=lini&from=&to=) — halaman server mengambil ulang.
+export function RevenueStreamView({ data, rentang }: { data: StreamPayload | null; rentang: Rentang }) {
   const router = useRouter();
+  const [memuat, mulai] = useTransition();
+  const ganti = (r: Rentang) => mulai(() => router.push(`/product-scorecard?tab=lini&from=${r.from}&to=${r.to}`, { scroll: false }));
 
   if (!data) {
-    return <EmptyState title="Data tak tersedia" description="Backend tidak merespons. Coba muat ulang." />;
+    return (
+      <div className="flex flex-col gap-4">
+        <RentangPeriode rentang={rentang} onGanti={ganti} memuat={memuat} />
+        <EmptyState title="Data tak tersedia" description="Data revenue per lini gagal dimuat. Coba muat ulang." />
+      </div>
+    );
   }
 
   const r = data.ringkasan;
@@ -66,20 +61,7 @@ export function RevenueStreamView({ data, periode }: { data: StreamPayload | nul
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <label htmlFor="periode" className="text-sm font-medium">Periode</label>
-        <select
-          id="periode"
-          className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-          value={periode}
-          onChange={(e) => router.push(`/product-scorecard?tab=lini&periode=${e.target.value}`)}
-        >
-          {opsiPeriode(data.to).map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <span className="text-muted-foreground text-sm">{data.from} → {data.to}</span>
-      </div>
+      <RentangPeriode rentang={rentang} onGanti={ganti} memuat={memuat} />
 
       {cakupanRendah ? (
         <Card className="border-amber-500/50 bg-amber-500/5">
