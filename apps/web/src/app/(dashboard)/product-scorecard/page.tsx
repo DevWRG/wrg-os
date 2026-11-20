@@ -12,6 +12,19 @@ import { RevenueStreamView, type StreamPayload } from "@/components/revenue-stre
 export const dynamic = "force-dynamic";
 
 const MONTH = /^\d{4}-\d{2}$/;
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+// Rentang tab Revenue per Lini: ?from=&to= (kontrol bersama RentangPeriode); ?periode=YYYY-MM
+// lama (tautan dari /revenue-stream) tetap dihormati; default = bulan berjalan (WIB).
+function rentangLini(sp: { periode?: string; from?: string; to?: string }): { from: string; to: string } {
+  if (sp.from && sp.to && ISO.test(sp.from) && ISO.test(sp.to) && sp.from <= sp.to) return { from: sp.from, to: sp.to };
+  const now = new Date(Date.now() + 7 * 3600_000);
+  const bulan = sp.periode && MONTH.test(sp.periode) ? sp.periode : now.toISOString().slice(0, 7);
+  const [y, m] = bulan.split("-").map(Number);
+  const akhirBulan = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+  const hariIni = now.toISOString().slice(0, 10);
+  return { from: `${bulan}-01`, to: akhirBulan < hariIni ? akhirBulan : hariIni };
+}
 
 // Kinerja Produk (K15, evaluasi menu 19 Nov 2026): Product Scorecard (F6) dan Revenue
 // per Lini memakai data yang sama (baris faktur × kategori/lini) dengan drill yang
@@ -19,7 +32,7 @@ const MONTH = /^\d{4}-\d{2}$/;
 // (induk, canViewProductScorecard), tab Revenue per Lini = `revenue-stream` (entri
 // features; /revenue-stream → ?tab=lini). Hanya tab aktif yang mengambil data — data
 // Scorecard (termasuk margin) tak pernah diambil untuk pemegang tab lini saja.
-export default async function KinerjaProdukPage({ searchParams }: { searchParams: Promise<{ tab?: string; periode?: string }> }) {
+export default async function KinerjaProdukPage({ searchParams }: { searchParams: Promise<{ tab?: string; periode?: string; from?: string; to?: string }> }) {
   const [me, sp] = await Promise.all([sessionUser(), searchParams]);
   const fLini = findNavItem("/product-scorecard")?.features?.find((f) => f.key === "revenue-stream");
   const tabs: DefTab[] = [];
@@ -38,17 +51,13 @@ export default async function KinerjaProdukPage({ searchParams }: { searchParams
   }
 
   if (aktif === "lini") {
-    // Periode divalidasi SEBELUM masuk query string: nilai sembarang akan diabaikan
-    // endpoint dan diam-diam jatuh ke bulan berjalan.
-    const now = new Date();
-    const bulanIni = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-    const periode = sp.periode && MONTH.test(sp.periode) ? sp.periode : bulanIni;
+    const rentang = rentangLini(sp);
     let data: StreamPayload | null = null;
     try {
-      const res = await gatewayFetch(`/reports/revenue-by-stream?periode=${periode}`);
+      const res = await gatewayFetch(`/reports/revenue-by-stream?from=${rentang.from}&to=${rentang.to}`);
       if (res.ok) data = (await res.json()) as StreamPayload;
     } catch { data = null; }
-    return <>{header}<PageTabs tabs={tabs} aktif={aktif} /><RevenueStreamView data={data} periode={periode} /></>;
+    return <>{header}<PageTabs tabs={tabs} aktif={aktif} /><RevenueStreamView data={data} rentang={rentang} /></>;
   }
 
   let data: DataScorecard | null = null;
