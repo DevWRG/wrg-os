@@ -26,7 +26,7 @@ export const GRUP_TAMPIL: { label: string; urls: string[] }[] = [
   { label: "Keuangan", urls: ["/uang-masuk", "/do-belum-faktur", "/collection-drafts", "/cn", "/doc-klaim", "/ap-three-way", "/register-cek", "/kas-station", "/bukti-pembayaran", "/aset-tetap"] },
   { label: "General Affairs", urls: ["/ga-helpdesk", "/fund-requests", "/dana-ops", "/ga-aset", "/asset-tag", "/vehicles", "/atk-stock-out", "/atk-master", "/vendor-management", "/ga-reporting"] },
   { label: "SDM & Organisasi", urls: ["/leave", "/holidays", "/overtime", "/onboarding", "/karyawan", "/npk", "/npk/am", "/people/org", "/people/raci", "/sop-otomasi", "/network", "/people/voice"] },
-  { label: "Pengawasan", urls: ["/monitor/rekap", "/monitor/resume", "/monitor/pola", "/monitor/members", "/digests", "/hitl", "/audit-findings"] },
+  { label: "Pengawasan", urls: ["/monitor/rekap", "/hitl", "/audit-findings"] },
   { label: "Admin", urls: ["/users", "/am-cabang", "/user-access", "/access-groups", "/sales/targets", "/people/hod-resolve", "/status-job", "/settings"] },
 ];
 
@@ -45,10 +45,6 @@ export const NAMA_TAMPIL: Record<string, string> = {
   "/npk/self": "NPK Saya (HoD)",
   "/npk/am": "NPK AM (Tim)",
   "/npk/am-self": "NPK Saya (AM)",
-  "/monitor/rekap": "Rekap Grup WA",
-  "/monitor/resume": "Resume Harian (AI)",
-  "/monitor/pola": "Pola Komunikasi",
-  "/monitor/members": "Anggota Grup WA",
   "/users": "Pengguna (Roster)",
   "/user-access": "Akun Login",
   "/settings": "Pengaturan",
