@@ -41,7 +41,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { can, canOrLegacy, hasPerms } from "@/lib/perms";
+import { canOrLegacy, hasPerms } from "@/lib/perms";
 import { canEditPricelistSetup, canViewPricelist, type AccessUser } from "@/lib/pricelist-access";
 import { canViewOnboarding } from "@/lib/onboarding-access";
 import { canViewPricebook, canViewPricebookSummary } from "@/lib/pricebook-access";
@@ -116,7 +116,26 @@ export interface NavItem {
   //   2. featureCatalog: key-nya tetap disemai ke katalog. Tanpa ini "Sync Fitur"
   //      menonaktifkan fitur yang menunya sudah lebur (dianggap zombie) → izin
   //      grup hilang tanpa satu pun pesan.
-  features?: { key: string; name: string }[];
+  //
+  // Untuk menu yang DILEBUR jadi tab (evaluasi menu 19 Nov 2026), entri juga membawa:
+  //   path — url menu lama. findNavItem mencocokkannya (prefiks terpanjang menang)
+  //          dan mengembalikan item sintetis ber-key lama, jadi semua
+  //          requireFeature("/path-lama") di BFF tetap memeriksa izin yang sama.
+  //   show — gate identitas lama MENU ITU (hanya berlaku untuk tab-nya). JANGAN
+  //          di-OR ke `show` induk: user di grup yang belum diatur akan lolos ke data
+  //          induk lewat kunci lama tab.
+  features?: NavFeature[];
+  // Induk hasil peleburan: pemegang key TAB boleh membuka URL induk persis (untuk
+  // melihat tab miliknya), tapi data induk — BFF requireFeature(url induk) dan rute
+  // anak induk — hanya untuk pemegang key INDUK (navOwnVisible). Tanpa flag ini
+  // navVisible meng-OR semua key tab, sehingga pemegang tab ikut membuka data induk.
+  tabKetat?: boolean;
+}
+export interface NavFeature {
+  key: string;
+  name: string;
+  path?: string;
+  show?: (me: AccessUser | null) => boolean;
 }
 export interface NavGroup { label: string; items: NavItem[] }
 
@@ -630,12 +649,34 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 //      (mis. AM dengan 'pricelist') terbentur gate fitur induknya.
 export const adalahAdmin = (me: AccessUser | null): boolean => me?.role === "admin" || me?.superuser === true;
 
-export function navVisible(me: AccessUser | null, it: NavItem): boolean {
+// Izin atas menu INDUK saja: key induk + gate identitas induk sendiri, tak pernah
+// key/gate tab. Dipakai untuk data induk pada menu `tabKetat`.
+export function navOwnVisible(me: AccessUser | null, it: NavItem): boolean {
   if (it.hanyaAdmin) return adalahAdmin(me);
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
-  if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
-  return (it.features ?? []).some((f) => can(me, f.key));
+  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+}
+
+// Izin atas satu tab (entri `features`) — key tab + gate identitas tab itu sendiri.
+// Selaras can() untuk entri tanpa `show` (perilaku lama Price Book/Komite KSO).
+export function tabVisible(me: AccessUser | null, f: NavFeature): boolean {
+  if (!hasPerms(me)) return f.show ? f.show(me) : false;
+  return canOrLegacy(me, f.key, f.show ? f.show(me) : false);
+}
+
+export function navVisible(me: AccessUser | null, it: NavItem): boolean {
+  if (navOwnVisible(me, it)) return true;
+  return (it.features ?? []).some((f) => tabVisible(me, f));
+}
+
+// Gerbang halaman/BFF untuk item yang ditemukan findNavItem. Menu `tabKetat`:
+// URL induk persis boleh dibuka pemegang tab (halamannya hanya merender tab yang
+// diizinkan); rute anak & data induk butuh izin induk.
+export function navGate(me: AccessUser | null, it: NavItem, pathname?: string): boolean {
+  if (!it.tabKetat) return navVisible(me, it);
+  const path = pathname?.replace(/\/+$/, "");
+  return path === it.url ? navVisible(me, it) : navOwnVisible(me, it);
 }
 
 // Halaman "rumah" untuk user ini. Default tetap Sales Overview; kalau user tak
@@ -656,12 +697,21 @@ export function homePath(me: AccessUser | null): string {
 // bila URL-nya diketik langsung). Cocokkan yang PALING panjang: /pricelist/setup
 // harus kena item Pricelist Setup, bukan Pricelist. Rute anak ikut induknya
 // (/visits/123 → Visits). Pathname di luar katalog menu → null (tak di-gate).
-export function findNavItem(pathname: string): NavItem | null {
+export function findNavItem(pathname: string, nav: NavGroup[] = NAV): NavItem | null {
   const path = pathname.replace(/\/+$/, "") || "/";
   let best: NavItem | null = null;
   let bestLen = -1;
-  for (const g of NAV) {
+  for (const g of nav) {
     for (const it of g.items) {
+      // Path menu lama yang dilebur jadi tab → item sintetis ber-key lama, supaya
+      // requireFeature("/path-lama") & gerbang rute tetap memeriksa izin tab itu.
+      for (const f of it.features ?? []) {
+        if (!f.path || (path !== f.path && !path.startsWith(`${f.path}/`))) continue;
+        if (f.path.length > bestLen) {
+          best = { title: f.name, url: f.path, icon: it.icon, feature: f.key, show: f.show };
+          bestLen = f.path.length;
+        }
+      }
       // `matchPrefix` WAJIB ikut dipertimbangkan, bukan cuma `url`. Ia menyatakan
       // "rute ini milik menu ini" — dan karena gate rute di (dashboard)/layout.tsx
       // memakai fungsi ini, prefiks yang tak ikut dihitung = rute yang TIDAK
