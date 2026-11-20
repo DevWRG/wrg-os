@@ -5,6 +5,9 @@ import type { GaAsset } from "@/components/tables/ga-assets-table";
 import type { GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
 import { sessionUser } from "@/lib/admin-guard";
 import { canApproveGaFinance } from "@/lib/ga-maintenance-access";
+import { findNavItem, navOwnVisible, tabVisible } from "@/lib/nav";
+import type { GaRelocation } from "@/components/tables/ga-relocation-table";
+import { RelokasiPanel } from "@/components/crm/ga-asset-view";
 import type { GaMaintenance } from "@/components/tables/ga-maintenance-table";
 import type { GaVendor } from "@/components/tables/ga-vendor-table";
 import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
@@ -68,9 +71,40 @@ async function getVendors(): Promise<GaVendor[]> {
   }
 }
 
-export default async function GaAsetPage() {
-  const [assets, categories, users, schedules, vendors, me] = await Promise.all([
-    getAssets(), getCategories(), getAppUsers(), getSchedules(), getVendors(), sessionUser(),
+async function getRelocations(): Promise<GaRelocation[] | null> {
+  try {
+    const res = await gatewayFetch("/ga-asset-relocations");
+    if (!res.ok) return null;
+    const data = (await res.json()) as { relocations: GaRelocation[] };
+    return data.relocations ?? [];
+  } catch {
+    return null;
+  }
+}
+
+// K6 (evaluasi menu 19 Nov 2026): Relokasi Aset dilebur jadi tab "Riwayat Relokasi".
+// Izin tetap dua: data Aset GA = key `ga-aset` (+ sub-izin ga-finance-approval),
+// tab relokasi = key `ga-relokasi`. Data yang tak diizinkan tak diambil sama sekali.
+export default async function GaAsetPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const [{ tab }, me] = await Promise.all([searchParams, sessionUser()]);
+  const induk = findNavItem("/ga-aset");
+  const fRelokasi = induk?.features?.find((f) => f.key === "ga-relokasi");
+  const bolehInduk = !induk || navOwnVisible(me, induk);
+  const bolehRelokasi = !!fRelokasi && tabVisible(me, fRelokasi);
+  const relokasi = bolehRelokasi ? await getRelocations() : undefined;
+
+  // Pemegang tab relokasi saja (tanpa izin Aset GA) → hanya riwayat relokasi.
+  if (!bolehInduk) {
+    return (
+      <>
+        <PageHeader title="Riwayat Relokasi Aset" description="Riwayat pindah lokasi aset GA beserta berita acara bertanda tangan." />
+        <RelokasiPanel rows={relokasi ?? null} />
+      </>
+    );
+  }
+
+  const [assets, categories, users, schedules, vendors] = await Promise.all([
+    getAssets(), getCategories(), getAppUsers(), getSchedules(), getVendors(),
   ]);
   return (
     <>
@@ -81,6 +115,7 @@ export default async function GaAsetPage() {
       <GaAssetView
         assets={assets} categories={categories} users={users}
         schedules={schedules} vendors={vendors} canApproveFinance={canApproveGaFinance(me)}
+        relokasi={relokasi} tabAwal={tab}
       />
     </>
   );

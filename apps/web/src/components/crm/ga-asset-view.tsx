@@ -8,6 +8,7 @@ import { GaAssetsTable, type GaAsset } from "@/components/tables/ga-assets-table
 import { GaAssetCategoriesTable, type GaAssetCategory } from "@/components/tables/ga-asset-categories-table";
 import { GaMaintenanceTable, type GaMaintenance } from "@/components/tables/ga-maintenance-table";
 import { GaVendorTable, type GaVendor } from "@/components/tables/ga-vendor-table";
+import { GaRelocationTable, type GaRelocation } from "@/components/tables/ga-relocation-table";
 import { AddGaAssetButton } from "@/components/crm/add-ga-asset-button";
 import { AddGaAssetCategoryButton } from "@/components/crm/add-ga-asset-category-button";
 import { AddGaMaintenanceButton } from "@/components/crm/add-ga-maintenance-button";
@@ -21,8 +22,14 @@ import type { AppUserOption } from "@/components/crm/ga-asset-pic-actions";
 // karena itu `users` dipakai dua tab sekaligus (picker PIC & approver).
 // `AppUserOption` di ga-maintenance-actions bentuknya identik dengan yang di
 // ga-asset-pic-actions ({ id, name }), jadi satu prop cukup untuk keduanya.
+//
+// Tab kelima "Riwayat Relokasi" (K6, evaluasi menu 19 Nov 2026): dulu menu Relokasi
+// Aset sendiri. Izinnya tetap key `ga-relokasi` — server mengirim `relokasi` HANYA
+// bila user berizin (undefined = tab tak tampil; null = gagal memuat).
+type TabGa = "aset" | "kategori" | "maintenance" | "vendor" | "relokasi";
+
 export function GaAssetView({
-  assets, categories, users, schedules, vendors, canApproveFinance,
+  assets, categories, users, schedules, vendors, canApproveFinance, relokasi, tabAwal,
 }: {
   assets: GaAsset[];
   categories: GaAssetCategory[];
@@ -30,20 +37,24 @@ export function GaAssetView({
   schedules: GaMaintenance[];
   vendors: GaVendor[];
   canApproveFinance: boolean;
+  relokasi?: GaRelocation[] | null;
+  tabAwal?: string;
 }) {
-  const [tab, setTab] = useState<"aset" | "kategori" | "maintenance" | "vendor">("aset");
+  const bolehRelokasi = relokasi !== undefined;
+  const [tab, setTab] = useState<TabGa>(tabAwal === "relokasi" && bolehRelokasi ? "relokasi" : "aset");
   const activeCategories = categories.filter((c) => c.active);
   const activeAssets = assets.filter((a) => a.active);
   const activeVendors = vendors.filter((v) => v.status === "active");
   const assetOptions = activeAssets.map((a) => ({
     id: a.id, asset_code: a.asset_code, nama: a.nama, category_id: a.category_id,
   }));
-  const TABS = [
+  const TABS: (readonly [TabGa, string])[] = [
     ["aset", "Aset"],
     ["kategori", "Kategori"],
     ["maintenance", "Maintenance"],
     ["vendor", "Vendor GA"],
-  ] as const;
+    ...(bolehRelokasi ? [["relokasi", "Riwayat Relokasi"] as const] : []),
+  ];
 
   return (
     <div className="space-y-4">
@@ -124,6 +135,12 @@ export function GaAssetView({
         </div>
       )}
 
+      {tab === "relokasi" && bolehRelokasi && (
+        <div role="tabpanel" id="panel-relokasi" aria-labelledby="tab-relokasi">
+          <RelokasiPanel rows={relokasi} />
+        </div>
+      )}
+
       {tab === "vendor" && (
         <div role="tabpanel" id="panel-vendor" aria-labelledby="tab-vendor">
           <Card>
@@ -138,5 +155,23 @@ export function GaAssetView({
         </div>
       )}
     </div>
+  );
+}
+
+// Isi tab Riwayat Relokasi — dulu seluruh halaman /ga-relokasi. Relokasi baru tetap
+// dibuat dari tombol Relokasi per aset di tab Aset.
+export function RelokasiPanel({ rows }: { rows: GaRelocation[] | null }) {
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        {!rows ? (
+          <EmptyState title="Data tidak tersedia" description="Riwayat relokasi gagal dimuat. Coba muat ulang halaman." />
+        ) : rows.length === 0 ? (
+          <EmptyState title="Belum ada relokasi" description="Buat relokasi dari tab Aset → tombol Relokasi pada aset yang dipindah." />
+        ) : (
+          <GaRelocationTable rows={rows} />
+        )}
+      </CardContent>
+    </Card>
   );
 }
