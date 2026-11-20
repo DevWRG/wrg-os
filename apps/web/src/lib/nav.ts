@@ -24,7 +24,6 @@ import {
   Archive,
   Handshake,
   ClipboardList,
-  HardHat,
   QrCode,
   Stamp,
   TrendingUp,
@@ -381,14 +380,19 @@ export const NAV: NavGroup[] = [
   {
     label: "Aftersales",
     items: [
-      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      // K16 (evaluasi menu 19 Nov 2026): Readiness Board (kapasitas teknisi, jadwal
+      // install, laporan lapangan) dilebur jadi tab di sini. Key `readiness-board`
+      // tetap (features + path lama); tabKetat.
+      {
+        title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW", tabKetat: true,
+        features: [{ key: "readiness-board", name: "Instalasi Alat — tab Kapasitas/Jadwal/Laporan", path: "/readiness-board" }],
+      },
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
       // F25 Uji Profisiensi Document Registry — sertifikat per RS, tracking
       // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
       // boleh), pola sama dgn F39/F134.
       { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
-      { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
       // Kinerja Teknisi — jadwal per teknisi + Plan & Report (waktu kerja, SLA tiket vs ETA, kepatuhan).
       // Kunci "kinerja-teknisi" (teknisi: hanya dirinya) + "kinerja-teknisi-semua" (HoD Aftersales: semua);
       // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
@@ -645,7 +649,6 @@ export const DEV_ONLY_URLS: ReadonlySet<string> = new Set([
   "/lpse-tender",
   "/maintenance",
   "/proficiency-tests",
-  "/readiness-board",
   "/service-tickets",
   "/supplier-eta",
 ]);
