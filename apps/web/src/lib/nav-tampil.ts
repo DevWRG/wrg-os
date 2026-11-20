@@ -15,7 +15,7 @@ export const GRUP_TAMPIL: { label: string; urls: string[] }[] = [
   { label: "Saya", urls: ["/me", "/raport", "/insentif", "/npk/self", "/npk/am-self"] },
   { label: "Dasbor", urls: ["/overview", "/executive", "/watchpoint", "/sales-command", "/direktur-inbox", "/approval-requests", "/briefings"] },
   { label: "Plan & Report", urls: ["/plan-report", "/calendar", "/visits", "/todos", "/reminders"] },
-  { label: "Penjualan", urls: ["/pipeline", "/customers", "/accounts", "/ar", "/sales-docs", "/order-wa", "/demo-trial", "/permintaan-produk", "/lpse-tender", "/insentif/tim"] },
+  { label: "Penjualan", urls: ["/pipeline", "/accounts", "/ar", "/sales-docs", "/order-wa", "/demo-trial", "/permintaan-produk", "/lpse-tender", "/insentif/tim"] },
   { label: "Marketing", urls: ["/kampanye", "/pameran", "/brosur", "/competitor"] },
   { label: "Analitik", urls: ["/sales-analytics", "/product-scorecard", "/pmf-scorecard", "/kohort", "/profitabilitas-area", "/report-library"] },
   { label: "Produk & Harga", urls: ["/pricebook", "/pricebook/ringkasan", "/pricebook/setup", "/klasifikasi-produk", "/products"] },
