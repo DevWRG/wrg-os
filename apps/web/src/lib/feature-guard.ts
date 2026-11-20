@@ -9,7 +9,7 @@
 // membuat approval atas nama orang lain.
 
 import { sessionUser, type SessionUserSrv } from "./admin-guard";
-import { featureKey, findNavItem, navVisible } from "./nav";
+import { featureKey, findNavItem, navGate } from "./nav";
 import { can, type Action } from "./perms";
 
 export type GuardResult = { ok: true; me: SessionUserSrv } | { ok: false; res: Response };
@@ -19,7 +19,10 @@ export type GuardResult = { ok: true; me: SessionUserSrv } | { ok: false; res: R
 export function featureAllowed(me: SessionUserSrv, path: string, action: Action): boolean {
   const item = findNavItem(path);
   if (!item) return false; // salah ketik path = tertutup, bukan terbuka
-  if (!navVisible(me, item)) return false;
+  // `path` = url menu pemilik data. Untuk induk `tabKetat`, BFF yang memanggil
+  // requireFeature(url induk) melayani DATA INDUK → butuh izin induk, bukan
+  // sekadar salah satu tab (navGate tanpa pathname = jalur data induk).
+  if (!navGate(me, item)) return false;
   if (action === "view") return true;
   // Lihat sudah lolos. Aksi tulis hanya dibatasi kalau matriks punya baris
   // untuk fitur ini — selaras canOrLegacy: belum diatur = ikut gerbang lihat.
