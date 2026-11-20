@@ -1,34 +1,8 @@
-import { gatewayFetch } from "@/lib/gateway";
-import { PageHeader } from "@/components/dashboard/page-header";
-import { ResumeView } from "@/components/monitor/resume-view";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-interface DigestData {
-  dates: string[];
-  date: string | null;
-  entries: { waktu: string | null; content: string }[];
-}
-
-async function getResume(): Promise<DigestData> {
-  try {
-    const res = await gatewayFetch(`/monitor/resume`);
-    if (res.ok) return (await res.json()) as DigestData;
-  } catch {
-    /* ignore */
-  }
-  return { dates: [], date: null, entries: [] };
-}
-
-export default async function MonitorResumePage() {
-  const initial = await getResume();
-  return (
-    <>
-      <PageHeader
-        title="Resume"
-        description="Resume eksekutif harian grup WhatsApp (ringkasan AI mid-day & end-of-day) — port wrg-monitor."
-      />
-      <ResumeView initial={initial} />
-    </>
-  );
+// Kini tab "Resume Harian (AI)" di menu Monitor Grup WA (K1, evaluasi menu 19 Nov 2026). Rute lama
+// dipertahankan sebagai redirect supaya tautan yang sudah beredar tidak 404. Path ini
+// tetap dimiliki entri features `monitor-resume` (findNavItem), jadi gerbang izinnya sama.
+export default function Redirect(): never {
+  redirect("/monitor/rekap?tab=resume");
 }

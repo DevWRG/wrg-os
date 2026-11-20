@@ -1,29 +1,8 @@
-import { gatewayFetch } from "@/lib/gateway";
-import { PageHeader } from "@/components/dashboard/page-header";
-import { DigestsView, type History } from "@/components/digests/digests-view";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-async function getHistory(): Promise<History | null> {
-  try {
-    const res = await gatewayFetch(`/digests`);
-    if (!res.ok) return null;
-    return (await res.json()) as History;
-  } catch {
-    return null;
-  }
-}
-
-export default async function DigestsPage() {
-  const data = await getHistory();
-
-  return (
-    <>
-      <PageHeader
-        title="Digest History"
-        description="Rekap & resume eksekutif monitor — riwayat teks + infografis, data live dari DB."
-      />
-      <DigestsView history={data} />
-    </>
-  );
+// Kini tab "Riwayat Digest" di menu Monitor Grup WA (K1, evaluasi menu 19 Nov 2026). Rute lama
+// dipertahankan sebagai redirect supaya tautan yang sudah beredar tidak 404. Path ini
+// tetap dimiliki entri features `digests` (findNavItem), jadi gerbang izinnya sama.
+export default function Redirect(): never {
+  redirect("/monitor/rekap?tab=riwayat");
 }
