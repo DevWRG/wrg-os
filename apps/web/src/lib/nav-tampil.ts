@@ -21,7 +21,7 @@ export const GRUP_TAMPIL: { label: string; urls: string[] }[] = [
   { label: "Produk & Harga", urls: ["/pricebook", "/pricebook/ringkasan", "/pricebook/setup", "/klasifikasi-produk", "/products", "/inventory"] },
   { label: "KSO & HD", urls: ["/kso-komite", "/kso-kontrak", "/kso-alat", "/kso-produktivitas", "/kso-simulator", "/proyek-hd", "/hd-simulator"] },
   { label: "Aftersales & Teknisi", urls: ["/installations", "/readiness-board", "/service-tickets", "/maintenance", "/jadwal-teknisi", "/kinerja-teknisi", "/riwayat-alat", "/bon-sparepart", "/proficiency-tests"] },
-  { label: "Gudang & Pembelian", urls: ["/stok-gudang", "/ed-watch", "/purchase-orders", "/inbound-receiving", "/forecast-submission", "/supplier-eta", "/suppliers"] },
+  { label: "Gudang & Pembelian", urls: ["/stok-gudang", "/ed-watch", "/purchase-orders", "/forecast-submission", "/supplier-eta", "/suppliers"] },
   { label: "Pengiriman & Dokumen", urls: ["/orders", "/shipments", "/shipment-tracking", "/courier-performance", "/pickup-plan", "/doc-tracker", "/arsip-dokumen", "/print-spec"] },
   { label: "Keuangan", urls: ["/uang-masuk", "/do-belum-faktur", "/penerbitan-faktur", "/collection-drafts", "/cn", "/doc-klaim", "/ap-three-way", "/register-cek", "/kas-station", "/bukti-pembayaran", "/aset-tetap"] },
   { label: "General Affairs", urls: ["/ga-helpdesk", "/fund-requests", "/dana-ops", "/ga-aset", "/ga-relokasi", "/asset-tag", "/vehicles", "/atk-stock-out", "/atk-master", "/atk-stock-in", "/atk-stock-opname", "/vendor-management", "/ga-reporting"] },

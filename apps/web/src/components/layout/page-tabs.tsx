@@ -8,7 +8,7 @@
 // dengan Produktivitas KSO: bilah tab di kartunya sendiri.
 
 import { useCallback } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,14 +17,15 @@ import type { DefTab } from "@/lib/page-tabs";
 export function PageTabs({ tabs, aktif }: { tabs: readonly DefTab[]; aktif: string }) {
   const router = useRouter();
   const pathname = usePathname();
-  const params = useSearchParams();
 
   const pindah = useCallback((v: string) => {
-    const q = new URLSearchParams(params.toString());
-    if (v === tabs[0]?.key) q.delete("tab"); else q.set("tab", v);
+    // Filter/halaman milik satu tab (q, status, page, …) tak berlaku di tab lain —
+    // tiap tab dulunya halaman sendiri. Berganti tab = mulai bersih.
+    const q = new URLSearchParams();
+    if (v !== tabs[0]?.key) q.set("tab", v);
     const s = q.toString();
     router.replace(s ? `${pathname}?${s}` : pathname, { scroll: false });
-  }, [params, pathname, router, tabs]);
+  }, [pathname, router, tabs]);
 
   // Satu tab saja (user hanya berizin ke satu bagian) → tak perlu bilah tab.
   if (tabs.length < 2) return null;
