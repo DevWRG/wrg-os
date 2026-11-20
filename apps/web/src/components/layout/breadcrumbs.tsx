@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
 import { NAV } from "@/lib/nav";
+import { namaMenu } from "@/lib/nav-tampil";
 
 // Judul menu dari katalog NAV menang — satu sumber judul untuk sidebar dan
 // breadcrumb (dulu breadcrumb punya daftar sendiri dan jatuh ke "Ga Helpdesk",
 // "Atk Stock In"). Daftar di bawah hanya untuk segmen yang bukan url menu.
-const JUDUL_MENU: Record<string, string> = Object.fromEntries(NAV.flatMap((g) => g.items.map((it) => [it.url, it.title])));
+const JUDUL_MENU: Record<string, string> = Object.fromEntries(NAV.flatMap((g) => g.items.map((it) => [it.url, namaMenu(it)])));
 
 // Label per segmen rute (gaya WRG-CRM). Fallback: kapitalisasi segmen.
 const LABELS: Record<string, string> = {
