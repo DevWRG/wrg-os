@@ -358,7 +358,9 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       )}
 
 
-      <div className="flex flex-wrap gap-1 rounded-lg border p-1">
+      {/* Bilah tab = kartu putih (bg-card + bayangan kartu), bukan sekadar garis tepi —
+          di mode terang garis tepi saja melebur ke latar halaman. */}
+      <div className="bg-card border-border flex flex-wrap gap-1 rounded-2xl border p-1.5 shadow-[var(--shadow-card)]">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
@@ -412,7 +414,7 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
           <Kpi label="Customer" value={String(data.kpi.customers)} />
           <Kpi label="Achievement" value={fmtPct(data.kpi.achievement_pct)} />
         </div>
-        <TrendChart points={data.trend} />
+        <Card><CardHeader><CardTitle className="text-base">Tren Revenue Harian</CardTitle></CardHeader><CardContent><TrendChart points={data.trend} /></CardContent></Card>
       </div>
     );
   }
