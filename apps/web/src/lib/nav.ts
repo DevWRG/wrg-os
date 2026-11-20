@@ -16,7 +16,7 @@ import {
   CalendarClock,
   Ticket,
   PenLine,
-  PackagePlus, PackageMinus,
+  PackageMinus,
   CalendarCheck,
   Hourglass,
   FileCheck2,
@@ -503,19 +503,24 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
-      { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
+      // K5 opsi B (evaluasi menu 19 Nov 2026): ATK Master + Stock In + Stock Opname
+      // = pekerjaan tim GA → satu menu "Kelola ATK" tiga tab. Key atk-stock-in &
+      // atk-stock-opname tetap (features + path lama); tabKetat. Stock Out TETAP
+      // menu sendiri (self-service karyawan) — lihat catatan F49 di bawah.
+      {
+        title: "Kelola ATK", url: "/atk-master", icon: PenLine, badge: "NEW", tabKetat: true,
+        features: [
+          { key: "atk-stock-in", name: "Kelola ATK — tab Barang Masuk", path: "/atk-stock-in" },
+          { key: "atk-stock-opname", name: "Kelola ATK — tab Stock Opname", path: "/atk-stock-opname" },
+        ],
+      },
       // F49 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
       // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
       // mana pun (self-service pengambilan barang). Belum di-gate identitas
       // ("show") krn sistem ini belum punya konsep departemen/tim di data
       // user — Direktur atur siapa boleh apa lewat Akses Grup (feature key
       // "atk-stock-in" vs "atk-stock-out", auto dari url).
-      { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
       { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
-      // F136: hitung fisik vs stok sistem. Penyesuaian selisih dibuat lewat
-      // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
-      // baru — menu ini cuma beda submenu/konteks.
-      { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
       // F140 Vendor Management + Contract Expiry Alerts — master vendor/partner
       // lokal + riwayat kontrak, status masa berlaku computed di query (tanpa
       // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),

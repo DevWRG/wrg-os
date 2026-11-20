@@ -24,7 +24,7 @@ export const GRUP_TAMPIL: { label: string; urls: string[] }[] = [
   { label: "Gudang & Pembelian", urls: ["/stok-gudang", "/ed-watch", "/purchase-orders", "/forecast-submission", "/supplier-eta", "/suppliers"] },
   { label: "Pengiriman & Dokumen", urls: ["/orders", "/shipments", "/shipment-tracking", "/pickup-plan", "/doc-tracker", "/arsip-dokumen", "/print-spec"] },
   { label: "Keuangan", urls: ["/uang-masuk", "/do-belum-faktur", "/collection-drafts", "/cn", "/doc-klaim", "/ap-three-way", "/register-cek", "/kas-station", "/bukti-pembayaran", "/aset-tetap"] },
-  { label: "General Affairs", urls: ["/ga-helpdesk", "/fund-requests", "/dana-ops", "/ga-aset", "/asset-tag", "/vehicles", "/atk-stock-out", "/atk-master", "/atk-stock-in", "/atk-stock-opname", "/vendor-management", "/ga-reporting"] },
+  { label: "General Affairs", urls: ["/ga-helpdesk", "/fund-requests", "/dana-ops", "/ga-aset", "/asset-tag", "/vehicles", "/atk-stock-out", "/atk-master", "/vendor-management", "/ga-reporting"] },
   { label: "SDM & Organisasi", urls: ["/leave", "/holidays", "/overtime", "/onboarding", "/karyawan", "/coaching", "/npk", "/npk/am", "/people/org", "/people/raci", "/sop-otomasi", "/network", "/people/voice"] },
   { label: "Pengawasan", urls: ["/monitor/rekap", "/monitor/resume", "/monitor/pola", "/monitor/members", "/digests", "/hitl", "/audit-findings"] },
   { label: "Admin", urls: ["/users", "/am-cabang", "/user-access", "/access-groups", "/sales/targets", "/people/hod-resolve", "/status-job", "/settings"] },
@@ -59,6 +59,7 @@ export const NAMA_TAMPIL: Record<string, string> = {
   "/fund-requests": "Ajukan Dana Operasional",
   "/dana-ops": "Realisasi Dana Ops",
   "/ga-reporting": "Laporan GA",
+  "/atk-stock-out": "Ambil ATK",
 };
 
 export function namaMenu(it: Pick<NavItem, "url" | "title">): string {
