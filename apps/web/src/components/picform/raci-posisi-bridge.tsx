@@ -205,8 +205,7 @@ export function RaciPosisiBridge({
     return (
       <Card><CardContent className="pt-6">
         <p className="text-muted-foreground">
-          Data jembatan posisi tidak tersedia. Pastikan <code>apps/api</code> jalan dan{" "}
-          <code>scripts/ops/posisi-employee-match.mjs --apply</code> sudah dijalankan.
+          Data jembatan posisi belum tersedia. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       </CardContent></Card>
     );

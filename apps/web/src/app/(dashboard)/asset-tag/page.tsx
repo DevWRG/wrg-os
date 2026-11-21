@@ -25,7 +25,7 @@ export default async function AssetTagPage() {
         description="Registry aset yang ditag QR-code + cetak stiker + riwayat verifikasi fisik berkala."
       />
       {!assets ? (
-        <p className="text-muted-foreground text-sm">Data tidak tersedia — pastikan apps/api jalan & DATABASE_URL terisi.</p>
+        <p className="text-muted-foreground text-sm">Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.</p>
       ) : (
         <AssetTagView assets={assets} />
       )}

@@ -105,7 +105,7 @@ export async function PoSection({ sp }: { sp: PoSearchParams }) {
               pilih tab status yang datanya kosong bikin tombolnya ikut hilang. */}
           <PoStatusFilter q={q} status={status} />
           {!rows ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terhubung." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : matched === 0 ? (
             <EmptyState
               title={q || status ? "Tidak ada PO untuk filter ini" : "Belum ada PO"}

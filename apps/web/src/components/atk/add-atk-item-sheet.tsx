@@ -73,7 +73,7 @@ export function AddAtkItemSheet({ categories, suppliers }: { categories: AtkItem
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Barang ATK</SheetTitle>
-          <SheetDescription>Katalog barang ATK (F134) — prasyarat register stok masuk/keluar (F49), termasuk Materai (F54) sbg kategori transaksi.</SheetDescription>
+          <SheetDescription>Katalog barang ATK — prasyarat register stok masuk/keluar, termasuk Materai sbg kategori transaksi.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

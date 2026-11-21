@@ -22,14 +22,14 @@ export default async function FundRequestsPage() {
     <>
       <PageHeader
         title="Pengajuan Dana Operasional"
-        description="Ajukan dana operasional — mengalir HOD lalu Direktur (F138)."
+        description="Ajukan dana operasional — mengalir HOD lalu Direktur."
         action={<AddFundRequestSheet />}
       />
       <Card>
         <CardContent className="pt-6">
           {!rows ? (
             <p className="text-muted-foreground">
-              Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+              Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
             </p>
           ) : rows.length === 0 ? (
             <p className="text-muted-foreground">Belum ada pengajuan dana operasional. Tambah via tombol di atas.</p>

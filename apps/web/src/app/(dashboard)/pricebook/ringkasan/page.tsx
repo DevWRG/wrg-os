@@ -35,7 +35,7 @@ export default async function PricebookRingkasanPage() {
     <>
       <PageHeader
         title="Ringkasan Price Book"
-        description="Bacaan portofolio keagenan: nilai katalog per lini, sebaran brand & principal, tier diskon, rentang harga, konsentrasi principal, dan cakupan terhadap item Accurate. Tanpa HPP/margin. (F142)"
+        description="Bacaan portofolio keagenan: nilai katalog per lini, sebaran brand & principal, tier diskon, rentang harga, konsentrasi principal, dan cakupan terhadap item Accurate. Tanpa HPP/margin."
       />
       <RingkasanTab s={summary} />
     </>

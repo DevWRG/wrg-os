@@ -156,7 +156,7 @@ export function PricebookSetupTable({
   }, [rows, filter]);
 
   if (rows === null) {
-    return <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL aktif." />;
+    return <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />;
   }
   if (rows.length === 0) {
     return (

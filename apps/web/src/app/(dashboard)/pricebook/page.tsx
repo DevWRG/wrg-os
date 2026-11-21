@@ -44,7 +44,7 @@ export default async function PricebookPage() {
     <>
       <PageHeader
         title="Price Book & Pricelist"
-        description="Harga keagenan yang boleh dikutip ke faskes — yang sudah dipublikasikan HoD Business dari Setup Harga: Price List · Diskon Maks · Nett terendah (lantai) · Nett+PPN 11%. (F142)"
+        description="Harga keagenan yang boleh dikutip ke faskes — yang sudah dipublikasikan HoD Business dari Setup Harga: Price List · Diskon Maks · Nett terendah (lantai) · Nett+PPN 11%."
       />
       <PricebookView harga={hargaPanel} />
     </>

@@ -32,7 +32,7 @@ export default async function ExecutivePage({
     <>
       <PageHeader
         title="Executive Command Center"
-        description="Single-pane-of-glass Direktur: ringkasan hari ini, radar AM, portfolio outlet, intel dormant, dan baseline KPI. (F76)"
+        description="Single-pane-of-glass Direktur: ringkasan hari ini, radar AM, portfolio outlet, intel dormant, dan baseline KPI."
       />
       <ExecutiveDashboard initial={initial} initialView={sp.view} access={access ?? "full"} />
     </>

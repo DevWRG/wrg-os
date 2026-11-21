@@ -94,8 +94,7 @@ export default async function PricebookSetupPage({ searchParams }: { searchParam
         <HppKonversiPanel canEdit={canEditHppKonversi(me)} />
       ) : !pb ? (
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code> dan migrasi{" "}
-          <code>073_pricebook_setup.sql</code> + <code>077_pricebook_setup_publish.sql</code> sudah diterapkan.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       ) : (
         <div className="min-w-0">

@@ -91,7 +91,7 @@ export function ShipmentTrackingTable({ shipments }: { shipments: ShipmentTracki
     },
     {
       id: "bukti",
-      header: "Bukti (F93)",
+      header: "Bukti",
       cell: (s) =>
         s.status !== "bast" ? (
           <span className="text-muted-foreground text-xs">—</span>

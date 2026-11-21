@@ -61,8 +61,7 @@ function Kosong() {
     <Card>
       <CardContent className="pt-6">
         <p className="text-muted-foreground">
-          Data form PIC tidak tersedia. Pastikan <code>apps/api</code> jalan dan datanya sudah
-          diimpor (<code>scripts/ops/pic-form-import.mjs --apply</code>).
+          Data form PIC belum tersedia. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       </CardContent>
     </Card>

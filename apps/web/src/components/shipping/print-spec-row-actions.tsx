@@ -107,7 +107,7 @@ export function PrintSpecRowActions({ row }: { row: PrintSpecRow }) {
         <SheetContent side="right" className="w-full sm:max-w-md">
           <SheetHeader>
             <SheetTitle>Edit Spec Cetak — {row.document_type}</SheetTitle>
-            <SheetDescription>Standar cetak dokumen (F44).</SheetDescription>
+            <SheetDescription>Standar cetak dokumen.</SheetDescription>
           </SheetHeader>
           <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
             <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

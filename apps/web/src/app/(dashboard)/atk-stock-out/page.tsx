@@ -37,12 +37,12 @@ export default async function AtkStockOutPage() {
     <>
       <PageHeader
         title="ATK Stock Out"
-        description="Ambil/pakai barang ATK & Materai — bisa dicatat tim mana pun (F49, termasuk kategori transaksi Materai F54), bukan cuma General Affairs. Cek ketersediaan dulu di tab Cek Stok."
+        description="Ambil/pakai barang ATK & Materai — bisa dicatat tim mana pun (termasuk kategori transaksi Materai), bukan cuma General Affairs. Cek ketersediaan dulu di tab Cek Stok."
       />
       {!item || !mov || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 132_atk_stock_movement.sql + 137_atk_transaction_category.sql sudah diterapkan."
+          description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
         />
       ) : (
         <AtkStockOutClient

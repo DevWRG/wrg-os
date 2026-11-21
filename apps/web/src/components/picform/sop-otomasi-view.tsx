@@ -265,8 +265,7 @@ export function SopOtomasiView({
     return (
       <Card><CardContent className="pt-6">
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dan data form PIC sudah
-          diimpor (<code>scripts/ops/pic-form-import.mjs --apply</code>).
+          Data form PIC belum tersedia. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       </CardContent></Card>
     );

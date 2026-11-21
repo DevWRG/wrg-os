@@ -709,7 +709,7 @@ function LeversView({ d }: { d: LeversData | undefined }) {
           ))}
         </div>
       )}
-      <p className="flex items-center gap-2 text-[11.5px] text-muted-foreground"><Info className="size-3.5" /> Prioritas impact × urgency × ease · sintesis dari stuck deals (F1) · red flags (F76) · AR&gt;90 · dormant. Cache 6 jam — pakai Refresh untuk generate ulang.</p>
+      <p className="flex items-center gap-2 text-[11.5px] text-muted-foreground"><Info className="size-3.5" /> Prioritas impact × urgency × ease · sintesis dari stuck deals · red flags · AR&gt;90 · dormant. Cache 6 jam — pakai Refresh untuk generate ulang.</p>
     </div>
   );
 }
