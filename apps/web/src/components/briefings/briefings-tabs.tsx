@@ -27,7 +27,7 @@ export function BriefingsTabs({ a10, senin, mingguan }: { a10: ReactNode; senin:
 
   return (
     <Tabs value={tab} onValueChange={(v) => pindah(String(v))} className="gap-4">
-      <TabsList>
+      <TabsList className="max-w-full justify-start overflow-x-auto">
         <TabsTrigger value={TAB_A10}>Briefing Eksekutif (A10)</TabsTrigger>
         <TabsTrigger value={TAB_SENIN}>Senin Brief</TabsTrigger>
         <TabsTrigger value={TAB_MINGGUAN}>Briefing Mingguan</TabsTrigger>
