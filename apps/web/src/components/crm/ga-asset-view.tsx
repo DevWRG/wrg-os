@@ -58,8 +58,10 @@ export function GaAssetView({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div role="tablist" aria-label="Tampilan Aset GA" className="flex w-fit gap-1 rounded-lg border p-1">
+      {/* Di layar sempit bilah tab digeser sendiri (bukan melebarkan halaman) dan
+          tombol Tambah turun ke baris berikutnya. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div role="tablist" aria-label="Tampilan Aset GA" className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg border p-1">
           {TABS.map(([k, lbl]) => (
             <button
               key={k}
@@ -68,7 +70,7 @@ export function GaAssetView({
               aria-controls={`panel-${k}`}
               id={`tab-${k}`}
               onClick={() => setTab(k)}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+              className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium ${tab === k ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
             >
               {tab === k ? <span aria-hidden="true">• </span> : null}
               {lbl}

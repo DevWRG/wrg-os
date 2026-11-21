@@ -25,7 +25,7 @@ export function AuditFindingsView({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {STATUS_FILTERS.map(([k, lbl]) => (
             <Button key={k} size="sm" variant={statusFilter === k ? "default" : "outline"} aria-pressed={statusFilter === k} onClick={() => setStatusFilter(k)}>
@@ -33,7 +33,7 @@ export function AuditFindingsView({
             </Button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {canManageConfig && (
             <Button size="sm" variant="outline" render={<Link href="/audit-findings/config" />} nativeButton={false}>
               <Settings /> Config Chain
