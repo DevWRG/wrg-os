@@ -95,7 +95,7 @@ export function KlasifikasiView({
   const [tab, setTab] = useState<TabKey>("ringkasan");
 
   if (!taxonomy || !codes || !summary) {
-    return <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL aktif." />;
+    return <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />;
   }
   if (summary.taxonomy.kategori === 0) {
     return (

@@ -31,8 +31,7 @@ export function KoordinasiView({ graf }: { graf: KoordGraf | null }) {
     return (
       <Card><CardContent className="pt-6">
         <p className="text-muted-foreground">
-          Data koordinasi tidak tersedia. Pastikan <code>apps/api</code> jalan dan data form PIC
-          sudah diimpor (<code>scripts/ops/pic-form-import.mjs --apply</code>).
+          Data koordinasi belum tersedia. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       </CardContent></Card>
     );

@@ -54,7 +54,7 @@ export default async function BriefingsPage() {
 
   const a10 = !briefings ? (
       <p className="text-muted-foreground">
-        Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+        Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
       </p>
     ) : briefings.length === 0 ? (
       <p className="text-muted-foreground">Belum ada briefing. Jalankan agen A10.</p>

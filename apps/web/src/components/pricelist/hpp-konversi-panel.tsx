@@ -133,7 +133,7 @@ export function HppKonversiPanel({ canEdit }: { canEdit: boolean }) {
       {galat && (
         <Card className="border-destructive/40">
           <CardContent className="text-destructive pt-6 text-sm">
-            Data tidak tersedia: {galat}. Pastikan migrasi <code>309_hpp_konversi_satuan.sql</code> sudah diterapkan.
+            Data belum bisa dimuat: {galat}. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
           </CardContent>
         </Card>
       )}

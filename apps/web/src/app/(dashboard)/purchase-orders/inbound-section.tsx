@@ -58,7 +58,7 @@ export async function InboundSection({ q: qMentah }: { q?: string }) {
       <Card>
         <CardContent className="pt-6">
           {!rows ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terhubung." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : rows.length === 0 ? (
             <EmptyState title="Belum ada penerimaan barang" description="Penerimaan Barang dibuat di Accurate. Klik Sinkron dari Accurate di atas untuk menyalinnya." />
           ) : (

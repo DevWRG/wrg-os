@@ -194,6 +194,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
   // mendapat daftar kosong → kolom AM tak tampil, deal tetap atas namanya.
   const [amList, setAmList] = useState<KandidatAm[]>([]);
   const [products, setProducts] = useState<string[]>([]);
+  const [productsErr, setProductsErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -204,12 +205,17 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
       try {
         const res = await fetch("/api/products");
         const data = await res.json().catch(() => ({}));
+        // Tanpa pesan ini dropdown Produk cuma tampil kosong saat API menolak/gagal.
+        if (!res.ok) {
+          if (alive) setProductsErr(res.status === 403 ? "Anda tidak punya akses ke katalog produk." : `Daftar produk gagal dimuat (${res.status}).`);
+          return;
+        }
         const names = Array.isArray(data?.rows)
           ? uniqSorted((data.rows as { name?: string | null }[]).map((r) => r.name))
           : [];
         if (alive) setProducts(names);
       } catch {
-        if (alive) setProducts([]);
+        if (alive) { setProducts([]); setProductsErr("Daftar produk gagal dimuat — periksa koneksi lalu buka ulang form."); }
       }
     })();
     return () => { alive = false; };
@@ -300,6 +306,7 @@ export function DealFormModal({ mode, deal, onClose, brands = [], cabangs = [], 
           </label>
           <label className="text-sm"><Lbl>Produk</Lbl>
             <Combo value={form.product} onChange={(v) => set("product", v)} options={products} placeholder="cari produk Accurate…" />
+            {productsErr && <span className="mt-1 block text-xs text-destructive">{productsErr}</span>}
           </label>
 
           <label className="text-sm"><Lbl>Model Kerjasama</Lbl>

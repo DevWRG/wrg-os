@@ -70,7 +70,7 @@ export function NpkSelfBriefing({ data, prevNpk }: { data: NpkDetailResult; prev
         {provisional && (
           <p className="flex items-start gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs text-white/85">
             <Info className="mt-0.5 size-3.5 shrink-0" />
-            Skor SEMENTARA — baru <span className="font-semibold">{data.available_count}/{TOTAL_ASPEK} aspek</span> ({wiredNama}) yang punya feed data live, jadi skor maksimum yang bisa dicapai sekarang <span className="font-semibold">{ceiling} dari 100</span>. Predikat SK ditahan sampai ke-7 aspek ter-feed — angka rendah di sini berarti data belum lengkap, bukan penilaian kinerja.
+            <span>Skor SEMENTARA — baru <span className="font-semibold">{data.available_count}/{TOTAL_ASPEK} aspek</span> ({wiredNama}) yang punya feed data live, jadi skor maksimum yang bisa dicapai sekarang <span className="font-semibold">{ceiling} dari 100</span>. Predikat SK ditahan sampai ke-7 aspek ter-feed — angka rendah di sini berarti data belum lengkap, bukan penilaian kinerja.</span>
           </p>
         )}
 

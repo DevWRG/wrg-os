@@ -81,7 +81,7 @@ export function GaTicketAssignButton({
               </Select>
               {teknisi.length > 0 && (
                 <>
-                  <p className="text-muted-foreground text-xs">Atau pilih dari roster Teknisi (F8):</p>
+                  <p className="text-muted-foreground text-xs">Atau pilih dari roster Teknisi:</p>
                   <select
                     className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                     defaultValue=""

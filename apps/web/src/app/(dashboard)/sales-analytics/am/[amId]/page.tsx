@@ -45,7 +45,7 @@ export default async function AmDrilldownPage({
           <ArrowLeft className="size-4" /> Kembali ke Per-AM
         </Link>
       </div>
-      <PageHeader title={`Drilldown AM ${amId}`} description={`Rincian per produk & per customer · periode ${period}. (F127)`} />
+      <PageHeader title={`Drilldown AM ${amId}`} description={`Rincian per produk & per customer · periode ${period}.`} />
       {error ? (
         <p className="text-muted-foreground">{error}</p>
       ) : data ? (

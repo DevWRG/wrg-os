@@ -99,7 +99,7 @@ function Riwayat({ history }: { history: History | null }) {
   if (!history) {
     return (
       <p className="text-muted-foreground">
-        Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+        Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
       </p>
     );
   }

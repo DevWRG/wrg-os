@@ -36,7 +36,7 @@ export default async function AmCabangPage() {
       />
       {!data ? (
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       ) : data.rows.length === 0 ? (
         <p className="text-muted-foreground">Belum ada AM di roster (master_user role AM).</p>

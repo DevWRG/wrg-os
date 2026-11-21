@@ -35,7 +35,7 @@ export default async function BuktiPembayaranPage() {
     <>
       <PageHeader
         title="Bukti Pembayaran"
-        description="Unggah foto bukti pembayaran beserta kode pengajuannya. Pencocokan ke pengajuan dilakukan tim accounting. (F32)"
+        description="Unggah foto bukti pembayaran beserta kode pengajuannya. Pencocokan ke pengajuan dilakukan tim accounting."
       />
       {pending ? (
         <EmptyState title="Fitur belum siap" description="Migrasi 238 (bukti_pembayaran) belum diterapkan di database ini." />

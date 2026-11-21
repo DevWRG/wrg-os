@@ -40,7 +40,7 @@ async function get<T>(path: string): Promise<T | null> {
 const HEADER = (
   <PageHeader
     title="SOP & Peta Koordinasi"
-    description="Hasil bedah SOP 6 divisi dari form PIC (tingkat otomasi, RACI per posisi, kelengkapan form) serta pohon pekerjaan & jaringan koordinasi antar divisi — deklaratif dari form, bukan hasil pengamatan chat. (F157)"
+    description="Hasil bedah SOP 6 divisi dari form PIC (tingkat otomasi, RACI per posisi, kelengkapan form) serta pohon pekerjaan & jaringan koordinasi antar divisi — deklaratif dari form, bukan hasil pengamatan chat."
   />
 );
 

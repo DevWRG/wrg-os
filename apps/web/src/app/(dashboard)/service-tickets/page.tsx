@@ -30,7 +30,7 @@ export default async function ServiceTicketsPage() {
       <Card>
         <CardContent className="pt-6">
           {!tickets ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api & services/ai jalan." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : tickets.length === 0 ? (
             <EmptyState title="Belum ada ticket" description="Tambah lewat tombol di atas (simulasi komplain, tanpa perlu grup WA)." />
           ) : (

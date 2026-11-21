@@ -39,7 +39,7 @@ export default async function TodosPage() {
       />
       {!todos ? (
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       ) : todos.length === 0 ? (
         <p className="text-muted-foreground">Belum ada plan. Submit via <code>POST /todos</code>.</p>

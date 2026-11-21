@@ -48,13 +48,13 @@ export default async function RaciMatrixPage() {
     <>
       <PageHeader
         title="RACI Matrix"
-        description="Matriks tanggung jawab lintas proses × karyawan (Responsible/Accountable/Consulted/Informed). (F120) — plus jembatan posisi dari form PIC (F157)."
+        description="Matriks tanggung jawab lintas proses × karyawan (Responsible/Accountable/Consulted/Informed). — plus jembatan posisi dari form PIC."
       />
       <div className="space-y-6">
         {data ? (
           <RaciMatrix data={data} posisi={posisiIdx} />
         ) : (
-          <p className="text-muted-foreground">Data tidak tersedia. Pastikan <code>apps/api</code> jalan &amp; spine ter-seed.</p>
+          <p className="text-muted-foreground">Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.</p>
         )}
         <RaciPosisiBridge data={jembatan} bolehEdit={bolehEdit} labelDept={labelDept} />
       </div>

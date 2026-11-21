@@ -65,7 +65,7 @@ export function AddAtkSupplierSheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Pemasok ATK</SheetTitle>
-          <SheetDescription>Pemasok ATK internal (F134) — belum tentu vendor Accurate.</SheetDescription>
+          <SheetDescription>Pemasok ATK internal — belum tentu vendor Accurate.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

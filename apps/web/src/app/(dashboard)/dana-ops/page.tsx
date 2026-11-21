@@ -59,7 +59,7 @@ export default async function DanaOpsPage() {
       <Card>
         <CardContent className="pt-6">
           {!rows ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terhubung." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : rows.length === 0 ? (
             <EmptyState title="Belum ada pengajuan dana ops" description="Tambah lewat tombol Ajukan Dana di atas." />
           ) : (

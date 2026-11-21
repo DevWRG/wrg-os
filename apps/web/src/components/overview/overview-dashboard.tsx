@@ -183,7 +183,7 @@ export function OverviewDashboard({ initial }: { initial: OverviewData | null })
     return (
       <Card>
         <CardContent className="text-muted-foreground py-16 text-center text-sm">
-          Data tidak tersedia. Pastikan apps/api jalan & sinkron Accurate aktif.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </CardContent>
       </Card>
     );

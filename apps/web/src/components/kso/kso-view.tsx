@@ -75,7 +75,7 @@ export function KsoView({ master: masterAsli, kelolaHargaBeli = false, lihatHarg
     return (
       <EmptyState
         title="Master tidak bisa dimuat"
-        description="Pastikan apps/api jalan & DATABASE_URL aktif."
+        description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
       />
     );
   }
