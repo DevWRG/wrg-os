@@ -36,6 +36,8 @@ import {
   FileClock,
   HeartPulse,
   type LucideIcon,
+  Radar, HardHat, Activity, UserPlus, Network, GitCompareArrows, HandCoins, FilePlus2, PiggyBank, Medal, Trophy, Crosshair, Flag, Layers, LineChart, Store, LifeBuoy, CalendarX, ShoppingBag, Grid3x3, ReceiptText, Droplets, PieChart, BadgeCheck, MessageCircleHeart, Cog, CalendarCog, FileImage, Armchair, NotebookPen, UserCog,
+  FileSearch, FlaskConical, PackageOpen,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
@@ -161,7 +163,7 @@ export const NAV: NavGroup[] = [
       { title: "Lembur (#OVERTIME)", url: "/overtime", icon: Hourglass, badge: "NEW", show: canViewOvertime },
       { title: "Raport Saya", url: "/raport", icon: Award, exact: true, badge: "NEW" },
       // F56 Onboarding Checklist Karyawan Baru — kunci izin "onboarding" (butuh Sync Fitur), tertutup default.
-      { title: "Onboarding Karyawan", url: "/onboarding", icon: ClipboardCheck, badge: "NEW", show: canViewOnboarding },
+      { title: "Onboarding Karyawan", url: "/onboarding", icon: UserPlus, badge: "NEW", show: canViewOnboarding },
     ],
   },
   {
@@ -175,7 +177,7 @@ export const NAV: NavGroup[] = [
         title: "Sales Analytics", url: "/sales-analytics", icon: Target, badge: "NEW", tabKetat: true,
         features: [{ key: "sales-alerts", name: "Sales Analytics — tab Aturan Alert", path: "/sales-alerts" }],
       },
-      { title: "Sales Command Center", url: "/sales-command", icon: Gauge, badge: "NEW", show: canViewSalesCommand },
+      { title: "Sales Command Center", url: "/sales-command", icon: Radar, badge: "NEW", show: canViewSalesCommand },
       // F90 #ORDER — antrean pesanan AM dari WhatsApp untuk Admin Sales; izin sendiri (Sync Fitur).
       { title: "Antrean Order", url: "/order-wa", icon: ShoppingCart, badge: "NEW", show: canViewOrderWa },
       // F6 Product Scorecard — kinerja per kategori/lini/brand/item; izin sendiri, tertutup default (Sync Fitur).
@@ -200,7 +202,7 @@ export const NAV: NavGroup[] = [
       { title: "Demo & Trial", url: "/demo-trial", icon: Presentation, badge: "NEW" },
       // F173 Pameran — registrasi pengunjung lewat QR publik (/daftar/<slug>) + kupon undian
       // doorprize. Kunci izin sendiri ("pameran"); default tertutup.
-      { title: "Pameran", url: "/pameran", icon: Ticket, badge: "NEW" },
+      { title: "Pameran", url: "/pameran", icon: Store, badge: "NEW" },
       // F74 Kampanye (menyerap F46) — kampanye non-KSO per brand/item + periode,
       // realisasi faktur/SO otomatis. Kunci izin sendiri ("kampanye"); default tertutup.
       { title: "Kampanye", url: "/kampanye", icon: Megaphone, badge: "NEW" },
@@ -303,7 +305,7 @@ export const NAV: NavGroup[] = [
       // Simulator HD — menu sendiri seperti Simulator KSO (keputusan user 16 Nov 2026), kunci
       // 'hd-simulator'. Tab Margin WRG = kunci 'proyek-hd-margin', WAJIB di `features`
       // supaya Sync Fitur tak mematikannya sebagai zombie. Default tertutup.
-      { title: "Simulator KSO HD", url: "/hd-simulator", icon: Calculator, badge: "NEW", show: canViewSimulatorHd,
+      { title: "Simulator KSO HD", url: "/hd-simulator", icon: Droplets, badge: "NEW", show: canViewSimulatorHd,
         features: [{ key: FITUR_HD_MARGIN, name: "Simulator KSO HD — tab Margin WRG (harga, biaya & margin)" }] },
       // Harga jual dibagi per PEMBACA, bukan per tabel:
       //   /pricebook            sales & AM — katalog + harga terpublikasi (071/043)
@@ -335,7 +337,7 @@ export const NAV: NavGroup[] = [
       },
       // F20 — status klik per tender LPSE/E-Catalog (pesan masuk -> barang
       // dikirim -> selesai) + reminder kalau macet. Tak ada hashtag WA.
-      { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileCheck2, badge: "NEW" },
+      { title: "LPSE / E-Catalog", url: "/lpse-tender", icon: FileSearch, badge: "NEW" },
     ],
   },
   {
@@ -344,7 +346,7 @@ export const NAV: NavGroup[] = [
     items: [
       // F48 PMF Scorecard — win-rate deal per brand x region. Kunci izin sendiri
       // (featureKey = "pmf-scorecard"), default tertutup: butuh Sync Fitur + centang Direktur/HoD Sales.
-      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Target, badge: "NEW", show: canViewPmfScorecard },
+      { title: "PMF Scorecard", url: "/pmf-scorecard", icon: Crosshair, badge: "NEW", show: canViewPmfScorecard },
     ],
   },
   {
@@ -356,21 +358,21 @@ export const NAV: NavGroup[] = [
       { title: "Report Library", url: "/report-library", icon: FileBarChart, badge: "NEW", show: canViewReportLibrary },
       // F96 Kohort & Lead Source — retensi customer per kohort kuartal + pipeline lead per sumber. Hanya baca,
       // agregat. Kunci izin "kohort", default tertutup: Sync Fitur + centang grup; sebelum itu fallback Direktur/HoD/admin.
-      { title: "Kohort & Lead Source", url: "/kohort", icon: TrendingUp, badge: "NEW", show: canViewKohort },
-      { title: "NPK HOD", url: "/npk", icon: Award, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
+      { title: "Kohort & Lead Source", url: "/kohort", icon: Layers, badge: "NEW", show: canViewKohort },
+      { title: "NPK HOD", url: "/npk", icon: Medal, badge: "NEW", exact: true, show: (me) => me?.role === "admin" || me?.superuser === true },
       { title: "NPK Saya", url: "/npk/self", icon: UserCheck, badge: "NEW", show: (me) => !!me?.hod_key },
       // NPK level AM (078): matrix semua AM untuk Direktur+HoD, self-view untuk staff AM.
-      { title: "NPK AM", url: "/npk/am", icon: Award, badge: "NEW", exact: true, show: canViewNpkAm },
-      { title: "NPK AM (Saya)", url: "/npk/am-self", icon: UserCheck, badge: "NEW", show: canViewNpkAmSelf },
+      { title: "NPK AM", url: "/npk/am", icon: Trophy, badge: "NEW", exact: true, show: canViewNpkAm },
+      { title: "NPK AM (Saya)", url: "/npk/am-self", icon: BadgeCheck, badge: "NEW", show: canViewNpkAmSelf },
       // K18 opsi C (evaluasi menu 19 Nov 2026): Coaching Notes dilebur jadi tab "Catatan
       // Coaching". Key `coaching` tetap (features + path lama); tabKetat.
       {
         title: "Raport Karyawan 360", url: "/karyawan", icon: UsersRound, badge: "NEW", show: canViewRaportList, tabKetat: true,
         features: [{ key: "coaching", name: "Raport Karyawan 360 — tab Catatan Coaching", path: "/coaching" }],
       },
-      { title: "RACI Matrix", url: "/people/raci", icon: Workflow, badge: "NEW" },
+      { title: "RACI Matrix", url: "/people/raci", icon: Grid3x3, badge: "NEW" },
       { title: "Org Chart", url: "/people/org", icon: Building2, badge: "NEW" },
-      { title: "Voice of Employee", url: "/people/voice", icon: MessagesSquare, badge: "NEW" },
+      { title: "Voice of Employee", url: "/people/voice", icon: MessageCircleHeart, badge: "NEW" },
       // F157 — data 6 form PIC Divisi (migrasi 168/170/171): SOP & tingkat otomasi,
       // RACI grain POSISI, kelengkapan form. RACI Matrix (grain KARYAWAN, bisa diedit)
       // tetap menu sendiri.
@@ -381,7 +383,7 @@ export const NAV: NavGroup[] = [
       // (features + path lama); tabKetat: accounting (network saja) & HoD (sop saja)
       // masing-masing hanya melihat tabnya. /network/graph (A9) tetap dicadangkan.
       {
-        title: "SOP & Peta Koordinasi", url: "/sop-otomasi", icon: ClipboardCheck, badge: "NEW", tabKetat: true,
+        title: "SOP & Peta Koordinasi", url: "/sop-otomasi", icon: Network, badge: "NEW", tabKetat: true,
         features: [{ key: "network", name: "SOP & Peta Koordinasi — tab Peta Koordinasi", path: "/network" }],
       },
       { title: "Executive Briefings", url: "/briefings", icon: ScrollText },
@@ -424,11 +426,11 @@ export const NAV: NavGroup[] = [
       // F25 Uji Profisiensi Document Registry — sertifikat per RS, tracking
       // ED (annual renewal). Role min Karyawan, tanpa `show` (semua role login
       // boleh), pola sama dgn F39/F134.
-      { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FileCheck2, badge: "NEW" },
+      { title: "Uji Profisiensi", url: "/proficiency-tests", icon: FlaskConical, badge: "NEW" },
       // Kinerja Teknisi — jadwal per teknisi + Plan & Report (waktu kerja, SLA tiket vs ETA, kepatuhan).
       // Kunci "kinerja-teknisi" (teknisi: hanya dirinya) + "kinerja-teknisi-semua" (HoD Aftersales: semua);
       // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
-      { title: "Kinerja Teknisi", url: "/kinerja-teknisi", icon: Gauge, badge: "NEW", show: canViewKinerjaTeknisi,
+      { title: "Kinerja Teknisi", url: "/kinerja-teknisi", icon: HardHat, badge: "NEW", show: canViewKinerjaTeknisi,
         features: [{ key: "kinerja-teknisi-semua", name: "Kinerja Teknisi — lihat semua teknisi" }] },
       // F176 Riwayat Alat — riwayat PM/servis per alat (SN), ikut alat ke faskes mana pun. Kunci "riwayat-alat":
       // pemegangnya melihat SEMUA alat; default tertutup, fallback direktur/admin/superuser.
@@ -449,7 +451,7 @@ export const NAV: NavGroup[] = [
       // (migrasi 072). Beda dari Products: Products itu mirror item Accurate,
       // menu ini yang MENENTUKAN kode produknya sebelum masuk Accurate.
       { title: "Klasifikasi Produk", url: "/klasifikasi-produk", icon: Tags, badge: "NEW", show: canViewKlasifikasi },
-      { title: "Orders", url: "/orders", icon: ShoppingCart },
+      { title: "Orders", url: "/orders", icon: ShoppingBag },
       { title: "Shipments", url: "/shipments", icon: Truck },
       { title: "Suppliers", url: "/suppliers", icon: Factory },
       { title: "HITL Review", url: "/hitl", icon: ClipboardCheck },
@@ -458,9 +460,9 @@ export const NAV: NavGroup[] = [
       // krn baru & kontak per-tahap masih perlu diisi manual (lihat /config).
       { title: "Approval Requests", url: "/approval-requests", icon: Stamp, badge: "NEW" },
       // F154 Jadwal Kunjungan Rutin Teknisi — izin sendiri, tertutup default (Sync Fitur).
-      { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarClock, badge: "NEW", show: canViewJadwalTeknisi },
+      { title: "Jadwal Teknisi", url: "/jadwal-teknisi", icon: CalendarCog, badge: "NEW", show: canViewJadwalTeknisi },
       // F155 Bon Sparepart Teknisi (#BON/#OPNAME) — izin sendiri, tertutup default (Sync Fitur).
-      { title: "Bon Sparepart", url: "/bon-sparepart", icon: Wrench, badge: "NEW", show: canViewBonSparepart },
+      { title: "Bon Sparepart", url: "/bon-sparepart", icon: Cog, badge: "NEW", show: canViewBonSparepart },
     ],
   },
   {
@@ -494,10 +496,10 @@ export const NAV: NavGroup[] = [
       // halaman 2 tab). Key RBAC-nya sendiri (`stok-gudang`, auto dari URL),
       // jadi bisa digrant terpisah dari izin Inventory di Akses Grup.
       { title: "Stok Gudang", url: "/stok-gudang", icon: Boxes, badge: "NEW" },
-      { title: "Supplier ETA", url: "/supplier-eta", icon: CalendarClock, badge: "NEW" },
+      { title: "Supplier ETA", url: "/supplier-eta", icon: PackageOpen, badge: "NEW" },
       // F38 — sama perlakuan spt Stok Gudang: dulu tab ketiga di /inventory,
       // sekarang route sendiri dgn key RBAC sendiri (`ed-watch`).
-      { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
+      { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: CalendarX, badge: "NEW" },
       // F13 PO Tracker + Sistem Barang Masuk — satu PO ke vendor + riwayat
       // penerimaan barang per item (migrasi 078), bukan Accurate mirror.
       //
@@ -513,7 +515,7 @@ export const NAV: NavGroup[] = [
       // Chain review/edit, ajukan ke approval berjenjang F11. Ditaruh
       // Purchasing (bukan CRM spt label blueprint) krn pemakainya
       // Supply Chain + datanya dari Stok Gudang/ED Watch section ini.
-      { title: "Forecast Submission", url: "/forecast-submission", icon: TrendingUp, badge: "NEW" },
+      { title: "Forecast Submission", url: "/forecast-submission", icon: LineChart, badge: "NEW" },
     ],
   },
   {
@@ -543,7 +545,7 @@ export const NAV: NavGroup[] = [
   {
     label: "General Affairs",
     items: [
-      { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
+      { title: "Dana Ops", url: "/dana-ops", icon: HandCoins, badge: "NEW", show: canViewDanaOps },
       // K5 opsi B (evaluasi menu 19 Nov 2026): ATK Master + Stock In + Stock Opname
       // = pekerjaan tim GA → satu menu "Kelola ATK" tiga tab. Key atk-stock-in &
       // atk-stock-opname tetap (features + path lama); tabKetat. Stock Out TETAP
@@ -579,7 +581,7 @@ export const NAV: NavGroup[] = [
         // K6 (evaluasi menu 19 Nov 2026): Relokasi Aset dilebur jadi tab "Riwayat
         // Relokasi". Key `ga-relokasi` tetap (features + path lama); tabKetat:
         // pemegang tab relokasi saja tak membuka data Aset GA.
-        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW", tabKetat: true,
+        title: "Aset GA", url: "/ga-aset", icon: Armchair, badge: "NEW", tabKetat: true,
         // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
         // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
         // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
@@ -595,13 +597,13 @@ export const NAV: NavGroup[] = [
       // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
-      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
-      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: Wallet, badge: "NEW" },
+      { title: "Helpdesk GA", url: "/ga-helpdesk", icon: LifeBuoy, badge: "NEW" },
+      { title: "Pengajuan Dana Operasional", url: "/fund-requests", icon: FilePlus2, badge: "NEW" },
       // F141 — konsolidasi laporan 6 modul GA (F49 ATK+F54 Materai, F50
       // Kendaraan, F51 Dana Ops, F52 IT Asset, F53 Stiker Aset). Role min HOD
       // (disamakan dgn gate paling ketat di antara modul sumber, F51 Dana Ops)
       // krn agregasi menaikkan sensitivitas data yg sebagian sumbernya terbuka.
-      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: BarChart3, badge: "NEW", show: canViewGaReporting },
+      { title: "GA Reporting & Analytics", url: "/ga-reporting", icon: PieChart, badge: "NEW", show: canViewGaReporting },
     ],
   },
   {
@@ -626,23 +628,23 @@ export const NAV: NavGroup[] = [
       },
       // F10 (ambil alih F29) — register cek/giro keluar: kasir input → HoD Finance setuju → serahkan → cair.
       // Kunci izin sendiri ("register-cek"): tambah = kasir, ubah = penyetuju. Default tertutup.
-      { title: "Register Cek", url: "/register-cek", icon: Banknote, badge: "NEW", show: canViewRegisterCek },
+      { title: "Register Cek", url: "/register-cek", icon: NotebookPen, badge: "NEW", show: canViewRegisterCek },
       // F151 CN (Kredit Note) — rebate customer per kontrak, dasar faktur; Sales → HoD → Finance → GA.
       // Kunci izin sendiri ("cn", featureKey dari url), default tertutup: butuh Sync Fitur + centang.
-      { title: "Kredit Note (CN)", url: "/cn", icon: Receipt, badge: "NEW", show: canViewCn },
+      { title: "Kredit Note (CN)", url: "/cn", icon: ReceiptText, badge: "NEW", show: canViewCn },
       // F152 3-Way Match Faktur Pembelian (AP) — faktur vendor Accurate vs PO vs penerimaan, toleransi 0%.
       // Read-only. Kunci izin sendiri ("ap-three-way", featureKey dari url), default tertutup: Sync Fitur + centang.
-      { title: "3-Way Match AP", url: "/ap-three-way", icon: ClipboardCheck, badge: "NEW", show: canViewApThreeWay },
+      { title: "3-Way Match AP", url: "/ap-three-way", icon: GitCompareArrows, badge: "NEW", show: canViewApThreeWay },
       // F33 Kas Station — kas harian cabang → rekap mingguan → approval pusat → realisasi.
       // Dua kunci izin: "kas-station" (station: catat & ajukan) dan "kas-station-review"
       // (pusat: lihat rekap, approve/reject, realisasi). Default tertutup: butuh Sync Fitur +
       // centang grup; sebelum itu fallback direktur/admin/superuser.
-      { title: "Kas Station", url: "/kas-station", icon: Wallet, badge: "NEW", show: canViewKasStation,
+      { title: "Kas Station", url: "/kas-station", icon: PiggyBank, badge: "NEW", show: canViewKasStation,
         features: [{ key: "kas-station-review", name: "Kas Station — review pusat (approve & realisasi)" }] },
       // F32 Bukti Pembayaran — foto bukti bayar + kode pengajuan, diunggah admin di dashboard
       // (tanpa OCR/WA/Accurate). Kunci izin "bukti-pembayaran" (view/create), default tertutup:
       // butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/Finance/admin.
-      { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileCheck2, badge: "NEW", show: canViewBuktiPembayaran },
+      { title: "Bukti Pembayaran", url: "/bukti-pembayaran", icon: FileImage, badge: "NEW", show: canViewBuktiPembayaran },
       // F150 Profitabilitas Area — biaya operasional vs revenue netto per area. Tahap 1: revenue
       // hidup, biaya/profit menunggu data Accurate. Kunci izin "profitabilitas-area", default
       // tertutup: butuh Sync Fitur + centang grup; sebelum itu fallback Direktur/admin (penuh)
@@ -653,17 +655,17 @@ export const NAV: NavGroup[] = [
   {
     label: "Admin",
     items: [
-      { title: "Sales Targets", url: "/sales/targets", icon: Target },
+      { title: "Sales Targets", url: "/sales/targets", icon: Flag },
       { title: "AM → Cabang", url: "/am-cabang", icon: MapPinned },
       { title: "Users", url: "/users", icon: Users },
       { title: "User Access", url: "/user-access", icon: KeyRound },
       { title: "Akses Grup", url: "/access-groups", icon: ShieldCheck },
       // F121 HoD Resolver: utilitas data-quality (preview atasan_raw → HoD kanonik),
       // bukan analytics harian → grup Admin, gate admin/superuser.
-      { title: "HoD Resolver", url: "/people/hod-resolve", icon: KeyRound, hanyaAdmin: true },
+      { title: "HoD Resolver", url: "/people/hod-resolve", icon: UserCog, hanyaAdmin: true },
       // Papan status job terjadwal (prioritas Direktur 20 Okt, migrasi 275) — utilitas operasional
       // server, gate admin/superuser seperti HoD Resolver.
-      { title: "Status Job", url: "/status-job", icon: Gauge, badge: "NEW", hanyaAdmin: true },
+      { title: "Status Job", url: "/status-job", icon: Activity, badge: "NEW", hanyaAdmin: true },
       { title: "Settings", url: "/settings", icon: Settings },
     ],
   },
