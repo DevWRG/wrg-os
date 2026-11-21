@@ -85,7 +85,7 @@ export function NpkBriefing({
           {s.provisional && (
             <p className="flex items-start gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs text-white/85">
               <Info className="mt-0.5 size-3.5 shrink-0" />
-              Skor SEMENTARA — baru <span className="font-semibold">{s.maxCoverage}/{TOTAL_ASPEK} aspek</span> ({wiredNama}) yang punya feed data live, jadi plafon skor saat ini <span className="font-semibold">{s.ceiling} dari 100</span> (Σ bobot aspek yang ada datanya). Angka rendah = data belum lengkap, BUKAN kinerja buruk — karena itu predikat, kandidat promosi & tindak lanjut ditahan sampai 7/7 aspek ter-feed.
+              <span>Skor SEMENTARA — baru <span className="font-semibold">{s.maxCoverage}/{TOTAL_ASPEK} aspek</span> ({wiredNama}) yang punya feed data live, jadi plafon skor saat ini <span className="font-semibold">{s.ceiling} dari 100</span> (Σ bobot aspek yang ada datanya). Angka rendah = data belum lengkap, BUKAN kinerja buruk — karena itu predikat, kandidat promosi & tindak lanjut ditahan sampai 7/7 aspek ter-feed.</span>
             </p>
           )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
