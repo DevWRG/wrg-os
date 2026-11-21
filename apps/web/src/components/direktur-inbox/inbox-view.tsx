@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { cn } from "@/lib/utils";
@@ -107,17 +107,19 @@ export function InboxView({ data }: { data: InboxHasil }) {
       </div>
 
       <Card>
-        <CardContent className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Menunggu keputusan Direktur</h2>
-          <ExportButton filename="direktur-inbox" columns={kolomExport} data={tampil} label="Export CSV" />
-        </div>
-        <DataTable
-          columns={kolom} data={tampil} getKey={(r) => `${r.jenis}:${r.id}`}
-          searchPlaceholder="Cari kode, perihal, atau pengaju…"
-          empty="Tidak ada yang menunggu keputusan."
-          initialSort={{ id: "umur", dir: "desc" }}
-        />
+        <CardHeader>
+          <CardTitle>Menunggu keputusan Direktur</CardTitle>
+          <CardAction>
+            <ExportButton filename="direktur-inbox" columns={kolomExport} data={tampil} label="Export CSV" />
+          </CardAction>
+        </CardHeader>
+        <CardContent>
+          <DataTable
+            columns={kolom} data={tampil} getKey={(r) => `${r.jenis}:${r.id}`}
+            searchPlaceholder="Cari kode, perihal, atau pengaju…"
+            empty="Tidak ada yang menunggu keputusan."
+            initialSort={{ id: "umur", dir: "desc" }}
+          />
         </CardContent>
       </Card>
 

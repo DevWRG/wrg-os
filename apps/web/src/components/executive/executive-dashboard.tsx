@@ -466,7 +466,7 @@ function CommandView({ d }: { d: CommandData | undefined }) {
           subTone={d.ar_over_90 && d.ar_over_90 > 0 ? "down" : "muted"}>
           {d.ar_total && d.ar_over_90 != null ? <Meter className="mt-2.5" markers={[]} pct={(d.ar_over_90 / d.ar_total) * 100} status="crit" /> : null}
         </StatTile>
-        <StatTile label="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar} href="/customers"
+        <StatTile label="Customer Dormant" value={d.dormant_count != null ? numFmt.format(d.dormant_count) : "—"} icon={MoonStar} href="/accounts?tab=revenue"
           sub={d.dormant_value != null ? `nilai at-risk ${rpc(d.dormant_value)} · >60 hari` : undefined} />
         <StatTile label="Red Flags · WatchPoint" value={numFmt.format(d.red_flags_count)} icon={AlertTriangle} href="/watchpoint"
           sub="metric HoD status merah" subTone={d.red_flags_count > 0 ? "down" : "up"} />
@@ -626,7 +626,7 @@ function OutletView({ d }: { d: OutletData | undefined }) {
       </Card>
 
       <Card>
-        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><CardTitle className="text-base">Top 20 Customer by Revenue</CardTitle><DrillLink href="/customers">Customers</DrillLink></CardHeader>
+        <CardHeader className="flex items-center gap-2 space-y-0 pb-2"><CardTitle className="text-base">Top 20 Customer by Revenue</CardTitle><DrillLink href="/accounts?tab=revenue">Customers</DrillLink></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           <Table>
             <TableHeader><TableRow>

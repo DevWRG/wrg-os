@@ -20,6 +20,7 @@ import { PipelineReportView, type PipelineReportData } from "@/components/sales-
 import { PipelineLeaderboardView, type LeaderboardRow } from "@/components/sales-analytics/pipeline-leaderboard-view";
 import { EcatalogView, STATUS_LABEL as ECAT_STATUS, type EcatalogData } from "@/components/sales-analytics/ecatalog-view";
 import { KeaslianView, STATUS_LABEL as KEASLIAN_STATUS, type KeaslianData } from "@/components/sales-analytics/keaslian-view";
+import { SalesAlertsManager, type SalesAlert, type AlertTargets } from "@/components/sales-analytics/sales-alerts-manager";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePrompt } from "@/components/ui/use-prompt";
@@ -111,7 +112,7 @@ interface PengadaanRow { key: string; label: string; total: number; count: numbe
 interface CabangRow { cabang: string; region: string; total: number; count: number; customers: number; am_count: number; target: number | null; achievement_pct: number | null }
 interface CustRow { id: string; name: string; total: number; invoices: number; last_date: string | null; days_since: number | null; priority?: string }
 
-type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing" | "pipeline" | "leaderboard" | "ecatalog" | "keaslian";
+type ViewKey = "overview" | "per-am" | "per-produk" | "per-pengadaan" | "per-cabang" | "per-customer" | "trending" | "pacing" | "pipeline" | "leaderboard" | "ecatalog" | "keaslian" | "alerts";
 const TABS: { key: ViewKey; label: string }[] = [
   { key: "overview", label: "Executive" },
   { key: "per-am", label: "Per-AM" },
@@ -133,8 +134,14 @@ const TABS: { key: ViewKey; label: string }[] = [
 const VIEW_TYPE: Record<ViewKey, string> = {
   overview: "executive", "per-am": "per_am", "per-produk": "per_produk",
   "per-pengadaan": "per_produk", pacing: "per_am", pipeline: "per_am", leaderboard: "per_am", ecatalog: "per_customer", keaslian: "per_am",
-  "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending",
+  "per-cabang": "per_cabang", "per-customer": "per_customer", trending: "trending", alerts: "executive",
 };
+
+// K12 (evaluasi menu 19 Nov 2026): menu Sales Alerts dilebur jadi tab "Aturan Alert".
+// Izin tetap key `sales-alerts` — server mengirim `aturanAlert` HANYA bila user berizin;
+// tab ini tak memakai BFF analitik (manager memanggil /api/sales-analytics/alerts sendiri).
+const TAB_ALERT = { key: "alerts" as ViewKey, label: "Aturan Alert" };
+export interface AturanAlertProps { initialAlerts: SalesAlert[]; targets: AlertTargets }
 
 interface SavedView { id: string; view_name: string; view_type: string; filter_config: { from?: string; to?: string; tab?: ViewKey }; }
 
@@ -156,8 +163,15 @@ function Kpi({ label, value, delta }: { label: string; value: string; delta?: nu
 }
 
 // ── Main ───────────────────────────────────────────────────────────
-export function SalesAnalyticsDashboard({ initial, initialView }: { initial: OverviewResult | null; initialView?: string }) {
-  const startTab = (TABS.find((t) => t.key === initialView)?.key ?? "overview") as ViewKey;
+export function SalesAnalyticsDashboard({ initial, initialView, aturanAlert, bolehAnalitik = true }: {
+  initial: OverviewResult | null;
+  initialView?: string;
+  aturanAlert?: AturanAlertProps;
+  // false = pemegang Sales Alerts saja (tanpa izin Sales Analytics) → hanya tab Aturan Alert.
+  bolehAnalitik?: boolean;
+}) {
+  const tabs = [...(bolehAnalitik ? TABS : []), ...(aturanAlert ? [TAB_ALERT] : [])];
+  const startTab = (tabs.find((t) => t.key === initialView)?.key ?? tabs[0]?.key ?? "overview") as ViewKey;
   const [tab, setTab] = useState<ViewKey>(startTab);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -172,6 +186,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
   }, []);
 
   const load = useCallback(async (view: ViewKey, force = false) => {
+    if (view === "alerts") return; // bukan view analitik — data dikelola SalesAlertsManager
     const qs = new URLSearchParams();
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
@@ -285,7 +300,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
   const exportPdf = () => {
     const v = viewData();
     if (!v) return;
-    const label = TABS.find((t) => t.key === tab)?.label ?? tab;
+    const label = tabs.find((t) => t.key === tab)?.label ?? tab;
     openPrintable(`Sales Analytics — ${label}`, `Periode: ${from || "YTD"} → ${to || "now"} · ${v.rows.length} baris`, v.headers, v.rows);
   };
 
@@ -326,7 +341,8 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
 
   return (
     <div className="space-y-4">
-      {/* Filter periode + aksi */}
+      {/* Filter periode + aksi — tak berlaku untuk tab Aturan Alert. */}
+      {tab !== "alerts" && (
       <Card>
         <CardContent className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1"><Label htmlFor="sa-from" className="text-xs">Dari</Label><Input id="sa-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 w-40 bg-card border-border" /></div>
@@ -344,6 +360,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
           <span className="text-muted-foreground text-xs">Kosongkan = year-to-date.</span>
         </CardContent>
       </Card>
+      )}
 
       {views.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
@@ -358,8 +375,10 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       )}
 
 
-      <div className="flex flex-wrap gap-1 rounded-lg border p-1">
-        {TABS.map((t) => (
+      {/* Bilah tab = kartu putih (bg-card + bayangan kartu), bukan sekadar garis tepi —
+          di mode terang garis tepi saja melebur ke latar halaman. */}
+      <div className="bg-card border-border flex flex-wrap gap-1 rounded-2xl border p-1.5 shadow-[var(--shadow-card)]">
+        {tabs.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${tab === t.key ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
             {t.label}
@@ -382,6 +401,7 @@ export function SalesAnalyticsDashboard({ initial, initialView }: { initial: Ove
       {tab === "leaderboard" && cur != null && <PipelineLeaderboardView data={cur as LeaderboardRow[]} />}
       {tab === "ecatalog" && cur != null && <EcatalogView data={cur as EcatalogData} />}
       {tab === "keaslian" && cur != null && <KeaslianView data={cur as KeaslianData} />}
+      {tab === "alerts" && aturanAlert && <SalesAlertsManager initialAlerts={aturanAlert.initialAlerts} targets={aturanAlert.targets} />}
       {promptDialog}
     </div>
   );
@@ -412,7 +432,7 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
           <Kpi label="Customer" value={String(data.kpi.customers)} />
           <Kpi label="Achievement" value={fmtPct(data.kpi.achievement_pct)} />
         </div>
-        <TrendChart points={data.trend} />
+        <Card><CardHeader><CardTitle className="text-base">Tren Revenue Harian</CardTitle></CardHeader><CardContent><TrendChart points={data.trend} /></CardContent></Card>
       </div>
     );
   }

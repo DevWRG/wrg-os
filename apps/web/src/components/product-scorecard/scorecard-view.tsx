@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { cn } from "@/lib/utils";
+import { RentangPeriode, presetRentang } from "@/components/product-scorecard/rentang-periode";
 
 // F6 Product Scorecard (apps/api/src/repo/product-scorecard.ts). Angka dihitung di
 // server; di sini memilih periode, menelusuri kategori → lini → brand → item, menampilkan.
@@ -53,18 +54,7 @@ const tgl = (iso: string) => { const [y, m, d] = iso.split("-").map(Number); ret
 const rp = (n: number) => Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 2 })} M`
   : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt` : `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 const pct = (x: number | null | undefined, digit = 0) => x == null ? "—" : `${(x * 100).toLocaleString("id-ID", { maximumFractionDigits: digit })}%`;
-const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-function preset(k: string): { from: string; to: string } {
-  const now = new Date(Date.now() + 7 * 3600_000);
-  const y = now.getUTCFullYear(), m = now.getUTCMonth();
-  if (k === "bulan-lalu") return { from: iso(new Date(Date.UTC(y, m - 1, 1))), to: iso(new Date(Date.UTC(y, m, 0))) };
-  if (k === "kuartal") { const q = Math.floor(m / 3) * 3; return { from: iso(new Date(Date.UTC(y, q, 1))), to: iso(now) }; }
-  if (k === "kuartal-lalu") { const q = Math.floor(m / 3) * 3; return { from: iso(new Date(Date.UTC(y, q - 3, 1))), to: iso(new Date(Date.UTC(y, q, 0))) }; }
-  if (k === "12-bulan") return { from: iso(new Date(Date.UTC(y, m - 11, 1))), to: iso(now) };
-  return { from: `${y}-01-01`, to: iso(now) }; // ytd
-}
-const PRESET = [["ytd", "Tahun ini"], ["kuartal", "Kuartal ini"], ["kuartal-lalu", "Kuartal lalu"], ["bulan-lalu", "Bulan lalu"], ["12-bulan", "12 bulan"]] as const;
 const NAMA_LEVEL: Record<Level, string> = { kategori: "Kategori", lini: "Lini", brand: "Brand", item: "Item" };
 
 function Tumbuh({ x }: { x: number | null }) {
@@ -75,7 +65,7 @@ function Tumbuh({ x }: { x: number | null }) {
 export function ProductScorecardView({ awal }: { awal: DataScorecard | null }) {
   const [data, setData] = useState<DataScorecard | null>(awal);
   const [jejak, setJejak] = useState<Langkah[]>([{ level: "kategori", label: "Semua kategori" }]);
-  const [rentang, setRentang] = useState<{ from: string; to: string }>(awal ? { from: awal.range.from, to: awal.range.to } : preset("ytd"));
+  const [rentang, setRentang] = useState<{ from: string; to: string }>(awal ? { from: awal.range.from, to: awal.range.to } : presetRentang("ytd"));
   const [memuat, setMemuat] = useState(false);
   const [galat, setGalat] = useState<string | null>(null);
 
@@ -162,24 +152,7 @@ export function ProductScorecardView({ awal }: { awal: DataScorecard | null }) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-2 py-3">
-          {PRESET.map(([k, l]) => (
-            <button key={k} type="button" disabled={memuat} onClick={() => void gantiRentang(preset(k))}
-              className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-accent disabled:opacity-50">{l}</button>
-          ))}
-          <label className="text-muted-foreground flex items-center gap-1.5 text-xs">Dari
-            <input type="date" value={rentang.from} disabled={memuat} onChange={(e) => void gantiRentang({ ...rentang, from: e.target.value })}
-              className="border-input bg-background text-foreground rounded-md border px-2 py-1 text-xs" />
-          </label>
-          <label className="text-muted-foreground flex items-center gap-1.5 text-xs">s/d
-            <input type="date" value={rentang.to} disabled={memuat} onChange={(e) => void gantiRentang({ ...rentang, to: e.target.value })}
-              className="border-input bg-background text-foreground rounded-md border px-2 py-1 text-xs" />
-          </label>
-          {memuat && <span className="text-muted-foreground text-xs">Memuat…</span>}
-          {galat && <span className="text-xs text-rose-700 dark:text-rose-400">{galat}</span>}
-        </CardContent>
-      </Card>
+      <RentangPeriode rentang={rentang} onGanti={(r) => void gantiRentang(r)} memuat={memuat} galat={galat} />
 
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label={`Revenue ${tgl(data.range.from)} – ${tgl(data.range.to)}`} value={rp(s.revenue)} />

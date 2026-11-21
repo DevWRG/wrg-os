@@ -6,7 +6,7 @@ import { Footer } from "@/components/layout/footer";
 import { Topbar } from "@/components/layout/topbar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { sessionUser } from "@/lib/admin-guard";
-import { findNavItem, navVisible } from "@/lib/nav";
+import { findNavItem, navGate } from "@/lib/nav";
 
 export default async function DashboardLayout({
   children,
@@ -27,7 +27,9 @@ export default async function DashboardLayout({
   // ditampilkan. redirect() memutus render itu (respons 307, tanpa body).
   const pathname = (await headers()).get("x-pathname") ?? "";
   const item = me && pathname ? findNavItem(pathname) : null;
-  if (item && !navVisible(me, item)) {
+  // navGate = navVisible, kecuali induk menu ber-tab (`tabKetat`): URL induk persis
+  // boleh untuk pemegang tab, rute anak induk hanya untuk pemegang izin induk.
+  if (item && !navGate(me, item, pathname)) {
     redirect(`/akses-ditolak?menu=${encodeURIComponent(item.title)}`);
   }
 

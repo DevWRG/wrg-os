@@ -1,43 +1,38 @@
-import { gatewayFetch } from "@/lib/gateway";
 import { PageHeader } from "@/components/dashboard/page-header";
-import { EmptyState } from "@/components/ui/empty-state";
-import { AtkMasterClient } from "@/components/atk/atk-master-client";
-import type { AtkCategoryRow } from "@/components/atk/atk-category-table";
-import type { AtkSupplierRow } from "@/components/atk/atk-supplier-table";
-import type { AtkItemRow } from "@/components/atk/atk-item-table";
+import { PageTabs } from "@/components/layout/page-tabs";
+import { sessionUser } from "@/lib/admin-guard";
+import { findNavItem, navOwnVisible, tabVisible } from "@/lib/nav";
+import { pilihTab, type DefTab } from "@/lib/page-tabs";
+import { AtkMasterSection } from "./master-section";
+import { AtkMasukSection } from "./masuk-section";
+import { AtkOpnameSection } from "./opname-section";
 
 export const dynamic = "force-dynamic";
 
-async function getJson<T>(path: string): Promise<T | null> {
-  try {
-    const res = await gatewayFetch(path);
-    return res.ok ? ((await res.json()) as T) : null;
-  } catch {
-    return null;
-  }
-}
-
-export default async function AtkMasterPage() {
-  const [cat, sup, item] = await Promise.all([
-    getJson<{ rows: AtkCategoryRow[] }>("/atk/categories"),
-    getJson<{ rows: AtkSupplierRow[] }>("/atk/suppliers"),
-    getJson<{ rows: AtkItemRow[] }>("/atk/items"),
-  ]);
+// Kelola ATK (K5 opsi B, evaluasi menu 19 Nov 2026): ATK Master, Stock In, dan Stock
+// Opname — pekerjaan tim GA — dilebur jadi satu menu tiga tab. Stock Out sengaja
+// TETAP menu sendiri ("Ambil ATK", self-service karyawan, F49): karyawan tak pernah
+// masuk ke halaman milik GA. Izin tetap tiga key; hanya tab aktif mengambil data.
+export default async function KelolaAtkPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+  const [{ tab }, me] = await Promise.all([searchParams, sessionUser()]);
+  const induk = findNavItem("/atk-master");
+  const f = (k: string) => induk?.features?.find((x) => x.key === k);
+  const tabs: DefTab[] = [];
+  if (!induk || navOwnVisible(me, induk)) tabs.push({ key: "master", label: "Master Barang" });
+  const fMasuk = f("atk-stock-in");
+  if (fMasuk && tabVisible(me, fMasuk)) tabs.push({ key: "masuk", label: "Barang Masuk" });
+  const fOpname = f("atk-stock-opname");
+  if (fOpname && tabVisible(me, fOpname)) tabs.push({ key: "opname", label: "Stock Opname" });
+  const aktif = pilihTab(tabs, tab) ?? "master";
 
   return (
     <>
       <PageHeader
-        title="ATK Master"
-        description="Master data ATK (F134): kategori, pemasok & katalog barang — prasyarat register stok masuk/keluar (F49), termasuk Materai (F54) sbg kategori transaksi."
+        title="Kelola ATK"
+        description="Pekerjaan tim GA untuk ATK & Materai: master barang/kategori/pemasok, pencatatan barang masuk dengan audit mutasi, dan hitung fisik (stock opname). Pengambilan barang oleh karyawan ada di menu Ambil ATK."
       />
-      {!cat || !sup || !item ? (
-        <EmptyState
-          title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 127_atk_master.sql + 137_atk_transaction_category.sql sudah diterapkan."
-        />
-      ) : (
-        <AtkMasterClient categories={cat.rows ?? []} suppliers={sup.rows ?? []} items={item.rows ?? []} />
-      )}
+      <PageTabs tabs={tabs.length ? tabs : [{ key: "master", label: "Master Barang" }]} aktif={aktif} />
+      {aktif === "masuk" ? <AtkMasukSection /> : aktif === "opname" ? <AtkOpnameSection /> : <AtkMasterSection />}
     </>
   );
 }
