@@ -139,7 +139,7 @@ export function NpkSelfDetail({ data }: { data: NpkDetailResult | null }) {
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        Aspek berstatus <span className="font-medium">Belum ada data</span> tidak menaikkan/menurunkan NPK (kontribusi 0) — skor rendah berarti data belum lengkap, bukan kinerja buruk. Karena itu selama coverage &lt; 7/7 skor dibandingkan ke plafon <span className="font-medium">{ceiling}</span> (Σ bobot aspek yang terukur) dan predikat SK ditahan. Sumber KSO/GP/Coaching &amp; target customer menyusul.
+        <span>Aspek berstatus <span className="font-medium">Belum ada data</span> tidak menaikkan/menurunkan NPK (kontribusi 0) — skor rendah berarti data belum lengkap, bukan kinerja buruk. Karena itu selama coverage &lt; 7/7 skor dibandingkan ke plafon <span className="font-medium">{ceiling}</span> (Σ bobot aspek yang terukur) dan predikat SK ditahan. Sumber KSO/GP/Coaching &amp; target customer menyusul.</span>
       </p>
     </div>
   );
