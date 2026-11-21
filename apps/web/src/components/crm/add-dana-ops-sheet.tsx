@@ -66,7 +66,7 @@ export function AddDanaOpsSheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Ajukan Dana Ops</SheetTitle>
-          <SheetDescription>Buat pengajuan dana operasional/petty cash baru (F51). Bukti realisasi ditambah setelahnya.</SheetDescription>
+          <SheetDescription>Buat pengajuan dana operasional/petty cash baru. Bukti realisasi ditambah setelahnya.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

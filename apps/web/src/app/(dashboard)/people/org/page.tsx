@@ -21,7 +21,7 @@ export default async function OrgChartPage() {
     <>
       <PageHeader
         title="Org Chart"
-        description="Struktur organisasi — Per Departemen (ORG_BASIC) & Reporting Line (ORG_OPTIMAL, via HoD resolver). (F129)"
+        description="Struktur organisasi — Per Departemen & Reporting Line (atasan diselaraskan lewat HoD Resolver)."
       />
       <OrgChart departments={d?.departments ?? []} employees={e?.employees ?? []} reporting={r} />
     </>

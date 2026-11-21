@@ -36,7 +36,7 @@ export async function AtkMasukSection() {
       {!item || !mov || !lvl ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 132_atk_stock_movement.sql + 137_atk_transaction_category.sql sudah diterapkan."
+          description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
         />
       ) : (
         <AtkStockInClient movements={mov.rows ?? []} levels={lvl.rows ?? []} items={itemOptions} />

@@ -15,7 +15,7 @@ export default async function VoicePage() {
     <>
       <PageHeader
         title="Voice of Employee"
-        description="Agregat kendala & ide/usulan lintas karyawan — filter per departemen & kata kunci. (F128)"
+        description="Agregat kendala & ide/usulan lintas karyawan — filter per departemen & kata kunci."
       />
       <VoiceOfEmployee items={data?.items ?? []} />
     </>

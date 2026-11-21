@@ -23,14 +23,14 @@ export default async function PrintSpecPage() {
     <>
       <PageHeader
         title="Spesifikasi Cetak Dokumen"
-        description="Standar cetak (ukuran kertas, margin, font, header/footer) per jenis dokumen (F44)."
+        description="Standar cetak (ukuran kertas, margin, font, header/footer) per jenis dokumen."
         action={<AddPrintSpecSheet />}
       />
       {rows === null ? (
         <Card>
           <CardContent className="pt-6">
             <p className="text-muted-foreground">
-              Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+              Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
             </p>
           </CardContent>
         </Card>

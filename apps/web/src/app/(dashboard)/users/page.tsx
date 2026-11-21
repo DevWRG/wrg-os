@@ -41,7 +41,7 @@ export default async function UsersPage() {
       <PageHeader title="Users" description="Roster karyawan (master_user) — di-key am_id, dipakai lintas plan/report/reminder/territory." action={<AddUserSheet />} />
       {!users ? (
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       ) : users.length === 0 ? (
         <p className="text-muted-foreground">Belum ada user. Tambah via <code>POST /master/users</code>.</p>

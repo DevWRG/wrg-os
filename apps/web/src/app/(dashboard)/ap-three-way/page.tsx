@@ -32,7 +32,7 @@ export default async function ApThreeWayPage() {
     <>
       <PageHeader
         title="3-Way Match Faktur Pembelian (AP)"
-        description="Faktur vendor dari Accurate dicocokkan ke PO dan penerimaan barang per baris, toleransi 0%. Hanya penanda: penyelesaian selisih dilakukan di Accurate. (F152)"
+        description="Faktur vendor dari Accurate dicocokkan ke PO dan penerimaan barang per baris, toleransi 0%. Hanya penanda: penyelesaian selisih dilakukan di Accurate."
       />
       {pending
         ? <EmptyState title="Migrasi belum diterapkan" description="Tabel faktur pembelian belum ada di database (migrasi 240)." />

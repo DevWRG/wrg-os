@@ -193,7 +193,7 @@ export default async function ArAgingPage() {
 
       {(!ar || ar.total_invoices === 0) && (!data || data.total_invoices === 0) && (
         <p className="text-muted-foreground">
-          Belum ada data piutang. Pastikan <code>apps/api</code> jalan &amp; data Accurate ter-sync.
+          Belum ada data piutang. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       )}
     </>

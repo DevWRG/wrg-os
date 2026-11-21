@@ -58,7 +58,7 @@ export function AddAtkCategorySheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Kategori ATK</SheetTitle>
-          <SheetDescription>Kelompok barang ATK (F134), mis. Alat Tulis, Kertas, Consumables.</SheetDescription>
+          <SheetDescription>Kelompok barang ATK, mis. Alat Tulis, Kertas, Consumables.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

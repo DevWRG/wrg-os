@@ -25,7 +25,7 @@ export default async function AuditFindingsPage() {
     <>
       <PageHeader
         title="Audit Findings"
-        description="Komite Audit Findings Tracker (F60) — per-finding status + control linkage, chain approval penutupan berjenjang (2-5 tahap, custom per grup)."
+        description="Komite Audit Findings Tracker — per-finding status + control linkage, chain approval penutupan berjenjang (2-5 tahap, custom per grup)."
       />
       <AuditFindingsView findings={findings} totalRows={totalRows} canManageConfig={canManageAuditFindingChainConfig(me)} />
     </>

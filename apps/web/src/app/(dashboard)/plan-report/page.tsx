@@ -230,7 +230,7 @@ export default function DashboardPage() {
         setDraft({ from: d.from, to: d.to });
         setToday(d.today);
       } else {
-        setError("Gagal memuat rentang default. Pastikan apps/api jalan.");
+        setError("Gagal memuat rentang default. Muat ulang halaman.");
         setLoading(false);
       }
     })();

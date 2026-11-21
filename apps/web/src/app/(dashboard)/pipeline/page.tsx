@@ -28,7 +28,7 @@ export default async function PipelinePage() {
   return (
     <div className="p-6 space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold">Sales Pipeline (F1)</h1>
+        <h1 className="text-2xl font-semibold">Sales Pipeline</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Digitalisasi HS-S-1. Tab <b>Pipeline</b> = board 7-stage (seret kartu untuk pindah stage; klik untuk detail),
           tab <b>Infografis</b> = grafik dari irisan filter yang sama.
@@ -40,7 +40,7 @@ export default async function PipelinePage() {
         <PipelineBoard data={data} isAdmin={isAdmin} bolehDemo={!!me && featureAllowed(me, "/demo-trial", "create")} />
       ) : (
         <p className="text-muted-foreground">
-          Data tidak tersedia. Pastikan <code>apps/api</code> jalan dengan <code>DATABASE_URL</code>.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </p>
       )}
     </div>

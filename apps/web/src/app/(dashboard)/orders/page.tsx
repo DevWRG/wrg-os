@@ -27,7 +27,7 @@ export default async function OrdersPage() {
       <Card>
         <CardContent className="pt-6">
           {!orders ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & sinkron Accurate aktif." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : orders.length === 0 ? (
             <EmptyState title="Belum ada order" description="Jalankan sinkron: POST /accurate/sync/orders." />
           ) : (

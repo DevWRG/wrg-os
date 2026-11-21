@@ -15,12 +15,12 @@ export default async function HodResolvePage() {
     <>
       <PageHeader
         title="HoD Resolver"
-        description="Resolusi atasan (atasan_raw) → HoD kanonik — foundation reporting-line (ORG_OPTIMAL). (F121)"
+        description="Menyelaraskan penulisan nama atasan di roster menjadi HoD baku — dasar Reporting Line di Org Chart."
       />
       {data ? (
         <HodResolverView data={data} />
       ) : (
-        <p className="text-muted-foreground">Data tidak tersedia. Pastikan <code>apps/api</code> jalan &amp; spine ter-seed.</p>
+        <p className="text-muted-foreground">Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.</p>
       )}
     </>
   );
