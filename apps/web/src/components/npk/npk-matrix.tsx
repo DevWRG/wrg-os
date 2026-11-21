@@ -138,7 +138,7 @@ export function NpkMatrix({
 
       <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" />
-        Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live — bukan kinerja buruk.{naNote ? ` ${naNote}` : ""} NPK dihitung dari aspek yang tersedia saja (bobot tetap SK), jadi selama coverage &lt; 7/7 plafon skor cuma <span className="font-medium">{ceiling} dari 100</span> dan status ditahan di <span className="font-medium">Sementara</span> — predikat SK (dan konsekuensinya: PIP / kandidat promosi) baru berlaku setelah 7/7 aspek ter-feed. Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.
+        <span>Sel <span className="font-medium">N/A</span> = aspek belum punya sumber data live — bukan kinerja buruk.{naNote ? ` ${naNote}` : ""} NPK dihitung dari aspek yang tersedia saja (bobot tetap SK), jadi selama coverage &lt; 7/7 plafon skor cuma <span className="font-medium">{ceiling} dari 100</span> dan status ditahan di <span className="font-medium">Sementara</span> — predikat SK (dan konsekuensinya: PIP / kandidat promosi) baru berlaku setelah 7/7 aspek ter-feed. Kolom <span className="font-medium">Coverage</span> menunjukkan berapa dari 7 aspek yang terukur.</span>
       </p>
     </div>
   );
