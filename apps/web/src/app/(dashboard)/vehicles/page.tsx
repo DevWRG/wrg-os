@@ -35,7 +35,7 @@ export default async function VehiclesPage() {
       <Card>
         <CardContent className="pt-6">
           {!vehicles ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terisi." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : vehicles.length === 0 ? (
             <EmptyState
               title="Belum ada kendaraan terdaftar"

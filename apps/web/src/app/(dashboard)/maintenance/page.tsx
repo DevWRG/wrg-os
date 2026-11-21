@@ -30,7 +30,7 @@ export default async function MaintenancePage() {
       <Card>
         <CardContent className="pt-6">
           {!schedules ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terisi." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : schedules.length === 0 ? (
             <EmptyState title="Belum ada schedule PM/kalibrasi" description="Tambah lewat tombol di atas (alat harus sudah BAST di Instalasi Alat)." />
           ) : (

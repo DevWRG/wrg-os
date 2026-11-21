@@ -38,13 +38,13 @@ export default async function VendorManagementPage() {
     <>
       <PageHeader
         title="Vendor Management"
-        description="Master vendor/partner lokal + riwayat kontrak & status masa berlaku (F140)."
+        description="Master vendor/partner lokal + riwayat kontrak & status masa berlaku."
         action={<AddVendorSheet />}
       />
       {!data ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 145_vendor_management.sql sudah diterapkan."
+          description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
         />
       ) : (
         <Card><CardContent className="pt-6">

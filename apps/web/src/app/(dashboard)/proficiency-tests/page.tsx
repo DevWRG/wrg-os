@@ -23,13 +23,13 @@ export default async function ProficiencyTestsPage() {
     <>
       <PageHeader
         title="Uji Profisiensi"
-        description="Registry sertifikat Uji Profisiensi per RS/faskes — tracking tanggal ED untuk renewal tahunan (F25)."
+        description="Registry sertifikat Uji Profisiensi per RS/faskes — tracking tanggal ED untuk renewal tahunan."
         action={<AddProficiencyTestSheet />}
       />
       {!data ? (
         <EmptyState
           title="Data tidak tersedia"
-          description="Pastikan apps/api jalan dengan DATABASE_URL dan migrasi 139_proficiency_test_document.sql sudah diterapkan."
+          description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
         />
       ) : (
         <Card>

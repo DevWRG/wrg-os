@@ -294,7 +294,7 @@ function ProfileView({ p, departments, hods, onBack, onUpdated }: { p: Profile; 
         </div>
       </Section>
 
-      <Section title="Kalkulator & Scorecard BSC (F119)">
+      <Section title="Kalkulator & Scorecard BSC">
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground text-xs">Periode</span>

@@ -25,7 +25,7 @@ export default async function ProfitabilitasAreaPage() {
     <>
       <PageHeader
         title="Profitabilitas Area"
-        description={`Revenue netto per area, dibandingkan periode sebelumnya${terbatas ? " — hanya cabang Anda" : ""}. Kolom biaya & profit/rugi menyusul setelah data biaya Accurate tersedia. (F150)`}
+        description={`Revenue netto per area, dibandingkan periode sebelumnya${terbatas ? " — hanya cabang Anda" : ""}. Kolom biaya & profit/rugi menyusul setelah data biaya Accurate tersedia.`}
       />
       <RevenueAreaView endpoint="/api/revenue-area" tampilkanBiaya />
     </>

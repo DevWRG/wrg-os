@@ -83,7 +83,7 @@ export default async function OrdersPage({
       <Card>
         <CardContent className="pt-6">
           {!orders ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & sinkron Accurate aktif." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : matched === 0 ? (
             <EmptyState
               title={q ? "Tidak ada order untuk pencarian ini" : "Belum ada order"}

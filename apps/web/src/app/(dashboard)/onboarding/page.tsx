@@ -42,7 +42,7 @@ export default async function OnboardingPage() {
     <>
       <PageHeader
         title="Onboarding Karyawan"
-        description="Checklist karyawan baru: akses sistem, training, NDA, alat, dan grup WA — dibentuk per jabatan dari template. Butir yang lewat tenggat ditandai terlambat. (F56)"
+        description="Checklist karyawan baru: akses sistem, training, NDA, alat, dan grup WA — dibentuk per jabatan dari template. Butir yang lewat tenggat ditandai terlambat."
       />
       {pending
         ? <EmptyState title="Migrasi belum diterapkan" description="Tabel onboarding belum ada di database (migrasi 213)." />

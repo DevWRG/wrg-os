@@ -94,7 +94,7 @@ export function AddPrintSpecSheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Spec Cetak</SheetTitle>
-          <SheetDescription>Standar cetak per jenis dokumen (F44).</SheetDescription>
+          <SheetDescription>Standar cetak per jenis dokumen.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

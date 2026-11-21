@@ -23,7 +23,7 @@ export default async function KohortPage() {
     <>
       <PageHeader
         title="Kohort & Lead Source"
-        description="Retensi customer per kohort kuartal, dan pipeline lead per sumber × status × kuartal. Hanya baca. (F96)"
+        description="Retensi customer per kohort kuartal, dan pipeline lead per sumber × status × kuartal. Hanya baca."
       />
       <KohortView />
     </>

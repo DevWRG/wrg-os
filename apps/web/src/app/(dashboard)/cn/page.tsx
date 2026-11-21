@@ -37,7 +37,7 @@ export default async function CnPage() {
     <>
       <PageHeader
         title="Kredit Note (CN)"
-        description="Rebate customer berdasarkan kontrak, dihitung dari DPP faktur. Alur: Sales → (HoD Business) → HoD Sales → Finance → GA. (F151)"
+        description="Rebate customer berdasarkan kontrak, dihitung dari DPP faktur. Alur: Sales → (HoD Business) → HoD Sales → Finance → GA."
       />
       {pending
         ? <EmptyState title="Migrasi belum diterapkan" description="Tabel CN belum ada di database (migrasi 230)." />

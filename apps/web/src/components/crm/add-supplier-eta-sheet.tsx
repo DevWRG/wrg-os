@@ -81,7 +81,7 @@ export function AddSupplierEtaSheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Tambah Supplier ETA</SheetTitle>
-          <SheetDescription>Catat estimasi tanggal barang datang dari supplier (F39).</SheetDescription>
+          <SheetDescription>Catat estimasi tanggal barang datang dari supplier.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

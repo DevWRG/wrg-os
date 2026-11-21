@@ -111,7 +111,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
     return (
       <Card>
         <CardContent className="text-muted-foreground py-16 text-center text-sm">
-          Data tidak tersedia. Pastikan apps/api jalan & DATABASE_URL terhubung.
+          Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem.
         </CardContent>
       </Card>
     );
@@ -119,21 +119,21 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
 
   const exportRows: ExportRow[] = [
     {
-      modul: "ATK (F49 + F54 Materai)",
+      modul: "ATK & Materai",
       tersedia: data.atk.available ? "Ya" : "Belum",
       ringkasan: data.atk.available
         ? `Item aktif: ${data.atk.current?.active_items ?? 0}, Stok rendah: ${data.atk.current?.low_stock_count ?? 0}, Masuk: ${data.atk.period?.stock_in_qty ?? 0}, Keluar: ${data.atk.period?.stock_out_qty ?? 0}`
         : "-",
     },
     {
-      modul: "Kendaraan Operasional (F50)",
+      modul: "Kendaraan Operasional",
       tersedia: data.kendaraan.available ? "Ya" : "Belum",
       ringkasan: data.kendaraan.available
         ? `Total: ${data.kendaraan.current?.total_vehicles ?? 0}, Due service: ${data.kendaraan.current?.due_service_count ?? 0}, Due STNK: ${data.kendaraan.current?.due_stnk_count ?? 0}, BBM: ${rp(data.kendaraan.period?.bbm_cost ?? 0)}`
         : "-",
     },
     {
-      modul: "Dana Ops / Petty Cash (F51)",
+      modul: "Dana Ops / Petty Cash",
       tersedia: data.dana_ops.available ? "Ya" : "Belum",
       ringkasan: data.dana_ops.available
         ? `Berjalan: ${data.dana_ops.current?.in_progress_count ?? 0}, Belum direalisasi: ${rp(data.dana_ops.current?.outstanding_amount ?? 0)}, Direalisasi periode: ${rp(data.dana_ops.period?.realized_amount ?? 0)}`
@@ -147,7 +147,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         : "-",
     },
     {
-      modul: "Stiker Aset & Tagging Audit (F53)",
+      modul: "Stiker Aset & Tagging Audit",
       tersedia: data.asset_tag.available ? "Ya" : "Belum",
       ringkasan: data.asset_tag.available
         ? `Aset aktif: ${data.asset_tag.current?.total_active ?? 0}, Belum diaudit: ${data.asset_tag.current?.belum_diaudit_count ?? 0}, Hilang: ${data.asset_tag.current?.hilang_count ?? 0}`
@@ -184,7 +184,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         </div>
       </div>
 
-      <ModuleSection title="ATK Stock In/Out (F49 + F54 Materai)" icon={PenLine} available={data.atk.available}>
+      <ModuleSection title="ATK Masuk/Keluar & Materai" icon={PenLine} available={data.atk.available}>
         <StatCard title="Item aktif" value={num(data.atk.current?.active_items ?? 0)} icon={PenLine} />
         <StatCard title="Stok rendah" value={num(data.atk.current?.low_stock_count ?? 0)} deltaTone={(data.atk.current?.low_stock_count ?? 0) > 0 ? "negative" : "neutral"} icon={PenLine} />
         <StatCard title="Stok masuk (periode)" value={num(data.atk.period?.stock_in_qty ?? 0)} icon={PenLine} />
@@ -200,14 +200,14 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         <StatCard title="Materai keluar (periode)" value={num(data.atk.period?.by_transaction_category.materai.stock_out_qty ?? 0)} icon={PenLine} />
       </ModuleSection>
 
-      <ModuleSection title="Kendaraan Operasional (F50)" icon={Car} available={data.kendaraan.available}>
+      <ModuleSection title="Kendaraan Operasional" icon={Car} available={data.kendaraan.available}>
         <StatCard title="Total kendaraan" value={num(data.kendaraan.current?.total_vehicles ?? 0)} icon={Car} />
         <StatCard title="Due service" value={num(data.kendaraan.current?.due_service_count ?? 0)} deltaTone={(data.kendaraan.current?.due_service_count ?? 0) > 0 ? "negative" : "neutral"} icon={Car} />
         <StatCard title="Due STNK" value={num(data.kendaraan.current?.due_stnk_count ?? 0)} deltaTone={(data.kendaraan.current?.due_stnk_count ?? 0) > 0 ? "negative" : "neutral"} icon={Car} />
         <StatCard title="Biaya BBM (periode)" value={rp(data.kendaraan.period?.bbm_cost ?? 0)} icon={Car} />
       </ModuleSection>
 
-      <ModuleSection title="Dana Ops / Petty Cash (F51)" icon={Wallet} available={data.dana_ops.available}>
+      <ModuleSection title="Dana Ops / Petty Cash" icon={Wallet} available={data.dana_ops.available}>
         <StatCard title="Sedang berjalan" value={num(data.dana_ops.current?.in_progress_count ?? 0)} icon={Wallet} />
         <StatCard title="Belum direalisasi" value={rp(data.dana_ops.current?.outstanding_amount ?? 0)} deltaTone={(data.dana_ops.current?.outstanding_amount ?? 0) > 0 ? "negative" : "neutral"} icon={Wallet} />
         <StatCard title="Direalisasi (periode)" value={num(data.dana_ops.period?.realized_count ?? 0)} icon={Wallet} />
@@ -238,7 +238,7 @@ export function GaReportingDashboard({ initial }: { initial: GaReportingData | n
         />
       </ModuleSection>
 
-      <ModuleSection title="Stiker Aset & Tagging Audit (F53)" icon={QrCode} available={data.asset_tag.available}>
+      <ModuleSection title="Stiker Aset & Tagging Audit" icon={QrCode} available={data.asset_tag.available}>
         <StatCard title="Aset aktif" value={num(data.asset_tag.current?.total_active ?? 0)} icon={QrCode} />
         <StatCard
           title="Belum diaudit"

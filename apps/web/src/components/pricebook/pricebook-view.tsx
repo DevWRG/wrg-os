@@ -118,7 +118,7 @@ export function PricebookView({
     return (
       <EmptyState
         title="Harga belum tersedia"
-        description="Kamu belum berizin melihat harga terpublikasi, atau apps/api tidak aktif."
+        description="Anda belum berizin melihat harga terpublikasi, atau data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem."
       />
     );
   }

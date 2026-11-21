@@ -32,7 +32,7 @@ export default async function SupplierEtaPage() {
     <>
       <PageHeader
         title="Supplier ETA Tracker"
-        description="Estimasi tanggal barang datang dari supplier (F39) — pantau yang telat sebelum jadi masalah."
+        description="Estimasi tanggal barang datang dari supplier — pantau yang telat sebelum jadi masalah."
         action={<AddSupplierEtaSheet />}
       />
       {rows && (
@@ -45,7 +45,7 @@ export default async function SupplierEtaPage() {
       <Card>
         <CardContent className="pt-6">
           {!rows ? (
-            <EmptyState title="Data tidak tersedia" description="Pastikan apps/api jalan & DATABASE_URL terhubung." />
+            <EmptyState title="Data tidak tersedia" description="Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
           ) : rows.length === 0 ? (
             <EmptyState title="Belum ada catatan ETA" description="Tambah lewat tombol Tambah ETA di atas." />
           ) : (

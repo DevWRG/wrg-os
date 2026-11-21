@@ -221,7 +221,7 @@ export function UserInfographic({ amId, initialFrom, initialTo }: { amId: string
     const d = await getJson<{ detail: Detail }>(
       `/api/report/drilldown?am_id=${encodeURIComponent(amId)}&from=${r.from}&to=${r.to}`,
     );
-    setError(d ? null : "Gagal memuat data. Pastikan apps/api jalan.");
+    setError(d ? null : "Gagal memuat data. Muat ulang halaman.");
     setDetail(d?.detail ?? null);
     setTodoPage(0);
     setLoading(false);

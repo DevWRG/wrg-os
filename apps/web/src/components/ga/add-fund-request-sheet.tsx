@@ -101,7 +101,7 @@ export function AddFundRequestSheet() {
       <SheetContent side="right" className="w-full sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Ajukan Dana Operasional</SheetTitle>
-          <SheetDescription>Pengajuan akan mengalir ke HOD terpilih, lalu Direktur (F138).</SheetDescription>
+          <SheetDescription>Pengajuan akan mengalir ke HOD terpilih, lalu Direktur.</SheetDescription>
         </SheetHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">

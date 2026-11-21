@@ -643,7 +643,7 @@ export function PurchaseOrderTable({
                                     />
                                   </>
                                 ) : (
-                                  <p className="text-muted-foreground text-xs">Menunggu approval penuh sebelum bisa mencatat barang masuk (F35).</p>
+                                  <p className="text-muted-foreground text-xs">Menunggu approval penuh sebelum bisa mencatat barang masuk.</p>
                                 )}
                               </div>
                             )}
