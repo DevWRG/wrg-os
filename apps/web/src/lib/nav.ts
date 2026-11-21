@@ -10,10 +10,10 @@ import { CalendarCheck, Inbox,
   Bell, MapPin, ListChecks, Swords, CalendarOff, CalendarDays, CalendarRange,
   Users, KeyRound, ShieldCheck, MessagesSquare, Gauge, Tags, SlidersHorizontal, Microscope, MonitorCheck, FileSignature, Gavel,
   Target, MapPinned, Contact, UserRound, Award, UserCheck, Crown, BookOpen, Calculator, Presentation, Megaphone, Library,
-  Wallet, Coins, Banknote, Car, QrCode, PenLine, PackagePlus, PackageMinus,
-  Handshake, Archive, Ticket, Printer, Route, ArrowLeftRight,
-  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, Wrench, HardHat, HeartPulse, type LucideIcon,
-  Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, PackageCheck, FileCheck2,
+  Wallet, Coins, Banknote, Car, QrCode, PenLine, PackageMinus,
+  Handshake, Archive, Ticket, Printer, Route,
+  TrendingUp, CalendarClock, PackageSearch, FileClock, FileBarChart, Wrench, HeartPulse, type LucideIcon,
+  Hourglass, ShieldAlert, Landmark, Scale, ClipboardList, FileCheck2,
 } from "lucide-react";
 
 import { canOrLegacy, hasPerms } from "@/lib/perms";
@@ -386,10 +386,15 @@ export const NAV: NavGroup[] = [
   {
     label: "Aftersales",
     items: [
-      { title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW" },
+      // K16 (evaluasi menu 19 Nov 2026): Readiness Board (kapasitas teknisi, jadwal
+      // install, laporan lapangan) dilebur jadi tab di sini. Key `readiness-board`
+      // tetap (features + path lama); tabKetat.
+      {
+        title: "Instalasi Alat", url: "/installations", icon: Wrench, badge: "NEW", tabKetat: true,
+        features: [{ key: "readiness-board", name: "Instalasi Alat — tab Kapasitas/Jadwal/Laporan", path: "/readiness-board" }],
+      },
       { title: "Service Tickets", url: "/service-tickets", icon: Ticket, badge: "NEW" },
       { title: "PM & Kalibrasi", url: "/maintenance", icon: CalendarClock, badge: "NEW" },
-      { title: "Readiness Board", url: "/readiness-board", icon: HardHat, badge: "NEW" },
       // Kinerja Teknisi — jadwal per teknisi + Plan & Report (waktu kerja, SLA tiket vs ETA, kepatuhan).
       // Kunci "kinerja-teknisi" (teknisi: hanya dirinya) + "kinerja-teknisi-semua" (HoD Aftersales: semua);
       // default tertutup, fallback direktur/admin/superuser. Cakupan ditegakkan apps/api.
@@ -430,10 +435,13 @@ export const NAV: NavGroup[] = [
     label: "Shipping",
     items: [
       { title: "Spesifikasi Cetak Dokumen", url: "/print-spec", icon: Printer, badge: "NEW" },
-      // F12/F42/F93 + F43 — 13 Okt 2026: data 100% dari WA #KIRIM/#TERIMA/
-      // #BAST/#BUKTI (SJ dari DO Accurate), kedua menu baca-saja.
-      { title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW" },
-      { title: "Kurir Performance", url: "/courier-performance", icon: Route, badge: "NEW" },
+      // K4 (evaluasi menu 19 Nov 2026): Kurir Performance (F43, agregat atas data
+      // tracking ini) dilebur jadi tab "Kinerja Kurir". Key `courier-performance`
+      // tetap (features + path lama); tabKetat.
+      {
+        title: "Tracking Pengiriman", url: "/shipment-tracking", icon: Route, badge: "NEW", tabKetat: true,
+        features: [{ key: "courier-performance", name: "Tracking Pengiriman — tab Kinerja Kurir", path: "/courier-performance" }],
+      },
       // DOC — rekap dokumen per transaksi (7 state: Draft → … → Closed), dihitung dari SO/SJ/BAST/faktur/Arsip.
       { title: "Document Tracker", url: "/doc-tracker", icon: FileCheck2, badge: "NEW", show: canViewDocTracker },
       // F45 — rencana trip kurir + cek H-1 (libur & PIC), tersambung ke
@@ -457,10 +465,15 @@ export const NAV: NavGroup[] = [
       { title: "ED & Kedaluwarsa", url: "/ed-watch", icon: Hourglass, badge: "NEW" },
       // F13 PO Tracker — cermin PO Accurate (migrasi 205): PO, approval, dan
       // penerimaan dibuat di Accurate, halaman ini memantau (telat, sisa qty).
-      { title: "PO Tracker", url: "/purchase-orders", icon: ClipboardList, badge: "NEW" },
-      // F36 Inbound Receiving — checklist verifikasi gudang per Penerimaan
-      // Barang Accurate (migrasi 206), dibuat otomatis oleh sinkron.
-      { title: "Inbound Receiving", url: "/inbound-receiving", icon: PackageCheck, badge: "NEW" },
+      //
+      // K3 (evaluasi menu 19 Nov 2026): Inbound Receiving (F36) dilebur jadi tab
+      // "Checklist Penerimaan" di sini. Key `inbound-receiving` TETAP (features +
+      // path lama → semua requireFeature("/inbound-receiving") memeriksa izin yang
+      // sama); tabKetat: pemegang tab Penerimaan saja tak bisa membuka data PO.
+      {
+        title: "PO & Penerimaan Barang", url: "/purchase-orders", icon: ClipboardList, badge: "NEW", tabKetat: true,
+        features: [{ key: "inbound-receiving", name: "PO & Penerimaan — tab Checklist Penerimaan", path: "/inbound-receiving" }],
+      },
       // F19 — scan buffer (Stok Gudang) + ED (F38) → usulan forecast per
       // dokumen cabang × kategori × bulan, Supply Chain review/edit, ajukan
       // ke review HoD Sales wilayah. Ditaruh Purchasing krn pemakainya
@@ -493,19 +506,24 @@ export const NAV: NavGroup[] = [
     label: "General Affairs",
     items: [
       { title: "Dana Ops", url: "/dana-ops", icon: Wallet, badge: "NEW", show: canViewDanaOps },
-      { title: "ATK Master", url: "/atk-master", icon: PenLine, badge: "NEW" },
+      // K5 opsi B (evaluasi menu 19 Nov 2026): ATK Master + Stock In + Stock Opname
+      // = pekerjaan tim GA → satu menu "Kelola ATK" tiga tab. Key atk-stock-in &
+      // atk-stock-opname tetap (features + path lama); tabKetat. Stock Out TETAP
+      // menu sendiri (self-service karyawan) — lihat catatan F49 di bawah.
+      {
+        title: "Kelola ATK", url: "/atk-master", icon: PenLine, badge: "NEW", tabKetat: true,
+        features: [
+          { key: "atk-stock-in", name: "Kelola ATK — tab Barang Masuk", path: "/atk-stock-in" },
+          { key: "atk-stock-opname", name: "Kelola ATK — tab Stock Opname", path: "/atk-stock-opname" },
+        ],
+      },
       // F49 sengaja 2 menu/feature-key terpisah (bukan 1 halaman gabungan):
       // Stock In = tim GA (pencatatan pembelian/penerimaan), Stock Out = tim
       // mana pun (self-service pengambilan barang). Belum di-gate identitas
       // ("show") krn sistem ini belum punya konsep departemen/tim di data
       // user — Direktur atur siapa boleh apa lewat Akses Grup (feature key
       // "atk-stock-in" vs "atk-stock-out", auto dari url).
-      { title: "ATK Stock In", url: "/atk-stock-in", icon: PackagePlus, badge: "NEW" },
       { title: "ATK Stock Out", url: "/atk-stock-out", icon: PackageMinus, badge: "NEW" },
-      // F136: hitung fisik vs stok sistem. Penyesuaian selisih dibuat lewat
-      // FORM YANG SAMA dgn Stock In/Out (AddAtkStockMovementSheet), bukan form
-      // baru — menu ini cuma beda submenu/konteks.
-      { title: "ATK Stock Opname", url: "/atk-stock-opname", icon: ListChecks, badge: "NEW" },
       // F140 Vendor Management + Contract Expiry Alerts — master vendor/partner
       // lokal + riwayat kontrak, status masa berlaku computed di query (tanpa
       // WA/cron — dikonfirmasi user). Role min HOD (data komersial vendor),
@@ -520,7 +538,10 @@ export const NAV: NavGroup[] = [
       // ke F132 juga di level MENU. Tab Tiket IT dicabut 11 Nov 2026 (diserap
       // Helpdesk GA, migrasi 306) — fitur "it-asset" ikut dibuang dari katalog.
       {
-        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW",
+        // K6 (evaluasi menu 19 Nov 2026): Relokasi Aset dilebur jadi tab "Riwayat
+        // Relokasi". Key `ga-relokasi` tetap (features + path lama); tabKetat:
+        // pemegang tab relokasi saja tak membuka data Aset GA.
+        title: "Aset GA", url: "/ga-aset", icon: Archive, badge: "NEW", tabKetat: true,
         // ga-finance-approval = tombol "Approve Finance" Maintenance GA (F137)
         // di halaman ini. Dulu cuma disemai migrasi 089, bukan dari menu, jadi
         // tiap Sync Fitur menganggapnya zombie dan MENONAKTIFKANNYA — gate-nya
@@ -528,13 +549,12 @@ export const NAV: NavGroup[] = [
         // Grup tak berlaku. Didaftarkan di sini supaya ikut katalog.
         features: [
           { key: "ga-finance-approval", name: "Approval Finance — Maintenance GA" },
+          { key: "ga-relokasi", name: "Aset GA — tab Riwayat Relokasi", path: "/ga-relokasi" },
         ],
       },
       // F53 Stiker Aset & F50 Kendaraan Operasional — dulu di grup Operations,
       // dipindah ke General Affairs atas arahan user 5 Okt 2026 (pengelolanya
       // tim GA). Key fitur tak berubah (diturunkan dari url), hanya `section`.
-      // Relokasi aset GA + berita acara bertanda tangan (13 Okt 2026).
-      { title: "Relokasi Aset", url: "/ga-relokasi", icon: ArrowLeftRight, badge: "NEW" },
       { title: "Stiker Aset", url: "/asset-tag", icon: QrCode, badge: "NEW" },
       { title: "Kendaraan Operasional", url: "/vehicles", icon: Car, badge: "NEW" },
       { title: "Helpdesk GA", url: "/ga-helpdesk", icon: Ticket, badge: "NEW" },
@@ -558,10 +578,14 @@ export const NAV: NavGroup[] = [
       { title: "Aset Tetap", url: "/aset-tetap", icon: Landmark, badge: "NEW", show: canViewAsetTetap },
       // F149 (dipersempit) — DO/SJ terkirim yang belum difakturkan, dari cermin Accurate.
       // Kunci izin sendiri ("do-belum-faktur"), default tertutup: butuh Sync Fitur + centang.
-      { title: "DO Belum Difaktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur },
-      // F10 — alarm fakturis diam + beban akun fakturis + faktur revisi (#REVISI), dari cermin Accurate.
-      // Kunci izin sendiri ("penerbitan-faktur"), default tertutup: butuh Sync Fitur + centang.
-      { title: "Penerbitan Faktur", url: "/penerbitan-faktur", icon: FileClock, badge: "NEW", show: canViewPenerbitanFaktur },
+      // K7 (evaluasi menu 19 Nov 2026): Penerbitan Faktur (F10 — alarm fakturis diam,
+      // beban akun fakturis, faktur revisi) dilebur jadi tab menu "Faktur" ini. Key
+      // `penerbitan-faktur` tetap (features + path lama); tabKetat: pemegang satu tab
+      // tak membuka data tab lainnya.
+      {
+        title: "Faktur", url: "/do-belum-faktur", icon: FileClock, badge: "NEW", show: canViewDoBelumFaktur, tabKetat: true,
+        features: [{ key: "penerbitan-faktur", name: "Faktur — tab Penerbitan & Revisi Faktur", path: "/penerbitan-faktur", show: canViewPenerbitanFaktur }],
+      },
       // F10 (ambil alih F29) — register cek/giro keluar: kasir input → HoD Finance setuju → serahkan → cair.
       // Kunci izin sendiri ("register-cek"): tambah = kasir, ubah = penyetuju. Default tertutup.
       { title: "Register Cek", url: "/register-cek", icon: Banknote, badge: "NEW", show: canViewRegisterCek },
@@ -623,12 +647,16 @@ export const featureKey = (url: string) => url.replace(/^\//, "").replace(/\//g,
 export const adalahAdmin = (me: AccessUser | null): boolean => me?.role === "admin" || me?.superuser === true;
 
 // Izin atas menu INDUK saja: key induk + gate identitas induk sendiri, tak pernah
-// key/gate tab. Dipakai untuk data induk pada menu `tabKetat`.
+// key/gate tab hasil peleburan. Dipakai untuk data induk pada menu `tabKetat`.
+// Entri `features` TANPA `path` (mis. ga-finance-approval di Aset GA) adalah
+// sub-izin aksi di halaman induk itu sendiri, bukan menu lain yang dilebur —
+// tetap dihitung izin induk, supaya memasang tabKetat tak mencabut aksesnya.
 export function navOwnVisible(me: AccessUser | null, it: NavItem): boolean {
   if (it.hanyaAdmin) return adalahAdmin(me);
   const key = it.feature ?? featureKey(it.url);
   if (!hasPerms(me)) return it.show ? it.show(me) : true;
-  return canOrLegacy(me, key, it.show ? it.show(me) : false);
+  if (canOrLegacy(me, key, it.show ? it.show(me) : false)) return true;
+  return (it.features ?? []).some((f) => !f.path && tabVisible(me, f));
 }
 
 // Izin atas satu tab (entri `features`) — key tab + gate identitas tab itu sendiri.

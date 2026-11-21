@@ -11,13 +11,12 @@ import { cn } from "@/lib/utils";
 import type { InboxHasil, InboxItem, JenisInbox } from "./types";
 
 const LABEL: Record<JenisInbox, string> = {
-  approval: "Approval F11",
   po: "Purchase Order",
   fund: "Dana Operasional",
   insentif: "Insentif",
   lembur: "Lembur",
 };
-const URUT: JenisInbox[] = ["approval", "po", "fund", "insentif", "lembur"];
+const URUT: JenisInbox[] = ["po", "fund", "insentif", "lembur"];
 
 /** Lewat ambang ini item ditandai merah — antrean Direktur yang menua. */
 const HARI_LAMBAT = 3;
@@ -125,7 +124,7 @@ export function InboxView({ data }: { data: InboxHasil }) {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Halaman ini hanya membaca. Approval F11 &amp; lembur juga bisa diputuskan lewat WA (#APPROVE / #REJECT &lt;kode&gt;);
+        Halaman ini hanya membaca. Lembur juga bisa diputuskan lewat WA (#APPROVE / #REJECT &lt;kode&gt;);
         sumber lain diputuskan di layarnya. Yang tampil: PO setelah HoD Business &amp; Finance setuju, dana operasional
         setelah HoD setuju, insentif di langkah Direktur, lembur yang tak punya HoD pemutus.
       </p>
