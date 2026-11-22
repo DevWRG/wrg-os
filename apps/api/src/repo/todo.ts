@@ -111,6 +111,67 @@ export async function listTodos(amId?: string, date?: string, limit = 1000): Pro
   }));
 }
 
+// Menu Plan Operasional (/todos) — daftar per halaman. Dulu halaman memanggil
+// listTodos() tanpa parameter: LIMIT 1000 memotong 4.300 plan (prod 22 Nov) jadi
+// hanya yang sejak ±9 Okt, dan filter tanggal di klien kosong untuk rentang
+// lama. Sekarang cari, rentang tanggal, urut, dan halaman dikerjakan di SQL.
+export const TODO_SORTS = ["tanggal", "am", "total"] as const;
+export type TodoSort = (typeof TODO_SORTS)[number];
+export const isTodoSort = (v: unknown): v is TodoSort => TODO_SORTS.includes(String(v) as TodoSort);
+
+export async function listTodosPaged(o: {
+  q?: string;
+  from?: string;
+  to?: string;
+  sort?: TodoSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+} = {}): Promise<{ rows: TodoRow[]; total: number; limit: number; offset: number }> {
+  const sql = db();
+  const limit = Math.min(Math.max(Math.trunc(Number(o.limit) || 25), 1), 500);
+  const offset = Math.max(Math.trunc(Number(o.offset) || 0), 0);
+  const q = (o.q ?? "").trim();
+  const like = `%${q}%`;
+  const tglOk = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+  const from = tglOk(o.from);
+  const to = tglOk(o.to);
+  const where = sql`WHERE true
+    ${q ? sql`AND (am_name ILIKE ${like} OR am_id ILIKE ${like} OR items::text ILIKE ${like})` : sql``}
+    ${from ? sql`AND tanggal >= ${from}::date` : sql``}
+    ${to ? sql`AND tanggal <= ${to}::date` : sql``}`;
+  const key = o.sort ?? "tanggal";
+  const col = key === "am" ? sql`COALESCE(am_name, am_id)` : key === "total" ? sql`total_items` : sql`tanggal`;
+  const order = o.dir === "asc"
+    ? sql`ORDER BY ${col} ASC NULLS LAST, created_at ASC, id ASC`
+    : sql`ORDER BY ${col} DESC NULLS LAST, created_at DESC, id DESC`;
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT id, am_id, am_name, tanggal::text, items, total_items, is_late_plan,
+             reported, reported_at::text, created_at::text
+      FROM sales_todo ${where} ${order}
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total FROM sales_todo ${where}`,
+  ]);
+  return {
+    rows: rows.map((r) => ({
+      id: String(r.id),
+      am_id: String(r.am_id),
+      am_name: r.am_name ? String(r.am_name) : null,
+      tanggal: String(r.tanggal),
+      items: Array.isArray(r.items) ? (r.items as string[]) : [],
+      total_items: Number(r.total_items),
+      is_late_plan: Boolean(r.is_late_plan),
+      reported: Boolean(r.reported),
+      reported_at: r.reported_at ? String(r.reported_at) : null,
+      created_at: String(r.created_at),
+    })),
+    total: Number(count?.total ?? 0),
+    limit,
+    offset,
+  };
+}
+
 export async function markTodoReported(
   amId: string,
   tanggal: string,

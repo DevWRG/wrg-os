@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
@@ -12,6 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { useTableUrl } from "@/lib/use-table-url";
 
 interface TodoItem {
   id: string;
@@ -57,26 +58,51 @@ const columns: DataColumn<TodoItem>[] = [
   },
 ];
 
-export function TodosTable({ todos }: { todos: TodoItem[] }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+/** State tabel di URL; id kolom urut = TODO_SORTS di apps/api repo/todo.ts. */
+export interface TodoQuery {
+  q: string;
+  from: string;
+  to: string;
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+// Mode server: cari (nama + isi item), rentang tanggal, urut, dan halaman
+// dikerjakan backend atas SELURUH plan.
+export function TodosTable({ todos, totalRows, query }: { todos: TodoItem[]; totalRows: number; query: TodoQuery }) {
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
   const [selected, setSelected] = useState<TodoItem | null>(null);
-  const filtered = useMemo(() => {
-    if (!from && !to) return todos;
-    return todos.filter((t) => {
-      const d = (t.tanggal ?? "").slice(0, 10);
-      return d ? (!from || d >= from) && (!to || d <= to) : false;
-    });
-  }, [todos, from, to]);
   return (
     <>
       <DataTable
         columns={columns}
-        data={filtered}
+        data={todos}
         getKey={(t) => t.id}
-        searchPlaceholder="Cari AM / item…"
+        searchPlaceholder="Cari nama / item…"
         onRowClick={(t) => setSelected(t)}
-        toolbar={<DateRangeToolbar from={from} to={to} onFrom={setFrom} onTo={setTo} idPrefix="td" />}
+        server={{
+          totalRows,
+          page: query.page,
+          pageSize: query.size,
+          sort: { id: query.sort, dir: query.dir },
+          q: qInput,
+          pending,
+          onPageChange: (p) => push({ page: p === 0 ? null : p }),
+          onPageSizeChange: (n) => push({ size: n, page: null }),
+          onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+          onSearchChange: setQInput,
+        }}
+        toolbar={
+          <DateRangeToolbar
+            from={query.from}
+            to={query.to}
+            onFrom={(v) => push({ from: v || null, page: null })}
+            onTo={(v) => push({ to: v || null, page: null })}
+            idPrefix="td"
+          />
+        }
       />
 
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>

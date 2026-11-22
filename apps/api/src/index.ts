@@ -53,7 +53,7 @@ import {
   type InboundReceivingStatus,
   type InboundReceivingItemUpdate,
 } from "./repo/inbound-receiving.js";
-import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { listWarehouses, listStockBranch, stockBranchSummary, isStockSort } from "./repo/stock-branch.js";
 import { listStockBatch, stockBatchSummary, runEdWatch } from "./repo/stock-batch.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
@@ -93,7 +93,7 @@ import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipLi
 import { bacaLampiran as hdBacaLampiran, buatProyek as hdBuatProyek, cariFaskes as hdCariFaskes, detailProyek as hdDetail, JENIS_SIMULASI as HD_JENIS_SIMULASI, listParam as hdListParam, listProyek as hdListProyek, listSimulasi as hdListSimulasi, majuTahap as hdMajuTahap, ProyekHdError, referensi as hdReferensi, ringkasan as hdRingkasan, simpanSimulasi as hdSimpanSimulasi, tambahCatatan as hdTambahCatatan, ubahParam as hdUbahParam, ubahProyek as hdUbahProyek, type JenisSimulasi as HdJenisSimulasi } from "./repo/proyek-hd.js";
 import { buatOps as hdBuatOps, eksporXlsx as hdEksporXlsx, hapusOps as hdHapusOps, listOps as hdListOps, OPS as HD_OPS, opsProyek as hdOpsProyek, ringkasanOps as hdRingkasanOps, ubahOps as hdUbahOps } from "./repo/proyek-hd-ops.js";
 import {
-  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, isDocSort, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
 } from "./repo/doc-tracker.js";
 import {
@@ -203,7 +203,7 @@ import {
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
-import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
+import { upsertDailyTodo, listTodos, markTodoReported, listTodosPaged, isTodoSort } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
@@ -375,6 +375,8 @@ import {
   listMirror,
   listSalesOrders,
   listDeliveryOrders,
+  listItemsPaged,
+  isItemSort,
 } from "./repo/accurateMirror.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
@@ -3078,6 +3080,22 @@ app.post("/todos", async (c) => {
     is_late_plan: body.is_late_plan,
   });
   return c.json(r, 201);
+});
+
+// Daftar per halaman untuk menu Plan Operasional (lihat listTodosPaged).
+app.get("/todos/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const r = await listTodosPaged({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isTodoSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ count: r.rows.length, total_rows: r.total, limit: r.limit, offset: r.offset, todos: r.rows });
 });
 
 app.get("/todos", async (c) => {
@@ -5876,6 +5894,22 @@ app.post("/accurate/items", async (c) => {
   return c.json({ upserted: await upsertItems(recs) }, 201);
 });
 
+// Daftar item per halaman untuk menu Katalog & Stok (/products). Didaftarkan
+// SEBELUM /accurate/:entity supaya literal "items/list" tidak ditangkap rute
+// dinamis itu.
+app.get("/accurate/items/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listItemsPaged({
+    q: q.q || undefined,
+    sort: isItemSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "desc" ? "desc" : "asc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "items", count: rows.length, total_rows: total, limit, offset, rows });
+});
+
 app.get("/accurate/:entity", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   const entity = c.req.param("entity");
@@ -5917,6 +5951,8 @@ app.get("/stock/branch", async (c) => {
     hanyaSelisih: c.req.query("selisih") === "1",
     hanyaNegatif: c.req.query("negatif") === "1",
     tanpaData: c.req.query("tanpa_data") === "1",
+    sort: isStockSort(c.req.query("sort")) ? c.req.query("sort") : undefined,
+    dir: c.req.query("dir") === "desc" ? "desc" : "asc",
     limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
     offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
   });
@@ -6784,6 +6820,11 @@ app.get("/doc-tracker", async (c) => {
         q: c.req.query("q"),
         billingRisiko: c.req.query("billing") === "1",
         dikirimBelumDibayar: c.req.query("dikirim_belum_dibayar") === "1",
+        anomali: c.req.query("anomali") === "1",
+        sort: ((v) => (isDocSort(v) ? v : undefined))(c.req.query("sort")),
+        dir: c.req.query("dir") === "asc" ? "asc" : "desc",
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
       }),
     );
   } catch (e) {

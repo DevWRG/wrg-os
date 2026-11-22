@@ -315,6 +315,58 @@ export async function listMirror(
   });
 }
 
+// ── Katalog & Stok (menu /products) — daftar item per halaman ─────────────────
+// Dulu halaman memuat SELURUH accurate_item (±5.900 baris, limit 10.000) ke
+// browser lalu mencari & mengurutkan di sana. Sekarang cari, urut, dan halaman
+// dikerjakan di SQL; `total` = baris yang cocok filter (angka footer tabel).
+// listMirror() di atas TIDAK diubah: dropdown Produk form Deal masih memakainya.
+export const ITEM_SORTS = ["no", "name", "category", "harga", "quantity", "available", "unit", "status"] as const;
+export type ItemSort = (typeof ITEM_SORTS)[number];
+export const isItemSort = (v: unknown): v is ItemSort => ITEM_SORTS.includes(String(v) as ItemSort);
+
+export async function listItemsPaged(opts: {
+  q?: string;
+  sort?: ItemSort;
+  dir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+} = {}) {
+  const sql = db();
+  // (main belum punya mirrorPage() dari dev — batas dihitung di sini: 25 bawaan, maks 5.000.)
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit) || 25), 1), 5000);
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
+  const q = (opts.q ?? "").trim();
+  const like = `%${q}%`;
+  const where = sql`WHERE true
+    ${q ? sql`AND (it.no ILIKE ${like} OR it.name ILIKE ${like} OR it.category ILIKE ${like})` : sql``}`;
+  // Kolom urut di-whitelist (ItemSort); "status" = label stok yang diturunkan
+  // dari quantity, jadi urutnya ikut quantity.
+  // WAJIB berprefiks `it.`: SELECT di bawah memberi alias teks dengan nama yang
+  // SAMA (quantity::text AS quantity, id::text AS id) dan ORDER BY tanpa prefiks
+  // merujuk alias output itu → angka terurut sebagai teks (997, 99, 980, 9779).
+  const key = opts.sort ?? "name";
+  const col =
+    key === "no" ? sql`it.no`
+    : key === "category" ? sql`it.category`
+    : key === "harga" ? sql`it.unit_price`
+    : key === "quantity" || key === "status" ? sql`it.quantity`
+    : key === "available" ? sql`it.available`
+    : key === "unit" ? sql`it.unit`
+    : sql`it.name`;
+  const order = opts.dir === "desc"
+    ? sql`ORDER BY ${col} DESC NULLS LAST, it.id DESC`
+    : sql`ORDER BY ${col} ASC NULLS LAST, it.id ASC`;
+  const [rows, [count]] = await Promise.all([
+    sql`
+      SELECT it.id::text AS id, it.no, it.name, it.category, it.unit_price::text AS unit_price,
+             it.quantity::text AS quantity, it.available::text AS available, it.unit
+      FROM accurate_item it ${where} ${order}
+      LIMIT ${limit} OFFSET ${offset}`,
+    sql`SELECT count(*)::int AS total FROM accurate_item it ${where}`,
+  ]);
+  return { rows: rows.map((r) => ({ ...r })), total: Number(count?.total ?? 0), limit, offset };
+}
+
 // ── F37: stok per gudang (#836) ─────────────────────────────────────────────
 // Saldo per gudang hanya tersedia lewat item/detail.do per SKU — lihat alasan
 // lengkapnya di migrasi 166. Yang ada di sini bagian DB-nya; pemanggil API-nya

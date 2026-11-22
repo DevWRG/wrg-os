@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { useTableUrl } from "@/lib/use-table-url";
 
 export interface AccurateItem {
   id: string;
@@ -24,6 +25,37 @@ const columns: DataColumn<AccurateItem>[] = [
   { id: "harga", header: "Harga", align: "right", sortable: true, accessor: (i) => Number(i.unit_price) || 0, cell: (i) => <span className="whitespace-nowrap">{rupiah(i.unit_price)}</span>, className: "whitespace-nowrap" },
 ];
 
-export function ProductsTable({ items }: { items: AccurateItem[] }) {
-  return <DataTable columns={columns} data={items} getKey={(i) => i.id} searchPlaceholder="Cari SKU / nama produk…" />;
+/** State tabel di URL; id kolom = ITEM_SORTS di apps/api repo/accurateMirror.ts. */
+export interface ItemQuery {
+  q: string;
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+// Mode server: cari, urut, dan halaman dikerjakan backend (±5.900 item) — dulu
+// seluruh katalog dikirim ke browser lalu disaring di sini.
+export function ProductsTable({ items, totalRows, query }: { items: AccurateItem[]; totalRows: number; query: ItemQuery }) {
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
+  return (
+    <DataTable
+      columns={columns}
+      data={items}
+      getKey={(i) => i.id}
+      searchPlaceholder="Cari SKU / nama produk…"
+      server={{
+        totalRows,
+        page: query.page,
+        pageSize: query.size,
+        sort: { id: query.sort, dir: query.dir },
+        q: qInput,
+        pending,
+        onPageChange: (p) => push({ page: p === 0 ? null : p }),
+        onPageSizeChange: (n) => push({ size: n, page: null }),
+        onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+        onSearchChange: setQInput,
+      }}
+    />
+  );
 }

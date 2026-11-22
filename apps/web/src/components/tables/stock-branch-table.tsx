@@ -4,6 +4,7 @@ import { useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { useTableUrl } from "@/lib/use-table-url";
 
 export interface WarehouseCol {
   kode: string;
@@ -42,13 +43,30 @@ const fmt = (n: number | null | undefined) =>
 // jadi teks yang dicocokkan kotak pencarian.
 const TAK_ADA = -Number.MAX_SAFE_INTEGER;
 
+/** State tabel di URL; id kolom urut = isStockSort di apps/api repo/stock-branch.ts. */
+export interface StockQuery {
+  q: string;
+  filter: "semua" | "anomali" | "tanpa_data";
+  sort: string;
+  dir: "asc" | "desc";
+  page: number;
+  size: number;
+}
+
+// Mode server: cari, filter, urut, dan halaman di backend. Dulu seluruh
+// katalog (±5.900 item × kolom per gudang) dikirim ke browser.
 export function StockBranchTable({
   rows,
   warehouses,
+  totalRows,
+  query,
 }: {
   rows: StockBranchRow[];
   warehouses: WarehouseCol[];
+  totalRows: number;
+  query: StockQuery;
 }) {
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
   // Kolom gudang = gudang aktif DITAMBAH gudang nonaktif yang masih memegang
   // stok di salah satu baris. Tanpa penambahan itu, stok di gudang yang baru
   // dinonaktifkan tetap ikut dijumlahkan di Σ Cabang tapi tak punya kolom —
@@ -203,6 +221,18 @@ export function StockBranchTable({
       data={rows}
       getKey={(r) => r.item_id}
       searchPlaceholder="Cari SKU / nama item…"
+      server={{
+        totalRows,
+        page: query.page,
+        pageSize: query.size,
+        sort: { id: query.sort, dir: query.dir },
+        q: qInput,
+        pending,
+        onPageChange: (p) => push({ page: p === 0 ? null : p }),
+        onPageSizeChange: (n) => push({ size: n, page: null }),
+        onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+        onSearchChange: setQInput,
+      }}
     />
   );
 }
