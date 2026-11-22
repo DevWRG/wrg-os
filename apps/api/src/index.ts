@@ -347,6 +347,8 @@ import {
   salesOrderSummary,
   deliveryOrderSummary,
   isMirrorSort,
+  listItemsPaged,
+  isItemSort,
 } from "./repo/accurateMirror.js";
 import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
 import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
@@ -6418,6 +6420,22 @@ app.post("/accurate/items", async (c) => {
   const recs = await accBody<{ id: number; no?: string; name?: string; category?: string; unit_price?: number; raw?: unknown }>(c);
   if (!recs) return c.json({ error: "body array / {records|data:[...]} wajib" }, 400);
   return c.json({ upserted: await upsertItems(recs) }, 201);
+});
+
+// Daftar item per halaman untuk menu Katalog & Stok (/products). Didaftarkan
+// SEBELUM /accurate/:entity supaya literal "items/list" tidak ditangkap rute
+// dinamis itu.
+app.get("/accurate/items/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const { rows, total, limit, offset } = await listItemsPaged({
+    q: q.q || undefined,
+    sort: isItemSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "desc" ? "desc" : "asc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ entity: "items", count: rows.length, total_rows: total, limit, offset, rows });
 });
 
 app.get("/accurate/:entity", async (c) => {
