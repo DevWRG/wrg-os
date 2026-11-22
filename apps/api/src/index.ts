@@ -165,7 +165,7 @@ import {
 import { listCoachingNotes } from "./repo/coaching.js";
 import { getLatestCoachingNotes, computePeopleAnalytics } from "./repo/people.js";
 import { AmTidakDikenalError, createVisit, getVisit, isVisitSort, listVisits, visitKpi, visitSummary } from "./repo/visit.js";
-import { upsertDailyTodo, listTodos, markTodoReported } from "./repo/todo.js";
+import { upsertDailyTodo, listTodos, markTodoReported, listTodosPaged, isTodoSort } from "./repo/todo.js";
 import { upsertUser, listUsers, upsertTerritory, listTerritories, updateUserCabang, updateUserGolongan } from "./repo/master.js";
 import { GOLONGAN, GOLONGAN_LABEL, TARGET_CUSTOMER_MINIMUM, isGolongan } from "./lib/npk-golongan.js";
 import { listTargets, upsertTargets, listCabangTargets, upsertCabangTargets, listAmTargets, upsertAmTargets, listAmCandidates, deleteAmTarget } from "./repo/sales-target.js";
@@ -3884,6 +3884,22 @@ app.post("/todos", async (c) => {
     is_late_plan: body.is_late_plan,
   });
   return c.json(r, 201);
+});
+
+// Daftar per halaman untuk menu Plan Operasional (lihat listTodosPaged).
+app.get("/todos/list", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const q = c.req.query();
+  const r = await listTodosPaged({
+    q: q.q || undefined,
+    from: q.from || undefined,
+    to: q.to || undefined,
+    sort: isTodoSort(q.sort) ? q.sort : undefined,
+    dir: q.dir === "asc" ? "asc" : "desc",
+    limit: q.limit ? Number(q.limit) : undefined,
+    offset: q.offset ? Number(q.offset) : undefined,
+  });
+  return c.json({ count: r.rows.length, total_rows: r.total, limit: r.limit, offset: r.offset, todos: r.rows });
 });
 
 app.get("/todos", async (c) => {
