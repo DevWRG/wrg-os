@@ -53,6 +53,10 @@ export interface DocTrackerList {
   hari_billing_risiko: number;
   funnel: Record<DocState, number>;
   ringkas: { total: number; anomali: number; billing_risiko: number; dikirim_belum_dibayar: number };
+  /** Baris yang cocok filter, sebelum dipotong per halaman. */
+  total_rows: number;
+  /** SO di jendela melebihi batas pengaman backend. */
+  terpotong: boolean;
   rows: DocRow[];
 }
 

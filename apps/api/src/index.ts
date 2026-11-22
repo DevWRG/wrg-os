@@ -303,7 +303,7 @@ import { adalahKeyLaporan, pratinjau as pratinjauLaporan, susunLaporan } from ".
 import { listDirekturInbox, runDirekturInbox } from "./repo/direktur-inbox.js";
 import { bacaSalesAreaPublik, infografisSalesArea, runRingkasanSalesArea } from "./repo/sales-area-ringkasan.js";
 import {
-  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, isDocSort, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
 } from "./repo/doc-tracker.js";
 import { bacaParamKuartal, getPmfScorecard } from "./repo/pmf-scorecard.js";
@@ -3416,6 +3416,11 @@ app.get("/doc-tracker", async (c) => {
         q: c.req.query("q"),
         billingRisiko: c.req.query("billing") === "1",
         dikirimBelumDibayar: c.req.query("dikirim_belum_dibayar") === "1",
+        anomali: c.req.query("anomali") === "1",
+        sort: ((v) => (isDocSort(v) ? v : undefined))(c.req.query("sort")),
+        dir: c.req.query("dir") === "asc" ? "asc" : "desc",
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
       }),
     );
   } catch (e) {

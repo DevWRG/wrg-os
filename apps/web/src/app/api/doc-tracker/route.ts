@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const src = new URL(req.url).searchParams;
   const qs = new URLSearchParams();
-  for (const k of ["hari", "state", "q", "billing", "dikirim_belum_dibayar"]) {
+  for (const k of ["hari", "state", "q", "billing", "dikirim_belum_dibayar", "anomali", "sort", "dir", "limit", "offset"]) {
     const v = src.get(k);
     if (v) qs.set(k, v);
   }
