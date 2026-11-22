@@ -336,28 +336,31 @@ export async function listItemsPaged(opts: {
   const q = (opts.q ?? "").trim();
   const like = `%${q}%`;
   const where = sql`WHERE true
-    ${q ? sql`AND (no ILIKE ${like} OR name ILIKE ${like} OR category ILIKE ${like})` : sql``}`;
+    ${q ? sql`AND (it.no ILIKE ${like} OR it.name ILIKE ${like} OR it.category ILIKE ${like})` : sql``}`;
   // Kolom urut di-whitelist (ItemSort); "status" = label stok yang diturunkan
   // dari quantity, jadi urutnya ikut quantity.
+  // WAJIB berprefiks `it.`: SELECT di bawah memberi alias teks dengan nama yang
+  // SAMA (quantity::text AS quantity, id::text AS id) dan ORDER BY tanpa prefiks
+  // merujuk alias output itu → angka terurut sebagai teks (997, 99, 980, 9779).
   const key = opts.sort ?? "name";
   const col =
-    key === "no" ? sql`no`
-    : key === "category" ? sql`category`
-    : key === "harga" ? sql`unit_price`
-    : key === "quantity" || key === "status" ? sql`quantity`
-    : key === "available" ? sql`available`
-    : key === "unit" ? sql`unit`
-    : sql`name`;
+    key === "no" ? sql`it.no`
+    : key === "category" ? sql`it.category`
+    : key === "harga" ? sql`it.unit_price`
+    : key === "quantity" || key === "status" ? sql`it.quantity`
+    : key === "available" ? sql`it.available`
+    : key === "unit" ? sql`it.unit`
+    : sql`it.name`;
   const order = opts.dir === "desc"
-    ? sql`ORDER BY ${col} DESC NULLS LAST, id DESC`
-    : sql`ORDER BY ${col} ASC NULLS LAST, id ASC`;
+    ? sql`ORDER BY ${col} DESC NULLS LAST, it.id DESC`
+    : sql`ORDER BY ${col} ASC NULLS LAST, it.id ASC`;
   const [rows, [count]] = await Promise.all([
     sql`
-      SELECT id::text AS id, no, name, category, unit_price::text AS unit_price,
-             quantity::text AS quantity, available::text AS available, unit
-      FROM accurate_item ${where} ${order}
+      SELECT it.id::text AS id, it.no, it.name, it.category, it.unit_price::text AS unit_price,
+             it.quantity::text AS quantity, it.available::text AS available, it.unit
+      FROM accurate_item it ${where} ${order}
       LIMIT ${limit} OFFSET ${offset}`,
-    sql`SELECT count(*)::int AS total FROM accurate_item ${where}`,
+    sql`SELECT count(*)::int AS total FROM accurate_item it ${where}`,
   ]);
   return { rows: rows.map((r) => ({ ...r })), total: Number(count?.total ?? 0), limit, offset };
 }
