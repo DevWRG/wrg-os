@@ -350,7 +350,7 @@ import {
   listItemsPaged,
   isItemSort,
 } from "./repo/accurateMirror.js";
-import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { listWarehouses, listStockBranch, stockBranchSummary, isStockSort } from "./repo/stock-branch.js";
 import { picFormSummary, listSopLangkah, listRaciPosisi, picFormKelengkapan, listDivisi, koordinasiGraf, pohonPekerjaan, raciKaryawanPosisi, setTautanManual, hapusTautanManual } from "./repo/picform.js";
 import { recordDelivery, recordEmail, recordAlert, listLogs } from "./repo/logs.js";
 import { renderSalesDocHtml, renderBriefingHtml } from "./repo/exportdoc.js";
@@ -6500,6 +6500,8 @@ app.get("/stock/branch", async (c) => {
     hanyaSelisih: c.req.query("selisih") === "1",
     hanyaNegatif: c.req.query("negatif") === "1",
     tanpaData: c.req.query("tanpa_data") === "1",
+    sort: isStockSort(c.req.query("sort")) ? c.req.query("sort") : undefined,
+    dir: c.req.query("dir") === "desc" ? "desc" : "asc",
     limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
     offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
   });

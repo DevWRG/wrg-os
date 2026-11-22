@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 
-import { StockBranchTable, type StockBranchRow, type WarehouseCol } from "@/components/tables/stock-branch-table";
+import { StockBranchTable, type StockBranchRow, type StockQuery, type WarehouseCol } from "@/components/tables/stock-branch-table";
+import { useTableUrl } from "@/lib/use-table-url";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { LoadingBlock } from "@/components/ui/loading";
 
 export interface StockBranchSummary {
   item_mirror: number;
@@ -45,97 +45,31 @@ const tglJam = (iso: string | null) =>
         day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
       });
 
-// Ambil maksimal ini per permintaan. Katalog Accurate ~5.800 item, jadi 10.000
-// menutup seluruhnya dengan ruang tumbuh — dan kalau suatu hari terlampaui,
-// banner "terpotong" di bawah yang memberi tahu, bukan hasil pencarian kosong
-// yang menyesatkan.
-const LIMIT = 10000;
+type Filter = StockQuery["filter"];
 
-type Filter = "semua" | "anomali" | "tanpa_data";
+// Halaman berdiri sendiri (route /stok-gudang, domain Purchasing). Mode server:
+// page.tsx mengambil SATU halaman sesuai URL (filter, cari, urut, halaman);
+// tombol filter di sini hanya mengubah URL.
+export function StockGudangView({ initial, query }: { initial: StockGudangInitial; query: StockQuery }) {
+  const router = useRouter();
+  const { push } = useTableUrl(query.q);
+  const filter = query.filter;
+  const gantiFilter = (f: Filter) => push({ filter: f === "semua" ? null : f, page: null });
 
-interface BranchData {
-  rows: StockBranchRow[];
-  total_rows: number;
-  warehouses: WarehouseCol[];
-  summary: StockBranchSummary | null;
-  warehousesGagal: boolean;
-}
-
-// Halaman berdiri sendiri (route /stok-gudang, domain Purchasing) — sebelumnya
-// tab kedua di /inventory, dipisah jadi route sendiri atas arahan Direktur
-// (domain grouping). Muatan awal (filter "semua") dikirim server-side lewat
-// page.tsx; ganti filter di sini tetap fetch client-side ke proxy /api/stock/*
-// (gatewayFetch server-only tak bisa dipanggil dari browser).
-export function StockGudangView({ initial }: { initial: StockGudangInitial }) {
-  const [filter, setFilter] = useState<Filter>("semua");
-  const [branch, setBranch] = useState<BranchData | null>(
-    initial.error
-      ? null
-      : {
-          rows: initial.rows,
-          total_rows: initial.total_rows,
-          warehouses: initial.warehouses,
-          summary: initial.summary,
-          warehousesGagal: initial.warehousesGagal,
-        },
-  );
-  const [error, setError] = useState<string | null>(initial.error);
-
-  async function muat(f: Filter) {
-    setBranch(null);
-    setError(null);
-    const qs =
-      f === "anomali" ? `&negatif=1` : f === "tanpa_data" ? `&tanpa_data=1` : "";
-    try {
-      const [rowsRes, whRes, sumRes] = await Promise.all([
-        fetch(`/api/stock/branch?limit=${LIMIT}${qs}`),
-        fetch(`/api/stock/warehouses?aktif=1`),
-        fetch(`/api/stock/branch/summary`),
-      ]);
-      if (!rowsRes.ok) throw new Error((await rowsRes.json()).error ?? "gagal memuat stok per gudang");
-      const rowsJson = (await rowsRes.json()) as { rows: StockBranchRow[]; total_rows: number };
-      let warehouses: WarehouseCol[] = [];
-      let warehousesGagal = true;
-      if (whRes.ok) {
-        warehouses = ((await whRes.json()) as { warehouses: WarehouseCol[] }).warehouses ?? [];
-        warehousesGagal = false;
-      }
-      const summary = sumRes.ok ? ((await sumRes.json()) as StockBranchSummary) : null;
-      setBranch({ rows: rowsJson.rows ?? [], total_rows: rowsJson.total_rows ?? 0, warehouses, summary, warehousesGagal });
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-    }
-  }
-
-  function gantiFilter(f: Filter) {
-    setFilter(f);
-    void muat(f);
-  }
-
-  const terpotong = branch != null && branch.rows.length < branch.total_rows;
-
-  if (error) {
+  if (initial.error) {
     return (
       <Card>
         <CardContent className="pt-6">
-          <EmptyState title="Gagal memuat stok per gudang" description={error} />
-          <Button size="sm" variant="outline" className="mt-3" onClick={() => void muat(filter)}>
+          <EmptyState title="Gagal memuat stok per gudang" description="Data belum bisa dimuat. Muat ulang halaman; kalau tetap kosong, laporkan ke admin sistem." />
+          <Button size="sm" variant="outline" className="mt-3" onClick={() => router.refresh()}>
             Coba lagi
           </Button>
         </CardContent>
       </Card>
     );
   }
-
-  if (branch == null) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <LoadingBlock label="Memuat stok per gudang…" />
-        </CardContent>
-      </Card>
-    );
-  }
+  const branch = initial;
+  const adaCari = !!query.q;
 
   return (
     <div className="space-y-4">
@@ -247,15 +181,7 @@ export function StockGudangView({ initial }: { initial: StockGudangInitial }) {
             </p>
           )}
 
-          {terpotong && (
-            <p className="text-warning text-sm">
-              Menampilkan {fmt(branch.rows.length)} dari {fmt(branch.total_rows)} item — daftar
-              terpotong. SKU yang tidak muncul di sini bukan berarti tidak ada; persempit dengan
-              filter di atas.
-            </p>
-          )}
-
-          {branch.rows.length === 0 ? (
+          {branch.total_rows === 0 && !adaCari ? (
             <EmptyState
               title={
                 filter === "anomali"
@@ -266,13 +192,13 @@ export function StockGudangView({ initial }: { initial: StockGudangInitial }) {
               }
               description={
                 filter === "semua"
-                  ? "Isi lewat importer: scripts/db/import_stock_branch.py --file <csv> --db <db> --apply"
+                  ? "Data stok per gudang cabang belum diimpor. Hubungi admin sistem."
                   : "Coba filter lain."
               }
             />
           ) : (
             <>
-              <StockBranchTable rows={branch.rows} warehouses={branch.warehouses} />
+              <StockBranchTable rows={branch.rows} warehouses={branch.warehouses} totalRows={branch.total_rows} query={query} />
               <p className="text-muted-foreground text-xs">
                 Kolom gudang: <span className="font-medium">—</span> berarti belum diisi,{" "}
                 <span className="font-medium">0</span> berarti sudah dihitung dan hasilnya habis.

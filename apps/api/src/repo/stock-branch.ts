@@ -80,13 +80,35 @@ export interface StockBranchQuery {
   hanyaSelisih?: boolean;
   hanyaNegatif?: boolean; // Σ cabang > total — mustahil, sinyal integritas
   tanpaData?: boolean; // hanya item yang BELUM punya data cabang sama sekali
+  /** "no" | "name" | "total" | "jumlah_cabang" | "selisih" | "wh-<kode gudang>" — divalidasi isStockSort. */
+  sort?: string;
+  dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
 
+// Kolom urut tabel Stok Gudang (id kolom stock-branch-table). "wh-<kode>" = satu
+// kolom gudang; kodenya dikirim sebagai PARAMETER SQL (->> ${kode}), tak pernah
+// disambung ke teks query — pola dibatasi supaya nilai aneh langsung ditolak.
+export const isStockSort = (v: unknown): v is string =>
+  typeof v === "string" && (["no", "name", "total", "jumlah_cabang", "selisih"].includes(v) || /^wh-[A-Za-z0-9_.-]{1,30}$/.test(v));
+
 // Matriks item × gudang. LEFT JOIN dari `accurate_item` supaya item yang BELUM
 // punya data cabang tetap muncul (itu justru informasi penting: cakupan data
 // gudang masih bolong) — bukan INNER JOIN yang menyembunyikannya.
+function urutStok(sql: ReturnType<typeof db>, qy: StockBranchQuery) {
+  const key = isStockSort(qy.sort) ? qy.sort : "no";
+  const col =
+    key === "name" ? sql`name`
+    : key === "total" ? sql`quantity`
+    : key === "jumlah_cabang" ? sql`jumlah_cabang`
+    // Selisih hanya bermakna bila item punya data cabang (sama dengan kolomnya).
+    : key === "selisih" ? sql`CASE WHEN n_gudang > 0 AND quantity IS NOT NULL THEN quantity - jumlah_cabang END`
+    : key.startsWith("wh-") ? sql`(per_gudang ->> ${key.slice(3)})::numeric`
+    : sql`no`;
+  return qy.dir === "desc" ? sql`${col} DESC NULLS LAST, id DESC` : sql`${col} ASC NULLS LAST, id ASC`;
+}
+
 export async function listStockBranch(qy: StockBranchQuery = {}): Promise<{
   rows: StockBranchRow[];
   total_rows: number;
@@ -146,7 +168,7 @@ export async function listStockBranch(qy: StockBranchQuery = {}): Promise<{
     )
     SELECT *, count(*) OVER () AS total_rows
     FROM difilter
-    ORDER BY no
+    ORDER BY ${urutStok(sql, qy)}
     LIMIT ${limit} OFFSET ${offset}
   `;
 

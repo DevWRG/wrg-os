@@ -5,16 +5,27 @@ import {
   type StockGudangInitial,
   type StockBranchSummary,
 } from "@/components/inventory/stock-gudang-view";
-import type { StockBranchRow, WarehouseCol } from "@/components/tables/stock-branch-table";
+import type { StockBranchRow, StockQuery, WarehouseCol } from "@/components/tables/stock-branch-table";
 
 export const dynamic = "force-dynamic";
 
-const LIMIT = 10000;
+const PAGE_SIZES = [10, 25, 50, 100];
+const DEFAULT_SIZE = 25;
+const FILTER: StockQuery["filter"][] = ["anomali", "tanpa_data"];
 
-async function getStockGudang(): Promise<StockGudangInitial> {
+// Satu halaman saja (mode server). Dulu limit=10000 = seluruh katalog ke browser.
+async function getStockGudang(q: StockQuery): Promise<StockGudangInitial> {
+  const qs = new URLSearchParams();
+  if (q.q) qs.set("q", q.q);
+  if (q.filter === "anomali") qs.set("negatif", "1");
+  if (q.filter === "tanpa_data") qs.set("tanpa_data", "1");
+  qs.set("sort", q.sort);
+  qs.set("dir", q.dir);
+  qs.set("limit", String(q.size));
+  qs.set("offset", String(q.page * q.size));
   try {
     const [rowsRes, whRes, sumRes] = await Promise.all([
-      gatewayFetch(`/stock/branch?limit=${LIMIT}`),
+      gatewayFetch(`/stock/branch?${qs.toString()}`),
       gatewayFetch(`/stock/warehouses?aktif=1`),
       gatewayFetch(`/stock/branch/summary`),
     ]);
@@ -52,15 +63,29 @@ async function getStockGudang(): Promise<StockGudangInitial> {
   }
 }
 
-export default async function StokGudangPage() {
-  const initial = await getStockGudang();
+export default async function StokGudangPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; filter?: string; sort?: string; dir?: string; page?: string; size?: string }>;
+}) {
+  const sp = await searchParams;
+  const query: StockQuery = {
+    q: (sp.q ?? "").trim(),
+    filter: FILTER.includes(sp.filter as StockQuery["filter"]) ? (sp.filter as StockQuery["filter"]) : "semua",
+    // id kolom urut divalidasi ulang di apps/api (isStockSort); di sini cukup pola.
+    sort: /^(no|name|total|jumlah_cabang|selisih|wh-[A-Za-z0-9_.-]{1,30})$/.test(sp.sort ?? "") ? sp.sort! : "no",
+    dir: sp.dir === "desc" ? "desc" : "asc",
+    size: PAGE_SIZES.includes(Number(sp.size)) ? Number(sp.size) : DEFAULT_SIZE,
+    page: Math.max(0, Math.trunc(Number(sp.page)) || 0),
+  };
+  const initial = await getStockGudang(query);
   return (
     <>
       <PageHeader
         title="Stok Gudang"
         description="Stok per gudang cabang beserta korelasinya ke angka total (mirror Accurate). Hanya gudang cabang WRG — gudang virtual di customer tidak ditampilkan."
       />
-      <StockGudangView initial={initial} />
+      <StockGudangView initial={initial} query={query} />
     </>
   );
 }
