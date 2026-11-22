@@ -332,7 +332,9 @@ export async function listItemsPaged(opts: {
   offset?: number;
 } = {}) {
   const sql = db();
-  const { limit, offset } = mirrorPage({ limit: opts.limit, offset: opts.offset });
+  // (main belum punya mirrorPage() dari dev — batas dihitung di sini: 25 bawaan, maks 5.000.)
+  const limit = Math.min(Math.max(Math.trunc(Number(opts.limit) || 25), 1), 5000);
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
   const q = (opts.q ?? "").trim();
   const like = `%${q}%`;
   const where = sql`WHERE true
