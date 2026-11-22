@@ -53,7 +53,7 @@ import {
   type InboundReceivingStatus,
   type InboundReceivingItemUpdate,
 } from "./repo/inbound-receiving.js";
-import { listWarehouses, listStockBranch, stockBranchSummary } from "./repo/stock-branch.js";
+import { listWarehouses, listStockBranch, stockBranchSummary, isStockSort } from "./repo/stock-branch.js";
 import { listStockBatch, stockBatchSummary, runEdWatch } from "./repo/stock-batch.js";
 import { listAsetTetap, ringkasanAsetTetap, jadwalAsetTetap, simpanOverrideAsetTetap, type AsetTetapFilter } from "./repo/asetTetap.js";
 import { pratinjauRekon, terapkanRekon, batalkanTautanOtomatis, cariAlatKso } from "./repo/asetTetapRekon.js";
@@ -5951,6 +5951,8 @@ app.get("/stock/branch", async (c) => {
     hanyaSelisih: c.req.query("selisih") === "1",
     hanyaNegatif: c.req.query("negatif") === "1",
     tanpaData: c.req.query("tanpa_data") === "1",
+    sort: isStockSort(c.req.query("sort")) ? c.req.query("sort") : undefined,
+    dir: c.req.query("dir") === "desc" ? "desc" : "asc",
     limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
     offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
   });
