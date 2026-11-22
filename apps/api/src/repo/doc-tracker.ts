@@ -40,7 +40,14 @@ export class DocTrackerError extends Error {
 
 export const HARI_DEFAULT = 120;
 export const HARI_MAKS = 365;
-const BATAS_SO = 500;
+// Pengaman, BUKAN potongan tampilan: state dihitung untuk SEMUA SO di jendela
+// supaya funnel & ringkasan benar (dulu LIMIT 500 → prod 22 Nov 3.173 SO dalam
+// 120 hari, funnel dihitung dari 500 saja). Tercapai → `terpotong: true`.
+const BATAS_SO = 10_000;
+
+export const DOC_SORTS = ["so", "customer", "state", "umur", "peringatan", "tanggal", "total"] as const;
+export type DocSort = (typeof DOC_SORTS)[number];
+export const isDocSort = (v: unknown): v is DocSort => DOC_SORTS.includes(String(v) as DocSort);
 
 const wibToday = (): string => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 const iso = (v: unknown): string | null => (v == null ? null : new Date(v as string | Date).toISOString());
@@ -86,6 +93,10 @@ export interface DocTrackerList {
   hari_billing_risiko: number;
   funnel: Record<DocState, number>;
   ringkas: { total: number; anomali: number; billing_risiko: number; dikirim_belum_dibayar: number };
+  /** Baris yang cocok filter (state/chip) — sebelum dipotong per halaman. */
+  total_rows: number;
+  /** true bila SO di jendela melebihi BATAS_SO (funnel tak lagi mencakup semua). */
+  terpotong: boolean;
   rows: DocRow[];
 }
 
@@ -214,7 +225,14 @@ async function muatBukti(so: { id: number; trans_date: string }[], today: string
 
 const kosongFunnel = (): Record<DocState, number> => Object.fromEntries(STATES.map((s) => [s, 0])) as Record<DocState, number>;
 
-export async function listDocTracker(opts: { hari?: number; state?: DocState | null; q?: string; billingRisiko?: boolean; dikirimBelumDibayar?: boolean } = {}): Promise<DocTrackerList> {
+export async function listDocTracker(opts: {
+  hari?: number; state?: DocState | null; q?: string; billingRisiko?: boolean; dikirimBelumDibayar?: boolean;
+  /** hanya yang dokumennya kurang (anomali). */
+  anomali?: boolean;
+  sort?: DocSort; dir?: "asc" | "desc";
+  /** Tanpa limit → semua baris (perilaku lama, mis. ekspor). */
+  limit?: number; offset?: number;
+} = {}): Promise<DocTrackerList> {
   const sql = db();
   const hari = opts.hari ?? HARI_DEFAULT;
   const today = wibToday();
@@ -256,10 +274,35 @@ export async function listDocTracker(opts: { hari?: number; state?: DocState | n
     billing_risiko: semua.filter((r) => r.billing_risiko).length,
     dikirim_belum_dibayar: semua.filter((r) => r.dikirim_belum_dibayar).length,
   };
-  const rows = semua.filter(
-    (r) => (!opts.state || r.state === opts.state) && (!opts.billingRisiko || r.billing_risiko) && (!opts.dikirimBelumDibayar || r.dikirim_belum_dibayar),
+  const cocok = semua.filter(
+    (r) => (!opts.state || r.state === opts.state) && (!opts.billingRisiko || r.billing_risiko)
+      && (!opts.dikirimBelumDibayar || r.dikirim_belum_dibayar) && (!opts.anomali || r.anomali.length > 0),
   );
-  return { asOf: today, hari, hari_billing_risiko: hariBillingRisiko(), funnel, ringkas, rows };
+  // Urut di sini (state dihitung di JS, bukan kolom SQL). Pemutus seri so_id
+  // supaya baris tak lompat/dobel antar halaman.
+  const nilai = (r: DocRow): string | number => {
+    switch (opts.sort ?? "tanggal") {
+      case "so": return r.so_number;
+      case "customer": return r.customer;
+      case "state": return STATES.indexOf(r.state);
+      case "umur": return r.umur_hari ?? -1;
+      case "peringatan": return r.anomali.length + (r.billing_risiko ? 1 : 0);
+      case "total": return r.total ?? 0;
+      default: return r.tanggal;
+    }
+  };
+  const arah = opts.dir === "asc" ? 1 : -1;
+  cocok.sort((a, b) => {
+    const va = nilai(a), vb = nilai(b);
+    const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb), "id");
+    return c !== 0 ? c * arah : (a.so_id - b.so_id) * arah;
+  });
+  const offset = Math.max(Math.trunc(Number(opts.offset) || 0), 0);
+  const rows = opts.limit == null ? cocok : cocok.slice(offset, offset + Math.min(Math.max(Math.trunc(Number(opts.limit)) || 25, 1), BATAS_SO));
+  return {
+    asOf: today, hari, hari_billing_risiko: hariBillingRisiko(), funnel, ringkas,
+    total_rows: cocok.length, terpotong: so.length >= BATAS_SO, rows,
+  };
 }
 
 export interface DocDetail {

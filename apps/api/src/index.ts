@@ -93,7 +93,7 @@ import { ArsipError, bacaBerkasArsip, hapusArsip, listArsip, listBuku as arsipLi
 import { bacaLampiran as hdBacaLampiran, buatProyek as hdBuatProyek, cariFaskes as hdCariFaskes, detailProyek as hdDetail, JENIS_SIMULASI as HD_JENIS_SIMULASI, listParam as hdListParam, listProyek as hdListProyek, listSimulasi as hdListSimulasi, majuTahap as hdMajuTahap, ProyekHdError, referensi as hdReferensi, ringkasan as hdRingkasan, simpanSimulasi as hdSimpanSimulasi, tambahCatatan as hdTambahCatatan, ubahParam as hdUbahParam, ubahProyek as hdUbahProyek, type JenisSimulasi as HdJenisSimulasi } from "./repo/proyek-hd.js";
 import { buatOps as hdBuatOps, eksporXlsx as hdEksporXlsx, hapusOps as hdHapusOps, listOps as hdListOps, OPS as HD_OPS, opsProyek as hdOpsProyek, ringkasanOps as hdRingkasanOps, ubahOps as hdUbahOps } from "./repo/proyek-hd-ops.js";
 import {
-  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, parseHari as parseHariDoc, parseSoId, parseState,
+  DocTrackerError, getDocTracker, lepasFaktur, listDocTracker, isDocSort, parseHari as parseHariDoc, parseSoId, parseState,
   setDokumen, tautkanFaktur,
 } from "./repo/doc-tracker.js";
 import {
@@ -6818,6 +6818,11 @@ app.get("/doc-tracker", async (c) => {
         q: c.req.query("q"),
         billingRisiko: c.req.query("billing") === "1",
         dikirimBelumDibayar: c.req.query("dikirim_belum_dibayar") === "1",
+        anomali: c.req.query("anomali") === "1",
+        sort: ((v) => (isDocSort(v) ? v : undefined))(c.req.query("sort")),
+        dir: c.req.query("dir") === "asc" ? "asc" : "desc",
+        limit: c.req.query("limit") ? Number(c.req.query("limit")) : undefined,
+        offset: c.req.query("offset") ? Number(c.req.query("offset")) : undefined,
       }),
     );
   } catch (e) {

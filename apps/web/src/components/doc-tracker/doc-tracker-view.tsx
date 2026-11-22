@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,11 +10,11 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { ExportButton, type ExportColumn } from "@/components/ui/export-button";
 import { cn } from "@/lib/utils";
+import { useTableUrl } from "@/lib/use-table-url";
 
 import { DocDetailDialog } from "./doc-detail-dialog";
+import { paramFilter, type DocQuery, type Saring } from "./query";
 import { KETERANGAN_STATE, LABEL_STATE, STATES, ambil, labelTahap, rp, type DocRow, type DocState, type DocTrackerList } from "./types";
-
-type Saring = "semua" | "dikirim_belum_dibayar" | "billing" | "anomali";
 
 const LABEL_SARING: Record<Exclude<Saring, "semua">, string> = {
   dikirim_belum_dibayar: "Dikirim, belum dibayar",
@@ -51,7 +52,7 @@ const buatKolom = (onBuka: (soId: number) => void): DataColumn<DocRow>[] => [
     cell: (r) => (r.umur_hari == null ? "—" : <span className="tabular-nums">{r.umur_hari} hari</span>),
   },
   {
-    id: "peringatan", header: "Peringatan", searchable: false, accessor: (r) => r.anomali.length + (r.billing_risiko ? 1 : 0),
+    id: "peringatan", header: "Peringatan", sortable: true, searchable: false, accessor: (r) => r.anomali.length + (r.billing_risiko ? 1 : 0),
     cell: (r) => (
       <span className="flex flex-wrap gap-1">
         {r.billing_risiko && <Badge variant="destructive">Berisiko ditagih</Badge>}
@@ -89,24 +90,31 @@ const kolomExport: ExportColumn<DocRow>[] = [
   { header: "Nilai SO", value: (r) => r.total },
 ];
 
-export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; canEdit: boolean }) {
-  const [data, setData] = useState(awal);
-  const [state, setState] = useState<DocState | null>(null);
-  const [saring, setSaring] = useState<Saring>("semua");
+// Mode server: funnel & ringkasan dihitung backend atas SEMUA SO di jendela;
+// `data.rows` hanya satu halaman. Tahap, chip, cari, urut, dan halaman hidup di
+// URL (useTableUrl) — dulu disaring di sini atas maksimal 500 SO.
+export function DocTrackerView({ data, canEdit, query }: { data: DocTrackerList; canEdit: boolean; query: DocQuery }) {
+  const router = useRouter();
+  const { push, qInput, setQInput, pending } = useTableUrl(query.q);
+  const state = query.state;
+  const saring = query.saring;
+  const setState = (s: DocState | null) => push({ state: s, page: null });
+  const setSaring = (v: Saring) => push({ saring: v === "semua" ? null : v, page: null });
   const [buka, setBuka] = useState<number | null>(null);
   const kolom = useMemo(() => buatKolom(setBuka), []);
 
+  // Sesudah checklist/tautan faktur berubah di dialog: ambil ulang halaman ini dari server.
   const segarkan = useCallback(async () => {
-    try {
-      setData(await ambil<DocTrackerList>(`/api/doc-tracker?hari=${awal.hari}`));
-    } catch {
-      /* daftar lama tetap tampil; dialog menampilkan galat aksinya sendiri */
-    }
-  }, [awal.hari]);
+    router.refresh();
+  }, [router]);
 
-  const tampil = data.rows
-    .filter((r) => (state ? r.state === state : true))
-    .filter((r) => (saring === "dikirim_belum_dibayar" ? r.dikirim_belum_dibayar : saring === "billing" ? r.billing_risiko : saring === "anomali" ? r.anomali.length > 0 : true));
+  // Ekspor = SEMUA baris yang cocok filter (tanpa limit), bukan halaman yang tampil.
+  const ambilSemua = useCallback(
+    async () => (await ambil<DocTrackerList>(`/api/doc-tracker?${paramFilter(query).toString()}`)).rows,
+    [query],
+  );
+
+  const tampil = data.rows;
   const chip = (aktif: boolean) =>
     cn("cursor-pointer rounded-md border px-3 py-1.5 text-sm", aktif ? "border-primary bg-primary text-primary-foreground" : "bg-card hover:bg-accent");
 
@@ -145,11 +153,11 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
       {(state || saring !== "semua") && (
         <div className="border-primary/40 bg-primary/5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 text-sm">
           <span>
-            Menampilkan <strong className="tabular-nums">{tampil.length}</strong> dari {data.ringkas.total} transaksi
+            Menampilkan <strong className="tabular-nums">{data.total_rows}</strong> dari {data.ringkas.total} transaksi
           </span>
           {state && <Badge variant="secondary">Tahap: {LABEL_STATE[state]}</Badge>}
           {saring !== "semua" && <Badge variant="secondary">{LABEL_SARING[saring]}</Badge>}
-          <button type="button" onClick={() => { setState(null); setSaring("semua"); }} className="ml-auto cursor-pointer underline underline-offset-2">
+          <button type="button" onClick={() => push({ state: null, saring: null, page: null })} className="ml-auto cursor-pointer underline underline-offset-2">
             Hapus filter
           </button>
         </div>
@@ -166,14 +174,17 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
         <button type="button" aria-pressed={saring === "anomali"} onClick={() => setSaring(saring === "anomali" ? "semua" : "anomali")} className={chip(saring === "anomali")}>
           Dokumen kurang <span className="tabular-nums">{data.ringkas.anomali}</span>
         </button>
-        <span className="text-muted-foreground ml-auto text-xs">{data.hari} hari terakhir · maks. 500 SO terbaru</span>
+        <span className="text-muted-foreground ml-auto text-xs">
+          {data.hari} hari terakhir · {data.ringkas.total} SO
+          {data.terpotong && <span className="text-destructive"> · melebihi batas, sebagian SO lama tidak dihitung</span>}
+        </span>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-muted-foreground text-xs">
           Klik baris atau tombol <strong>Lihat detail</strong> untuk melihat rantai dokumen{canEdit ? ", mengisi checklist dokumen, dan menautkan faktur" : ""}.
         </p>
-        <ExportButton filename="document-tracker" columns={kolomExport} data={tampil} label="Export CSV" />
+        <ExportButton filename="document-tracker" columns={kolomExport} fetchData={ambilSemua} label="Export CSV" />
       </div>
       {/* Kartu putih: latar halaman (--background) & label secondary nyaris sewarna — tanpa kartu tabel menyatu. */}
       <Card>
@@ -181,7 +192,19 @@ export function DocTrackerView({ data: awal, canEdit }: { data: DocTrackerList; 
           <DataTable
             columns={kolom} data={tampil} getKey={(r) => String(r.so_id)}
             searchPlaceholder="Cari nomor SO atau customer…" empty="Tidak ada transaksi pada filter ini."
-            onRowClick={(r) => setBuka(r.so_id)} initialSort={{ id: "tanggal", dir: "desc" }}
+            onRowClick={(r) => setBuka(r.so_id)}
+            server={{
+              totalRows: data.total_rows,
+              page: query.page,
+              pageSize: query.size,
+              sort: { id: query.sort, dir: query.dir },
+              q: qInput,
+              pending,
+              onPageChange: (p) => push({ page: p === 0 ? null : p }),
+              onPageSizeChange: (n) => push({ size: n, page: null }),
+              onSortChange: (s) => push({ sort: s?.id ?? null, dir: s?.dir ?? null, page: null }),
+              onSearchChange: setQInput,
+            }}
           />
         </CardContent>
       </Card>
