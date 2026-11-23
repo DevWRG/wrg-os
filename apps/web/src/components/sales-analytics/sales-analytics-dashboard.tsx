@@ -506,7 +506,7 @@ const prodColumns: DataColumn<ProdRow>[] = [
 
 function PerProdukView({ data }: { data: { rows: ProdRow[] } }) {
   return (
-    <Card><CardHeader><CardTitle className="text-base">Portfolio Produk</CardTitle></CardHeader>
+    <Card><CardHeader><CardTitle className="text-base">Portfolio Produk <span className="text-muted-foreground text-xs font-normal">· {data.rows.length} produk terjual pada periode ini</span></CardTitle></CardHeader>
       <CardContent><DataTable data={data.rows} columns={prodColumns} getKey={(r) => r.key} searchPlaceholder="Cari produk/kategori…" initialSort={{ id: "total", dir: "desc" }} empty="Tidak ada data produk." /></CardContent></Card>
   );
 }

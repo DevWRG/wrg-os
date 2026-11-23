@@ -172,7 +172,9 @@ export async function analyticsPerAmDrilldown(amId: string, from0?: string, to0?
            sum(CASE WHEN l.wsum > 0 THEN l.inv_net * l.w / l.wsum ELSE l.inv_net / l.cnt END)::float8 AS total,
            sum(l.qty)::float8 AS qty
     FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
-    GROUP BY l.item_id, it.name ORDER BY total DESC LIMIT 20`;
+    -- TANPA LIMIT (dulu 20): kartu "Per Produk" drilldown AM harus memuat semua
+    -- produk AM itu supaya pencariannya jujur; jumlahnya per AM kecil.
+    GROUP BY l.item_id, it.name ORDER BY total DESC`;
   const perCustomer = await sql`
     SELECT ai.customer_id::text AS key,
            COALESCE(NULLIF(ac.name,''), 'Customer #' || ai.customer_id::text) AS label,
@@ -223,7 +225,10 @@ export async function analyticsPerProduk(from0?: string, to0?: string, scope?: D
            sum(l.qty)::float8 AS unit_sold,
            count(DISTINCT l.customer_id)::int AS customer_count
     FROM line l LEFT JOIN accurate_item it ON it.id = l.item_id
-    GROUP BY l.item_id, it.name ORDER BY total DESC LIMIT 200`;
+    -- TANPA LIMIT: dulu LIMIT 200 → prod 23 Nov 912 produk terjual YTD, 712 tak
+    -- bisa dicari di tab "Portfolio Produk". Agregasinya tetap dihitung penuh,
+    -- jadi melepas LIMIT hanya menambah ukuran kiriman (±900 baris kecil).
+    GROUP BY l.item_id, it.name ORDER BY total DESC`;
   return {
     scope: sc.amOnly ? ("am" as const) : ("all" as const),
     range: { from, to },
