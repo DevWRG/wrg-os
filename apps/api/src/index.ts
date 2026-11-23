@@ -278,6 +278,7 @@ import {
 } from "./repo/sales-analytics.js";
 import { ecatalogWatch } from "./repo/ecatalog-watch.js";
 import { listViews, saveView, deleteView, listAlerts, createAlert, deleteAlert, updateAlert, listAlertTargets } from "./repo/sales-analytics-config.js";
+import { detailFakturXlsx } from "./repo/sales-analytics-detail-faktur.js";
 import { execCommand, execAmRadar, execOutletMatrix, execDormantIntel, execKpiBaseline, execRotation, execGrowthLevers } from "./repo/exec-dashboard.js";
 import { evaluateSalesAlerts } from "./repo/sales-analytics-alert-eval.js";
 import { computeNpk, getNpkScores, getNpkDetail, currentPeriod, type Period } from "./repo/npk.js";
@@ -3894,6 +3895,16 @@ app.get("/sales-analytics/per-cabang", async (c) => {
 app.get("/sales-analytics/per-customer", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
   return c.json(await analyticsPerCustomer(c.req.query("from"), c.req.query("to"), await scopeOf(c)));
+});
+// Ekspor detail faktur per baris barang (XLSX) — periode + row-level scope sama dgn tab lain.
+app.get("/sales-analytics/detail-faktur.xlsx", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const r = await detailFakturXlsx(c.req.query("from"), c.req.query("to"), await scopeOf(c));
+  return c.body(new Uint8Array(r.buf), 200, {
+    "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "content-disposition": `attachment; filename="${r.nama.replace(/[^\w.-]/g, "_")}"`,
+    "cache-control": "private, no-store",
+  });
 });
 app.get("/sales-analytics/trending", async (c) => {
   if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);

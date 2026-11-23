@@ -38,6 +38,18 @@ async function proxy(req: Request, path: string[], method: string) {
   }
   try {
     const res = await gatewayFetch(`/sales-analytics/${sub}${qs ? `?${qs}` : ""}`, { method, headers, body });
+    // Respons biner (ekspor XLSX detail faktur) diteruskan apa adanya; galat tetap JSON.
+    const ct = res.headers.get("content-type") ?? "";
+    if (res.ok && !ct.includes("application/json")) {
+      return new Response(await res.arrayBuffer(), {
+        status: 200,
+        headers: {
+          "content-type": ct || "application/octet-stream",
+          "content-disposition": res.headers.get("content-disposition") ?? "attachment",
+          "cache-control": "private, no-store",
+        },
+      });
+    }
     const data = await res.json();
     return Response.json(data, { status: res.status });
   } catch {
