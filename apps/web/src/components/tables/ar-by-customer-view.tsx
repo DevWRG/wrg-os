@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { InvoiceDetailDialog } from "@/components/tables/invoice-detail-dialog";
+import { fmtRpRingkas } from "@/lib/format";
 
 export type ArPriority = "KRITIS" | "TINGGI" | "SEDANG" | "RENDAH";
 export interface ArCustomer {
@@ -21,7 +22,7 @@ export interface ArInvoice {
 }
 
 const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const jt = (n: number) => (n <= 0 ? "—" : Math.abs(n) >= 1e9 ? `Rp${(n / 1e9).toFixed(1)}m` : Math.abs(n) >= 1e6 ? `Rp${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
+const jt = (n: number) => (n <= 0 ? "—" : fmtRpRingkas(n));
 const tgl = (v: string | null) => {
   if (!v) return "—";
   const [y, m, d] = v.split("-");

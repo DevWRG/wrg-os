@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CardPagination, usePagedList } from "@/components/ui/card-pagination";
 import { Input } from "@/components/ui/input";
+import { fmtRpRingkas } from "@/lib/format";
 
 export type ChurnTier = "active" | "risk" | "watch";
 export interface ChurnCustomer {
@@ -19,7 +20,7 @@ export interface ChurnData {
 }
 
 const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => (Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toFixed(1)}M` : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
+const rpC = (n: number) => fmtRpRingkas(n);
 
 const TIER_META: Record<ChurnTier, { label: string; badge: string; dot: string; border: string }> = {
   active: { label: "🔴 Churn Aktif", badge: "bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300", dot: "text-rose-600", border: "border-l-rose-400" },

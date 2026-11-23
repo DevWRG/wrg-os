@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { fmtRpRingkas } from "@/lib/format";
 
 interface PacingBase {
   target: number; actual: number; achievement_pct: number | null; expected: number;
@@ -19,7 +20,7 @@ export interface PacingData {
 }
 
 const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => (Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toFixed(2)}M` : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
+const rpC = (n: number) => fmtRpRingkas(n);
 const statusStyle = (s: string) =>
   s === "on-track" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
   : s === "at-risk" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300"

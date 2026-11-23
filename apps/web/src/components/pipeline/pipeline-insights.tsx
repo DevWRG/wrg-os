@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilterCombo } from "@/components/ui/filter-select";
 import { BAR_FILL, RESULT_FILL, stageFill, stageInk } from "@/lib/pipeline-viz";
 import type { PipelineDeal } from "./pipeline-board";
+import { fmtRpRingkas } from "@/lib/format";
 
 // Infografis board /pipeline. Sumbernya `deals` = daftar yang SUDAH difilter
 // toolbar board, jadi tiap grafik otomatis ikut filter (Kategori/Cabang/HOD/AM/
@@ -14,17 +15,12 @@ import type { PipelineDeal } from "./pipeline-board";
 // yang juga makan `filtered`. Jangan pernah dialihkan ke `allDeals`: begitu
 // grafik dan kartu di bawahnya beda basis, angkanya bohong tanpa suara.
 
-const rpC = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)} jt`;
-  return `Rp ${v.toLocaleString("id-ID")}`;
-};
+const rpC = (n: number) => fmtRpRingkas(n);
 // Tick sumbu: tanpa spasi ("Rp 160jt"), kalau pakai spasi label 3 kata pecah dua
 // baris di sumbu Y yang sempit dan ikut memotong tick sebelahnya.
 const rpTick = (n: number) => {
   const v = n || 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(1)}M`;
+  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toLocaleString("id-ID", { maximumFractionDigits: 1 })}M`;
   if (Math.abs(v) >= 1e6) return `Rp ${Math.round(v / 1e6)}jt`;
   if (Math.abs(v) >= 1e3) return `Rp ${Math.round(v / 1e3)}rb`;
   return `Rp ${v}`;

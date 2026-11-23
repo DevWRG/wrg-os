@@ -24,6 +24,7 @@ import { SalesAlertsManager, type SalesAlert, type AlertTargets } from "@/compon
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePrompt } from "@/components/ui/use-prompt";
+import { fmtRpRingkas } from "@/lib/format";
 
 // Tombol sekunder toolbar: tint teal lembut (bukan putih) — kontras di atas bg terang.
 const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-primary/15";
@@ -31,12 +32,7 @@ const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-pr
 // ── Format ─────────────────────────────────────────────────────────
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtRp = (n: number) => rp.format(n || 0);
-const fmtRpShort = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(1)}M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)}jt`;
-  return fmtRp(v);
-};
+const fmtRpShort = (n: number) => fmtRpRingkas(n);
 const fmtPct = (n: number | null | undefined) => (n == null ? "—" : `${n}%`);
 
 // Export CSV (UTF-8 BOM → Excel buka langsung). Angka mentah (bukan terformat).

@@ -10,6 +10,7 @@ import {
   HEALTH_LABEL, HEALTH_RANK, HealthBadge, KSO_RANK, KsoBadge,
   type KelasHealth, type KsoHealth, type StatusKso,
 } from "@/components/accounts/health-badge";
+import { fmtRpRingkas } from "@/lib/format";
 
 export interface AccountRow {
   id: string; name: string; cabang: string | null; tipe: string | null; kelas_rs: string | null;
@@ -21,7 +22,7 @@ export interface AccountRow {
 }
 
 const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => (Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toFixed(1)}M` : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
+const rpC = (n: number) => fmtRpRingkas(n);
 
 // Filter status KSO punya satu pilihan ekstra: "Tanpa alat KSO" — akun yang
 // memang bukan pelanggan KSO, beda dari pelanggan KSO yang tidak beli.
