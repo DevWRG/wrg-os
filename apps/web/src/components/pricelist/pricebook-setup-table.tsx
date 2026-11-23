@@ -24,6 +24,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ExportButton } from "@/components/ui/export-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { fmtRpRingkas } from "@/lib/format";
 
 // Cermin apps/api/src/repo/pricebook.ts → PricebookSetupRow / PricebookSetupSummary.
 export interface PricebookSetupRow {
@@ -74,13 +75,7 @@ export interface PricebookSetupSummary {
 
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtRp = (n: number | null) => (n == null ? "—" : rp.format(n));
-const fmtRpShort = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e12) return `Rp ${(v / 1e12).toFixed(2)} T`;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(1)} jt`;
-  return fmtRp(v);
-};
+const fmtRpShort = (n: number) => fmtRpRingkas(n, { desimalJt: 1 });
 const fmtNum = (n: number) => n.toLocaleString("id-ID");
 const fmtPct = (f: number | null) =>
   f == null ? "—" : `${(f * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;

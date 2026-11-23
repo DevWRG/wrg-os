@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { stageFill } from "@/lib/pipeline-viz";
+import { fmtRpRingkas } from "@/lib/format";
 
 // F127 tab "Pipeline" — 3 report baca data `deal` (F1 SPT): Funnel per Tahap,
 // Perkiraan (Nilai × Peluang) per kategori forecast, dan Menang-Kalah.
@@ -24,13 +25,7 @@ export interface PipelineReportData {
   winloss: PipelineWinLoss;
 }
 
-const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)}M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)}jt`;
-  return rpFull.format(v);
-};
+const rpC = (n: number) => fmtRpRingkas(n);
 const pct1 = (n: number) => `${Math.round(n * 1000) / 10}%`;
 
 // Palet per tahap dipusatkan di lib/pipeline-viz (dipakai board /pipeline juga) —

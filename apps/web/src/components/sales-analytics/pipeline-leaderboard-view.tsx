@@ -3,6 +3,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { fmtRpRingkas } from "@/lib/format";
 
 // F127 tab "Leaderboard" — ranking AM dari data `deal` (F1 SPT), urut perkiraan
 // tertimbang (Nilai × Peluang). Satu baris per AM; "(Tanpa AM)" = deal tanpa owner.
@@ -19,13 +20,7 @@ export interface LeaderboardRow {
   win_rate: number;
 }
 
-const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)}M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)}jt`;
-  return rpFull.format(v);
-};
+const rpC = (n: number) => fmtRpRingkas(n);
 const pct1 = (n: number) => `${Math.round(n * 1000) / 10}%`;
 
 // Palet bar top-N (teal WRG → variasi ringan). Sama di light & dark.
