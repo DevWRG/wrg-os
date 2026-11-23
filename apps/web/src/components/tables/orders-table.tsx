@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { DateRangeToolbar } from "@/components/ui/date-range-toolbar";
 import { LoadingInline } from "@/components/ui/loading";
@@ -13,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { StatusBadge, nadaSoAccurate } from "@/components/ui/status-badge";
 
 export interface SalesOrder {
   id: string;
@@ -36,19 +36,12 @@ const tgl = (v: string | null) => {
   return `${d} ${bln[Number(m) - 1] ?? m} ${y}`;
 };
 
-const statusTone = (s: string | null): "default" | "secondary" | "destructive" | "outline" => {
-  const t = (s ?? "").toLowerCase();
-  if (t.includes("batal") || t.includes("tutup")) return "destructive";
-  if (t.includes("proses")) return "default";
-  if (t.includes("kirim") || t.includes("selesai")) return "secondary";
-  return "outline";
-};
 
 const columns: DataColumn<SalesOrder>[] = [
   { id: "number", header: "Order #", sortable: true, accessor: (o) => o.number ?? "", cell: (o) => <span className="font-medium whitespace-nowrap">{o.number ?? "—"}</span> },
   { id: "trans_date", header: "Tanggal", sortable: true, accessor: (o) => o.trans_date ?? "", cell: (o) => <span className="whitespace-nowrap">{tgl(o.trans_date)}</span>, className: "whitespace-nowrap" },
   { id: "customer", header: "Customer", sortable: true, accessor: (o) => o.customer_name ?? "", cell: (o) => <span className="block max-w-[20rem] truncate" title={o.customer_name ?? ""}>{o.customer_name ?? "—"}</span>, className: "max-w-[20rem]" },
-  { id: "status", header: "Status", sortable: true, accessor: (o) => o.status ?? "", cell: (o) => (o.status ? <Badge variant={statusTone(o.status)}>{o.status}</Badge> : <span className="text-muted-foreground">—</span>) },
+  { id: "status", header: "Status", sortable: true, accessor: (o) => o.status ?? "", cell: (o) => (o.status ? <StatusBadge nada={nadaSoAccurate(o.status)}>{o.status}</StatusBadge> : <span className="text-muted-foreground">—</span>) },
   { id: "total", header: "Total", align: "right", sortable: true, accessor: (o) => Number(o.total_amount) || 0, cell: (o) => <span className="whitespace-nowrap font-medium">{rupiah(o.total_amount)}</span>, className: "whitespace-nowrap" },
 ];
 
@@ -188,7 +181,7 @@ export function OrdersTable({
                 <DialogTitle className="font-mono text-sm leading-snug break-all">{sel.number ?? "—"}</DialogTitle>
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-muted-foreground">{tgl(sel.trans_date)}</span>
-                  {sel.status && <Badge variant={statusTone(sel.status)} className="shrink-0">{sel.status}</Badge>}
+                  {sel.status && <StatusBadge nada={nadaSoAccurate(sel.status)} className="shrink-0">{sel.status}</StatusBadge>}
                 </div>
               </DialogHeader>
               <DialogBody className="space-y-4 text-sm">
