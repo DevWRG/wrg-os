@@ -11,7 +11,7 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { LoadingInline } from "@/components/ui/loading";
 import { SalesPerformanceCards, type SalesPerformance } from "@/components/sales/sales-performance-cards";
 import { TargetPacingView, type PacingData } from "@/components/sales/target-pacing-view";
@@ -176,6 +176,7 @@ export function SalesAnalyticsDashboard({ initial, initialView, aturanAlert, bol
   const [cache, setCache] = useState<Record<string, unknown>>(initial ? { overview: initial } : {});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [unduhDetail, setUnduhDetail] = useState(false);
   const [views, setViews] = useState<SavedView[]>([]);
   const router = useRouter();
 
@@ -295,6 +296,28 @@ export function SalesAnalyticsDashboard({ initial, initialView, aturanAlert, bol
     await writeXlsxFile([header, ...body]).toFile(`${v.name}.xlsx`);
   };
 
+  // Detail faktur per baris barang — XLSX dibuat di server (bisa puluhan ribu baris),
+  // ikut periode Dari/Sampai, tak bergantung tab aktif.
+  const exportDetailFaktur = async () => {
+    const qs = new URLSearchParams();
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    setUnduhDetail(true); setErr("");
+    try {
+      const res = await fetch(`/api/sales-analytics/detail-faktur.xlsx${qs.size ? `?${qs}` : ""}`);
+      if (!res.ok) { setErr(String((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`)); return; }
+      const nama = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "sales-analytics_detail-faktur.xlsx";
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = nama; a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setErr("gagal mengunduh detail faktur");
+    } finally {
+      setUnduhDetail(false);
+    }
+  };
+
   const exportPdf = () => {
     const v = viewData();
     if (!v) return;
@@ -352,6 +375,10 @@ export function SalesAnalyticsDashboard({ initial, initialView, aturanAlert, bol
               <DropdownMenuItem onClick={exportCsv}>Export CSV</DropdownMenuItem>
               <DropdownMenuItem onClick={() => void exportXlsx()}>Export XLSX</DropdownMenuItem>
               <DropdownMenuItem onClick={exportPdf}>Export PDF</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => void exportDetailFaktur()} disabled={unduhDetail}>
+                {unduhDetail ? "Menyiapkan detail faktur…" : "Export Detail Faktur (per baris, XLSX)"}
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Button size="sm" className={SEC_BTN} onClick={saveCurrentView}>Simpan view</Button>
