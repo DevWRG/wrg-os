@@ -25,3 +25,10 @@ test("fmtRp & fmtAngka", () => {
   assert.equal(fmtAngka(1.5), "1,5");
   assert.equal(fmtAngka(null), "—");
 });
+
+test("fmtPersen", async () => {
+  const { fmtPersen } = await import("./format");
+  assert.equal(fmtPersen(27.1), "27,1%");
+  assert.equal(fmtPersen(25.94), "25,9%");
+  assert.equal(fmtPersen(null), "—");
+});
