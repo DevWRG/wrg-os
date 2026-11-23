@@ -18,6 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+import { fmtRpRingkas } from "@/lib/format";
 
 // ── Tipe respons API /executive/* ─────────────────────────────────
 type Light = "green" | "yellow" | "red" | "na";
@@ -91,13 +92,8 @@ const TABS: { key: ViewKey; label: string; icon: LucideIcon; skel: "tiles" | "ta
 ];
 
 // ── Formatter ──────────────────────────────────────────────────────
-const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 function rpc(n: number | null | undefined): string {
-  if (n == null) return "—";
-  const a = Math.abs(n);
-  if (a >= 1e9) return `Rp ${(n / 1e9).toFixed(2).replace(".", ",")} M`;
-  if (a >= 1e6) return `Rp ${(n / 1e6).toFixed(0)} jt`;
-  return rp.format(n);
+  return n == null ? "—" : fmtRpRingkas(n);
 }
 const pctFmt = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 });
 const pctStr = (n: number | null | undefined) => (n == null ? "—" : `${pctFmt.format(n)}%`);

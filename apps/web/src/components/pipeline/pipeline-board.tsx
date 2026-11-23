@@ -11,6 +11,7 @@ import { DealFormModal, type DealFormInit } from "./deal-form-modal";
 import { TambahDemoTrialDialog, type DariDeal } from "@/components/demo-trial/dialogs";
 import { PipelineExportButton } from "./pipeline-export-button";
 import { PipelineInsights } from "./pipeline-insights";
+import { fmtRpRingkas } from "@/lib/format";
 
 // F1-SPT kanban interaktif (tahap B): board 8-stage + filter + ringkasan weighted +
 // deal detail + DRAG pindah stage (PATCH /api/deals/:id/stage, write-guard di backend).
@@ -126,12 +127,7 @@ const LOSS_REASONS: { val: string; label: string }[] = [
   { val: "komitmen", label: "Komitmen" },
 ];
 
-const jt = (n: number | null) => {
-  const v = n ?? 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)} jt`;
-  return `Rp ${v.toLocaleString("id-ID")}`;
-};
+const jt = (n: number | null) => fmtRpRingkas(n);
 const uniq = (arr: (string | null)[]) => [...new Set(arr.filter((x): x is string => !!x))].sort();
 // Coop model → bahasa awam: KSO tetap KSO; SALE/Sale → "Beli Putus".
 // Jaring pengaman: sejak migrasi 110 nilai tersimpan cuma KSO/BELI, tapi baris
