@@ -45,3 +45,8 @@ export function fmtRpRingkas(
 export function fmtAngka(n: number | null | undefined, maksDesimal = 2): string {
   return n == null || Number.isNaN(Number(n)) ? "—" : angka(Number(n), maksDesimal);
 }
+
+/** Persen id-ID: 27.1 → "27,1%"; null → "—". Masukan sudah dalam persen (bukan pecahan). */
+export function fmtPersen(n: number | null | undefined, maksDesimal = 1): string {
+  return n == null || Number.isNaN(Number(n)) ? "—" : `${angka(Number(n), maksDesimal)}%`;
+}
