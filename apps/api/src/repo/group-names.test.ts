@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadGroupSubjects } from "./group-names.js";
+import { loadGroupSubjects, namaGrup } from "./group-names.js";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "group-names-"));
 
@@ -132,4 +132,13 @@ test("dua sumber mati → map kosong TAPI bersuara (bukan gagal senyap)", async 
   const lagi = await tangkapWarn(() => { loadGroupSubjects(); });
   assert.equal(lagi.length, 0);
   bersihkanEnv();
+});
+
+test("namaGrup: subject openclaw → nama tersimpan → JID", () => {
+  const jid = "120363000000000001@g.us";
+  assert.equal(namaGrup(jid, { [jid]: "Grup A" }, "", "Nama Lama"), "Grup A");
+  assert.equal(namaGrup(jid, {}, "", "Nama Pola"), "Nama Pola");
+  // Nama tersimpan yang isinya JID (sisa backfill) dilewati.
+  assert.equal(namaGrup(jid, {}, null, jid), jid);
+  assert.equal(namaGrup(jid, {}, null, undefined), jid);
 });
