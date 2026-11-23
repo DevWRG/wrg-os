@@ -2,11 +2,12 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { fmtPersen } from "@/lib/format";
 
 // Kartu Sales Performance (target vs realisasi per periode + breakdown region).
 // Data periodik (YTD/kuartal/bulan/minggu/hari) dari GET /sales/performance — lihat
 // apps/api/src/repo/sales.ts:reportSalesPerformance. Target/region diisi via
-// config di apps/api/src/config/*. Target null → tampil "No data". Target minggu &
+// config di apps/api/src/config/*. Target null → tampil "Belum ada target". Target minggu &
 // hari = target tahunan ÷ 52 / ÷ 260 (diturunkan di API, tak disimpan).
 
 type Region = "OFFICE" | "West" | "East";
@@ -76,7 +77,7 @@ function RegionBars({ rows }: { rows: RegionTotal[] }) {
 export function PeriodCard({ p }: { p: Period }) {
   const t = tone(p.pct.total);
   const barW = p.pct.total == null ? 0 : Math.min(100, Math.max(0, p.pct.total));
-  const fmtPct = (v: number | null) => (v == null ? "No data" : `${v}%`);
+  const fmtPct = (v: number | null) => (v == null ? "Belum ada data" : fmtPersen(v));
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -87,8 +88,8 @@ export function PeriodCard({ p }: { p: Period }) {
           <p className="text-muted-foreground text-xs">Total Revenue</p>
           <div className="text-2xl font-semibold tabular-nums">{rpC(p.total)}</div>
           <p className={cn("text-xs", t.text)}>
-            {p.pct.total == null ? "No data" : `${p.pct.total}%`} of target{" "}
-            {p.target.total == null ? "No data" : rpFull(p.target.total)}
+            {p.pct.total == null ? "Belum ada data" : fmtPersen(p.pct.total)} dari target{" "}
+            {p.target.total == null ? "Belum ada target" : rpFull(p.target.total)}
           </p>
           <div className="bg-muted mt-1 h-2 overflow-hidden rounded-full">
             <div className={cn("h-full rounded-full", t.bar)} style={{ width: `${barW}%` }} />
@@ -132,7 +133,7 @@ function MtdVsLastCard({ d }: { d: SalesPerformance["mtd_vs_last"] }) {
         </div>
         <div className="border-t pt-2">
           {g == null ? (
-            <span className="text-muted-foreground text-sm">No data</span>
+            <span className="text-muted-foreground text-sm">Belum ada data</span>
           ) : (
             <span className={cn("flex items-center gap-1 text-lg font-semibold", up ? "text-success" : "text-danger")}>
               {up ? <TrendingUp className="size-4" /> : <TrendingDown className="size-4" />}

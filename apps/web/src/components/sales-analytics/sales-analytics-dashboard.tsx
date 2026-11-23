@@ -24,7 +24,7 @@ import { SalesAlertsManager, type SalesAlert, type AlertTargets } from "@/compon
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePrompt } from "@/components/ui/use-prompt";
-import { fmtRpRingkas } from "@/lib/format";
+import { fmtPersen, fmtRpRingkas } from "@/lib/format";
 
 // Tombol sekunder toolbar: tint teal lembut (bukan putih) — kontras di atas bg terang.
 const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-primary/15";
@@ -33,7 +33,7 @@ const SEC_BTN = "bg-primary-soft text-primary-dark border-primary/20 hover:bg-pr
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtRp = (n: number) => rp.format(n || 0);
 const fmtRpShort = (n: number) => fmtRpRingkas(n);
-const fmtPct = (n: number | null | undefined) => (n == null ? "—" : `${n}%`);
+const fmtPct = (n: number | null | undefined) => fmtPersen(n);
 
 // Export CSV (UTF-8 BOM → Excel buka langsung). Angka mentah (bukan terformat).
 function downloadCsv(name: string, headers: string[], rows: (string | number | null)[][]) {
@@ -142,15 +142,17 @@ export interface AturanAlertProps { initialAlerts: SalesAlert[]; targets: AlertT
 interface SavedView { id: string; view_name: string; view_type: string; filter_config: { from?: string; to?: string; tab?: ViewKey }; }
 
 // ── Sub-komponen ───────────────────────────────────────────────────
-function Kpi({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
+// Nilai di kartu = Rupiah RINGKAS (kartu sempit: Rupiah penuh dulu terpotong
+// "Rp 33.850.445.05…"); angka penuh tetap ada di tooltip (`title`).
+function Kpi({ label, value, delta, title }: { label: string; value: string; delta?: number | null; title?: string }) {
   return (
     <Card>
       <CardContent className="py-4">
         <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">{label}</div>
-        <div className="mt-1 text-2xl font-bold">{value}</div>
+        <div className="mt-1 text-2xl font-bold" title={title}>{value}</div>
         {delta != null && (
           <div className={`text-xs font-medium ${delta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-            {delta >= 0 ? "▲" : "▼"} {Math.abs(delta)}% vs periode lalu
+            {delta >= 0 ? "▲" : "▼"} {fmtPersen(Math.abs(delta))} vs periode lalu
           </div>
         )}
       </CardContent>
@@ -423,7 +425,7 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
     return (
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Kpi label="Revenue (Anda)" value={fmtRp(data.kpi.revenue)} />
+          <Kpi label="Revenue (Anda)" value={fmtRpRingkas(data.kpi.revenue)} title={fmtRp(data.kpi.revenue)} />
           <Kpi label="Faktur" value={String(data.kpi.orders)} />
           <Kpi label="Customer" value={String(data.kpi.customers)} />
           <Kpi label="Achievement" value={fmtPct(data.kpi.achievement_pct)} />
@@ -435,10 +437,10 @@ function OverviewView({ data, onNav }: { data: OverviewResult; onNav: (t: ViewKe
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Revenue" value={fmtRp(data.kpi.revenue)} delta={data.kpi.revenue_delta} />
+        <Kpi label="Revenue" value={fmtRpRingkas(data.kpi.revenue)} title={fmtRp(data.kpi.revenue)} delta={data.kpi.revenue_delta} />
         <Kpi label="Faktur" value={String(data.kpi.orders)} delta={data.kpi.orders_delta} />
         <Kpi label="Customer" value={String(data.kpi.customers)} delta={data.kpi.customers_delta} />
-        <Kpi label="AR Outstanding" value={fmtRp(data.kpi.ar_outstanding)} />
+        <Kpi label="AR Outstanding" value={fmtRpRingkas(data.kpi.ar_outstanding)} title={fmtRp(data.kpi.ar_outstanding)} />
       </div>
       <SalesPerformanceCards data={data.performance} />
       {data.so_pacing && <SoPacingCard data={data.so_pacing} />}
