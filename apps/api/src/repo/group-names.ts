@@ -125,6 +125,17 @@ export function loadGroupSubjects(): Record<string, string> {
   return map;
 }
 
+// Nama tampil satu grup: subject openclaw → nama tersimpan (bukan JID) → JID.
+export function namaGrup(jid: string, subjects: Record<string, string>, ...simpanan: (string | null | undefined)[]): string {
+  const dariOpenclaw = subjects[jid]?.trim();
+  if (dariOpenclaw) return dariOpenclaw;
+  for (const n of simpanan) {
+    const t = n?.trim();
+    if (t && !t.endsWith("@g.us")) return t;
+  }
+  return jid;
+}
+
 // Backfill monitor_pola.group_name dari subject openclaw untuk grup yg namanya
 // masih kosong/JID. Return jumlah baris ter-update.
 export async function syncGroupNamesFromSessions(): Promise<number> {

@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
+import { loadGroupSubjects, namaGrup } from "./group-names.js";
 
 // WRG Monitor — direktori member WA (gabungan roster + members.json), di-key HP.
 
@@ -179,11 +180,16 @@ export async function digestStats(date: string): Promise<DigestStats> {
     FROM wa_message WHERE received_at::date = ${date}
     GROUP BY 1
   `;
+  // Dikelompokkan per JID: wa_message.group_name selalu kosong di capture, jadi
+  // nama diambil dari subject openclaw, lalu monitor_pola, baru JID.
   const groupRows = await sql`
-    SELECT COALESCE(NULLIF(group_name, ''), group_jid) AS name, COUNT(*)::int AS count
-    FROM wa_message WHERE received_at::date = ${date}
-    GROUP BY 1 ORDER BY count DESC LIMIT 8
+    SELECT m.group_jid, MAX(m.group_name) AS wa_name, MAX(p.group_name) AS pola_name, COUNT(*)::int AS count
+    FROM wa_message m
+    LEFT JOIN monitor_pola p ON p.group_jid = m.group_jid
+    WHERE m.received_at::date = ${date}
+    GROUP BY m.group_jid ORDER BY count DESC LIMIT 8
   `;
+  const subjects = groupRows.length > 0 ? loadGroupSubjects() : {};
 
   // Gabung message_type mentah → bucket kategori.
   const byTypeMap = new Map<string, { type: string; label: string; count: number }>();
@@ -202,7 +208,10 @@ export async function digestStats(date: string): Promise<DigestStats> {
     media_messages: Number(tot?.media_messages ?? 0),
     by_hour: hourRows.map((r) => ({ hour: Number(r.hour), count: Number(r.count) })),
     by_type: [...byTypeMap.values()].sort((a, b) => b.count - a.count),
-    top_groups: groupRows.map((r) => ({ name: String(r.name), count: Number(r.count) })),
+    top_groups: groupRows.map((r) => ({
+      name: namaGrup(String(r.group_jid), subjects, r.wa_name as string | null, r.pola_name as string | null),
+      count: Number(r.count),
+    })),
   };
 }
 
