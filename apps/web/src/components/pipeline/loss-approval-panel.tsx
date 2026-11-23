@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { httpErrorMessage } from "@/lib/http-error";
+import { fmtRpRingkas } from "@/lib/format";
 
 // F1-SPT panel approval Lost: HoD/admin memutus deal yg di-drag ke Closing-Lost
 // (loss_status='pending'). Approve → tetap Lost. Reject → deal balik ke stage
@@ -27,12 +28,7 @@ interface LossPending {
   revert_stage: string;
 }
 
-const jt = (n: number | null) => {
-  const v = n ?? 0;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(0)} jt`;
-  return `Rp ${v.toLocaleString("id-ID")}`;
-};
+const jt = (n: number | null) => fmtRpRingkas(n);
 const fmtDate = (iso: string) => {
   if (!iso) return "—";
   const d = new Date(iso);

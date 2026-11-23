@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { GaMaintenanceActions, type AppUserOption } from "@/components/crm/ga-maintenance-actions";
+import { StatusBadge, type NadaStatus } from "@/components/ui/status-badge";
 
 export interface GaMaintenance {
   id: string;
@@ -25,10 +26,10 @@ export interface GaMaintenance {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  pending: "Pending", in_progress: "Dikerjakan", pending_finance: "Nunggu Finance", done: "Done", cancelled: "Batal",
+  pending: "Menunggu", in_progress: "Dikerjakan", pending_finance: "Menunggu Finance", done: "Selesai", cancelled: "Batal",
 };
-const STATUS_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
-  pending: "outline", in_progress: "secondary", pending_finance: "destructive", done: "outline", cancelled: "secondary",
+const STATUS_NADA: Record<string, NadaStatus> = {
+  pending: "info", in_progress: "peringatan", pending_finance: "peringatan", done: "sukses", cancelled: "netral",
 };
 const MAINT_TYPE_LABEL: Record<string, string> = { preventive: "Preventive", repair: "Repair" };
 const rupiah = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
@@ -64,7 +65,7 @@ export function GaMaintenanceTable({ schedules, canApproveFinance, users }: { sc
     {
       id: "status",
       header: "Status",
-      cell: (s) => <Badge variant={STATUS_VARIANT[s.status] ?? "outline"}>{STATUS_LABEL[s.status] ?? s.status}</Badge>,
+      cell: (s) => <StatusBadge nada={STATUS_NADA[s.status] ?? "netral"}>{STATUS_LABEL[s.status] ?? s.status}</StatusBadge>,
     },
     {
       id: "biaya",

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CardPagination, usePagedList } from "@/components/ui/card-pagination";
 import { Input } from "@/components/ui/input";
+import { fmtRpRingkas } from "@/lib/format";
 
 export interface DormantCustomer {
   id: string; name: string; cabang: string | null; total: number; invoices: number;
@@ -13,7 +14,7 @@ export interface DormantCustomer {
 }
 
 const rpFull = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-const rpC = (n: number) => (Math.abs(n) >= 1e9 ? `Rp ${(n / 1e9).toFixed(1)}M` : Math.abs(n) >= 1e6 ? `Rp ${(n / 1e6).toFixed(0)}jt` : rpFull.format(n));
+const rpC = (n: number) => fmtRpRingkas(n);
 // Aksen & warna hari sesuai keparahan dormansi.
 const sevBorder = (d: number | null) => (d != null && d >= 120 ? "border-l-rose-500" : d != null && d >= 100 ? "border-l-orange-400" : "border-l-amber-400");
 const sevDays = (d: number | null) => (d != null && d >= 120 ? "text-rose-600" : d != null && d >= 100 ? "text-orange-600" : "text-amber-600");

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { fmtRpRingkas } from "@/lib/format";
 
 // ── Tipe (cermin apps/api/src/repo/pricebook.ts) ───────────────────────────
 export interface PricebookItem {
@@ -50,13 +51,7 @@ export interface PricebookSummary {
 // ── Format ─────────────────────────────────────────────────────────────────
 const rp = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtRp = (n: number | null) => (n == null ? "—" : rp.format(n));
-const fmtRpShort = (n: number) => {
-  const v = n || 0;
-  if (Math.abs(v) >= 1e12) return `Rp ${(v / 1e12).toFixed(2)} T`;
-  if (Math.abs(v) >= 1e9) return `Rp ${(v / 1e9).toFixed(2)} M`;
-  if (Math.abs(v) >= 1e6) return `Rp ${(v / 1e6).toFixed(1)} jt`;
-  return fmtRp(v);
-};
+const fmtRpShort = (n: number) => fmtRpRingkas(n, { desimalJt: 1 });
 const fmtNum = (n: number) => n.toLocaleString("id-ID");
 const fmtPctDisc = (d: number) => `${Math.round(d * 100)}%`;
 
