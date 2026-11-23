@@ -14,12 +14,12 @@ import { GaAduanWaPanel, type GaAduanWa } from "./ga-aduan-wa-panel";
 
 const STATUS_FILTERS = [
   ["all", "Semua"],
-  ["open", "Open"],
-  ["in_progress", "In Progress"],
-  ["waiting", "Waiting"],
-  ["completed", "Completed"],
-  ["closed", "Closed"],
-  ["cancelled", "Cancelled"],
+  ["open", "Baru"],
+  ["in_progress", "Dikerjakan"],
+  ["waiting", "Menunggu"],
+  ["completed", "Selesai"],
+  ["closed", "Ditutup"],
+  ["cancelled", "Dibatalkan"],
 ] as const;
 
 // F139 — satu halaman, dua tab (Tiket + Kategori), pola sama F132 (2
