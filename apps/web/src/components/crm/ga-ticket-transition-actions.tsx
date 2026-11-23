@@ -23,7 +23,7 @@ const TRANSITIONS: Record<string, string[]> = {
 };
 
 const LABEL: Record<string, string> = {
-  open: "Open", in_progress: "In Progress", waiting: "Waiting", completed: "Completed", closed: "Closed",
+  open: "Baru", in_progress: "Dikerjakan", waiting: "Menunggu", completed: "Selesai", closed: "Ditutup",
 };
 
 // Satu tombol "Status ▾" berisi transisi yang sah saja. Dulu stepper 5

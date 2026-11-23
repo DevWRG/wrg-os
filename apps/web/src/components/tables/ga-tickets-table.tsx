@@ -1,11 +1,11 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { GaTicketAssignButton, type TeknisiOption } from "@/components/crm/ga-ticket-assign-button";
 import { GaTicketTransitionActions } from "@/components/crm/ga-ticket-transition-actions";
 import { GaTicketTimelineButton } from "@/components/crm/ga-ticket-timeline-button";
 import type { AppUserOption } from "@/components/crm/add-ga-ticket-button";
+import { StatusBadge, type NadaStatus } from "@/components/ui/status-badge";
 
 export interface GaTicket {
   id: string;
@@ -25,15 +25,15 @@ export interface GaTicket {
   rating: number | null;
 }
 
+// Nilai status/prioritas di DB tetap (open, in_progress, …); yang diterjemahkan hanya tampilannya.
 const STATUS_LABEL: Record<string, string> = {
-  open: "Open", in_progress: "In Progress", waiting: "Waiting", completed: "Completed", closed: "Closed", cancelled: "Cancelled",
+  open: "Baru", in_progress: "Dikerjakan", waiting: "Menunggu", completed: "Selesai", closed: "Ditutup", cancelled: "Dibatalkan",
 };
-const STATUS_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
-  open: "outline", in_progress: "secondary", waiting: "secondary", completed: "outline", closed: "outline", cancelled: "destructive",
+const STATUS_NADA: Record<string, NadaStatus> = {
+  open: "info", in_progress: "peringatan", waiting: "peringatan", completed: "sukses", closed: "netral", cancelled: "bahaya",
 };
-const PRIORITY_VARIANT: Record<string, "outline" | "secondary" | "destructive"> = {
-  low: "outline", medium: "outline", high: "secondary", critical: "destructive",
-};
+const PRIORITY_LABEL: Record<string, string> = { low: "Rendah", medium: "Sedang", high: "Tinggi", critical: "Kritis" };
+const PRIORITY_NADA: Record<string, NadaStatus> = { low: "netral", medium: "info", high: "peringatan", critical: "bahaya" };
 
 const fmt = (iso: string) => new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -68,7 +68,7 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
     {
       id: "priority",
       header: "Prioritas",
-      cell: (t) => <Badge variant={PRIORITY_VARIANT[t.priority] ?? "outline"}>{t.priority}</Badge>,
+      cell: (t) => <StatusBadge nada={PRIORITY_NADA[t.priority] ?? "netral"}>{PRIORITY_LABEL[t.priority] ?? t.priority}</StatusBadge>,
     },
     {
       id: "status",
@@ -78,8 +78,8 @@ export function GaTicketsTable({ tickets, users, teknisi }: { tickets: GaTicket[
       cell: (t) => (
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant={STATUS_VARIANT[t.status] ?? "outline"}>{STATUS_LABEL[t.status] ?? t.status}</Badge>
-            {t.sla_overdue && <Badge variant="destructive">Overdue</Badge>}
+            <StatusBadge nada={STATUS_NADA[t.status] ?? "netral"}>{STATUS_LABEL[t.status] ?? t.status}</StatusBadge>
+            {t.sla_overdue && <StatusBadge nada="bahaya">Lewat SLA</StatusBadge>}
           </div>
           <div className="text-muted-foreground text-xs">SLA {fmt(t.sla_due_at)}</div>
         </div>
