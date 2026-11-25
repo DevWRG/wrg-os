@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) + tangga cartridge (916) + Agenda A terverifikasi (917) + fee & lampiran PDF (918) + faskes baru (919) + kota area AM (920) + lampiran tanpa simpan (921) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
+# F170 Komite KSO (v2 GPM + zona sejak 265/266) — uji alur (900) + hak akses (901) + referensi OS (902) + lengkapi draft (903) + peran Akses Grup (904) + jadwal (905) + label & KPI (906) + tautan HOD (907) + Sekretariat & Susunan (908) + akses zona v2 (909) + zona ulang & pembuka Direksi (910) + pembuka ≥ usulan AM (911) + volume turun (912) + mandat untuk deal Pipeline (913) + bottom dinamis (914) + hari kerja AM (915) + tangga cartridge (916) + Agenda A terverifikasi (917) + fee & lampiran PDF (918) + faskes baru (919) + kota area AM (920) + lampiran tanpa simpan (921) + GPM ringan (927) terhadap BERKAS MIGRASI ASLI 224–233 + 242.
 #
 # Pakai: PGHOST=... PGPORT=... PGUSER=... bash scripts/qa/kso-komite/jalankan_uji.sh
 # Membuat database sekali pakai `kso_komite_uji` (DROP + CREATE), tidak menyentuh database lain.
@@ -41,7 +41,7 @@ for f in "$INIT"/224_kso_komite_skema.sql "$INIT"/225_kso_komite_fungsi.sql \
          "$INIT"/288_kso_biaya_elektrolit.sql \
          "$INIT"/302_kso_format_wa_lampiran.sql "$INIT"/303_kso_faskes_baru.sql \
          "$INIT"/304_kso_faskes_baru_kota_area.sql "$INIT"/305_kso_lampiran_tanpa_simpan.sql \
-         "$INIT"/307_kso_alat_baru.sql "$INIT"/312_kso_sph.sql "$INIT"/313_kso_sph_nama_alat.sql "$INIT"/329_kso_loloskan_forum.sql "$INIT"/331_kso_loloskan_catatan_panjang.sql "$INIT"/337_kso_pengecualian_pks.sql "$INIT"/338_kso_opini_komite.sql; do
+         "$INIT"/307_kso_alat_baru.sql "$INIT"/312_kso_sph.sql "$INIT"/313_kso_sph_nama_alat.sql "$INIT"/329_kso_loloskan_forum.sql "$INIT"/331_kso_loloskan_catatan_panjang.sql "$INIT"/337_kso_pengecualian_pks.sql "$INIT"/338_kso_opini_komite.sql "$INIT"/340_kso_gpm_bahan_per_model.sql; do
   psql -d $DB -q -1 -v ON_ERROR_STOP=1 -f "$f" >/dev/null
 done
 psql -d $DB -q -v ON_ERROR_STOP=1 -f 004_data_contoh.sql >/dev/null
@@ -107,4 +107,6 @@ strip() { sed -E -e 's/^psql:[^:]+:[0-9]+: NOTICE: +//' \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_minta_pengecualian_pks|app_putus_pengecualian_pks) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$|^CREATE FUNCTION$|^GRANT$|^DO$|^RESET$" || true
   psql -d $DB -q -v ON_ERROR_STOP=1 -f 926_uji_opini_komite.sql 2>&1 | strip \
     | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config|app_isi_opini_komite) *(\| *set_config *)*$|^ *[A-Za-z0-9-]{1,40} *(\| *[A-Za-z0-9-]*)* *$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$|^CREATE FUNCTION$|^GRANT$|^DO$|^RESET$" || true
+  psql -d $DB -q -v ON_ERROR_STOP=1 -f 927_uji_gpm_ringan.sql 2>&1 | strip \
+    | grep -vE "^ *$|^-+$|^\(1 row\)|^ *(cek|harus_gagal|set_config) *(\| *set_config *)*$|^ *[A-Za-z0-9-]* *(\| *[A-Za-z0-9-]* *)*$|^-+(\+-+)*$|^INSERT [0-9 ]+$|^UPDATE [0-9]+$|^RESET$" || true
 } | tee /dev/stderr | awk '/^LULUS/{l++} /^GAGAL/{g++} END{printf "\nRingkasan: %d LULUS, %d GAGAL\n", l, g; exit (g>0 || l==0)}'

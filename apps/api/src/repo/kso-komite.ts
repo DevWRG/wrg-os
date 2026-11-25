@@ -404,7 +404,8 @@ async function bahanKurang(tx: Tx, ids: number[]): Promise<BarisKurang[]> {
            r.klausul_ada, r.klausul_detail, r.unit_status::text, r.volume_sumber, r.zona_dasar, r.alasan_strategis,
            (select al.baru from kso.alat al where al.kode = r.alat_kode) as alat_baru,
            coalesce((select json_agg(json_build_object('nama', p.nama, 'tipe', p.tipe)) from kso.rencana_pendukung p where p.rencana_id = r.id), '[]') as pendukung,
-           (select g.hd from kso.app_angka_gpm(r.id) g) as hd,
+           -- 340: penanda HD saja — app_angka_gpm menghitung GPM penuh per baris (lambat di daftar panjang)
+           kso.app_hd(r.id) as hd,
            (select json_build_object('lolos', l.lolos, 'cocok', l.cocok,
                                      'galat', case when coalesce((l.hasil_ocr->>'ok')::boolean, false) then null
                                                    else coalesce(l.hasil_ocr->>'galat', 'tidak-terbaca') end)
