@@ -125,6 +125,29 @@ export function loadGroupSubjects(): Record<string, string> {
   return map;
 }
 
+// Nama grup yang diisi admin lewat UI (tabel wa_group_name, migrasi 339) —
+// untuk grup yang tak punya subject di openclaw (agen tak pernah membuka sesinya).
+export async function loadManualGroupNames(): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  try {
+    const rows = await db()`SELECT group_jid, name FROM wa_group_name`;
+    for (const r of rows) {
+      const name = String(r.name ?? "").trim();
+      if (name) map[String(r.group_jid)] = name;
+    }
+  } catch {
+    // Migrasi 339 belum terpasang → anggap belum ada nama manual.
+  }
+  return map;
+}
+
+// Peta nama untuk tampilan: subject openclaw menang (nama WA yang hidup), nama
+// manual mengisi grup yang tak dikenal openclaw. Jangan dipakai untuk
+// syncGroupNamesFromSessions — itu khusus subject openclaw.
+export async function loadGroupNames(): Promise<Record<string, string>> {
+  return { ...(await loadManualGroupNames()), ...loadGroupSubjects() };
+}
+
 // Nama tampil satu grup: subject openclaw → nama tersimpan (bukan JID) → JID.
 export function namaGrup(jid: string, subjects: Record<string, string>, ...simpanan: (string | null | undefined)[]): string {
   const dariOpenclaw = subjects[jid]?.trim();

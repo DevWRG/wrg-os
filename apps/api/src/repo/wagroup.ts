@@ -1,5 +1,5 @@
 import { db } from "../db.js";
-import { loadGroupSubjects } from "./group-names.js";
+import { loadGroupSubjects, loadManualGroupNames } from "./group-names.js";
 
 // Registri grup WA + kategorinya (principal / internal / customer). Daftar grup
 // digabung dari DUA sumber supaya grup bertraffic rendah (mis. grup customer
@@ -18,6 +18,9 @@ export interface WaGroup {
   /** "" untuk baris PRA-DAFTAR (awalan nama yang grupnya belum pernah kirim pesan). */
   group_jid: string;
   group_name: string;
+  /** Asal nama: openclaw (subject WA, tak bisa diubah dari UI) · manual (diisi
+   *  admin, tabel wa_group_name) · pola (monitor_pola) · null = belum bernama (JID). */
+  name_source: "openclaw" | "manual" | "pola" | null;
   category: WaGroupCategory | null;
   /** manual = baris per-JID (keputusan admin); prefix = dari pra-daftar awalan nama. */
   category_source: "manual" | "prefix" | null;
@@ -82,6 +85,7 @@ export function rakitDaftarGrup(
   rows: BarisGrupDb[],
   subjects: Record<string, string>,
   prefixList: WaGroupPrefix[],
+  manualNames: Record<string, string> = {},
 ): WaGroup[] {
   // Pra-daftar awalan nama diurut TERPANJANG dulu: 'Wahana - Snibe' harus menang
   // atas 'Wahana |'-style awalan pendek kalau keduanya cocok.
@@ -104,7 +108,10 @@ export function rakitDaftarGrup(
     // tersimpan "GROUP TRAINING KRM-TAGIH" padahal subject-nya "PENJUALAN
     // SOLO-JOGJA-PWT" (bikin dua kartu kembar di galeri). syncGroupNamesFromSessions
     // cuma mem-backfill nama yang KOSONG, jadi tak memperbaiki kasus ini.
-    const name = subjects[jid] || (rawName === jid ? jid : rawName);
+    // Sesudahnya nama manual admin (grup yang tak dikenal openclaw), baru monitor_pola.
+    const pola = rawName && rawName !== jid && !rawName.endsWith("@g.us") ? rawName : "";
+    const name = subjects[jid] || manualNames[jid] || pola || jid;
+    const name_source = subjects[jid] ? "openclaw" : manualNames[jid] ? "manual" : pola ? "pola" : null;
     const manual = isWaGroupCategory(r.category) ? r.category : null;
     const cocok = matchPrefixes(name);
     const hit = cocok[0] ?? null;
@@ -112,6 +119,7 @@ export function rakitDaftarGrup(
     return {
       group_jid: jid,
       group_name: name,
+      name_source,
       // Baris per-JID (keputusan admin) SELALU menang atas pra-daftar.
       category: manual ?? hit?.category ?? null,
       category_source: manual ? "manual" : hit ? "prefix" : null,
@@ -132,6 +140,7 @@ export function rakitDaftarGrup(
     groups.push({
       group_jid: "",
       group_name: namaPraDaftar(p.name_prefix, subjects),
+      name_source: null,
       category: p.category,
       category_source: "prefix",
       note: p.note,
@@ -178,7 +187,33 @@ export async function listWaGroups(): Promise<WaGroup[]> {
     LEFT JOIN msg ON msg.group_jid = j.group_jid
     ORDER BY 2
   `;
-  return rakitDaftarGrup(rows as unknown as BarisGrupDb[], subjects, await listWaGroupPrefixes());
+  return rakitDaftarGrup(
+    rows as unknown as BarisGrupDb[],
+    subjects,
+    await listWaGroupPrefixes(),
+    await loadManualGroupNames(),
+  );
+}
+
+export const GROUP_NAME_MAX = 120;
+
+/** Set/hapus nama manual satu grup (tabel wa_group_name). name ""/null → hapus. */
+export async function setWaGroupName(
+  group_jid: string,
+  name: string | null,
+): Promise<{ group_jid: string; name: string | null }> {
+  const sql = db();
+  const next = (name ?? "").trim();
+  if (!next) {
+    await sql`DELETE FROM wa_group_name WHERE group_jid = ${group_jid}`;
+    return { group_jid, name: null };
+  }
+  await sql`
+    INSERT INTO wa_group_name (group_jid, name, updated_at)
+    VALUES (${group_jid}, ${next}, now())
+    ON CONFLICT (group_jid) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
+  `;
+  return { group_jid, name: next };
 }
 
 /** Set/hapus pra-daftar kategori per awalan nama. category null → baris dihapus. */

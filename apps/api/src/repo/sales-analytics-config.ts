@@ -2,7 +2,7 @@
 // (app_user.id). Dipakai endpoint /sales-analytics/views & /alerts.
 
 import { db } from "../db.js";
-import { loadGroupSubjects } from "./group-names.js";
+import { loadGroupNames } from "./group-names.js";
 
 const VIEW_TYPES = new Set(["executive", "per_am", "per_produk", "per_cabang", "per_customer", "trending", "custom"]);
 const METRICS = new Set(["revenue", "gp", "unit_sold", "customer_count", "ar_balance", "ar_gt_90", "churn_count", "new_customer_count", "kso_count"]);
@@ -111,7 +111,7 @@ export async function listAlertTargets(): Promise<AlertTargets> {
   const sql = db();
   // Nama grup: sumber utama subject openclaw (sessions.json) — wa_message.group_name
   // selalu kosong. Fallback monitor_pola.group_name (bila bukan JID), lalu JID.
-  const subjects = loadGroupSubjects();
+  const subjects = await loadGroupNames();
   const g = await sql`
     SELECT j.jid, mp.group_name FROM (
       SELECT DISTINCT group_jid AS jid FROM wa_message WHERE group_jid LIKE '%@g.us'

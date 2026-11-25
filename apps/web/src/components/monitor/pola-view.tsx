@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 // `Filter` di-alias: nama itu sudah dipakai type alias filter kategori di bawah.
-import { ArrowLeft, MessagesSquare, ChevronRight, Filter as FilterIcon } from "lucide-react";
+import { ArrowLeft, MessagesSquare, ChevronRight, Filter as FilterIcon, Pencil } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,8 @@ export type WaGroupCategory = "principal" | "internal" | "customer";
 export interface WaGroup {
   group_jid: string;
   group_name: string;
+  /** openclaw = subject WA (tak bisa diubah di sini) · manual = diisi admin · pola · null = belum bernama. */
+  name_source: "openclaw" | "manual" | "pola" | null;
   category: WaGroupCategory | null;
   category_source: "manual" | "prefix" | null;
   note: string | null;
@@ -64,6 +66,8 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
 
   const counts = useMemo(() => {
     const c: Record<Filter, number> = { all: groups.length, principal: 0, internal: 0, customer: 0, none: 0 };
@@ -148,6 +152,49 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
     } catch {
       setGroups(prev);
       setError("gagal menyimpan catatan (backend tak terjangkau)");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  // Nama manual hanya untuk grup yang subject-nya tak dikenal openclaw — kalau
+  // openclaw tahu namanya, nama itu yang selalu tampil, jadi isian manual sia-sia.
+  const canRename = (g: WaGroup) => canEdit && !g.pending && g.name_source !== "openclaw";
+
+  function startRename(g: WaGroup) {
+    setEditingName(g.group_jid);
+    setNameDraft(g.name_source === "manual" || g.name_source === "pola" ? g.group_name : "");
+    setError(null);
+  }
+
+  async function saveName(g0: WaGroup) {
+    const next = nameDraft.trim();
+    const prev = groups;
+    const jid = g0.group_jid;
+    setGroups((gs) =>
+      gs.map((x) =>
+        x.group_jid === jid
+          ? { ...x, group_name: next || jid, name_source: next ? ("manual" as const) : null }
+          : x,
+      ),
+    );
+    setEditingName(null);
+    setSaving(jid);
+    setError(null);
+    try {
+      const res = await fetch("/api/monitor/groups/name", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ group_jid: jid, name: next || null }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setGroups(prev);
+        setError(d.error || `gagal menyimpan nama (${res.status})`);
+      }
+    } catch {
+      setGroups(prev);
+      setError("gagal menyimpan nama (backend tak terjangkau)");
     } finally {
       setSaving(null);
     }
@@ -290,6 +337,33 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                     </span>
                   </span>
                 </div>
+              ) : editingName === g.group_jid ? (
+                <form
+                  className="flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    saveName(g);
+                  }}
+                >
+                  <Input
+                    autoFocus
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setEditingName(null);
+                    }}
+                    placeholder="Nama grup seperti di WhatsApp"
+                    aria-label={`Nama grup ${g.group_jid}`}
+                    maxLength={120}
+                    className="h-8 text-sm"
+                  />
+                  <Button type="submit" size="sm">
+                    Simpan
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setEditingName(null)}>
+                    Batal
+                  </Button>
+                </form>
               ) : (
                 <button onClick={() => open(g.group_jid)} className="flex items-start gap-3 text-left">
                   <span className="bg-primary-soft text-primary flex size-9 shrink-0 items-center justify-center rounded-lg">
@@ -316,6 +390,18 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
                 ) : (
                   <Badge variant="outline">Belum dikategori</Badge>
                 )}
+                {canRename(g) && editingName !== g.group_jid ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-muted-foreground h-7 px-2 text-xs"
+                    onClick={() => startRename(g)}
+                    disabled={saving === rowKey(g)}
+                    title="Nama grup tak diketahui openclaw — isi manual"
+                  >
+                    <Pencil className="size-3" /> {g.name_source ? "Ubah nama" : "Beri nama"}
+                  </Button>
+                ) : null}
                 {canEdit ? (
                   <select
                     aria-label={`Kategori ${label(g)}`}
