@@ -1,7 +1,7 @@
 import { aiDryRun, callAi } from "../ai.js";
 import { db } from "../db.js";
 import { upsertPola } from "./monitor.js";
-import { loadGroupSubjects, syncGroupNamesFromSessions } from "./group-names.js";
+import { loadGroupNames, syncGroupNamesFromSessions } from "./group-names.js";
 
 // pola_komunikasi — port wrg-monitor/scripts/pola_komunikasi.sh.
 // Untuk tiap grup aktif (>= MIN pesan dalam window), hitung statistik lokal +
@@ -31,7 +31,7 @@ export async function runPolaKomunikasi(
 
   // Auto-label grup dari subject openclaw (nama tak ada di wa_message).
   // Backfill nama yg masih kosong/JID; map dipakai juga utk grup baru di bawah.
-  const subjects = loadGroupSubjects();
+  const subjects = await loadGroupNames();
   if (!opts.dryRun) await syncGroupNamesFromSessions();
 
   // Grup aktif dalam window (>= minMsg), + nama & waktu update pola terakhir.

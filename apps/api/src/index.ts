@@ -366,7 +366,14 @@ import { bacaSusunan, simpanJabatan, simpanPemegang } from "./repo/kso-komite-su
 import { namaFileSphKso, sphKsoPdf } from "./repo/kso-sph-pdf.js";
 import { aksesBottomLine, bacaBahanOtomatis, bacaBottomLine, bacaPortofolio, bacaReal, bacaRincianHargaBeli, simpanAngka, simpanBiayaOtomatis, simpanDukungan, simpanJenis, simpanKeputusan, simpanParameter } from "./repo/kso-komite-bottomline.js";
 import { runPolaKomunikasi } from "./repo/polakomunikasi.js";
-import { listWaGroups, setWaGroupCategory, setWaGroupPrefixCategory, isWaGroupCategory } from "./repo/wagroup.js";
+import {
+  listWaGroups,
+  setWaGroupCategory,
+  setWaGroupPrefixCategory,
+  isWaGroupCategory,
+  setWaGroupName,
+  GROUP_NAME_MAX,
+} from "./repo/wagroup.js";
 import { runRefreshMembers } from "./repo/listmembers.js";
 import { runNotifQuota } from "./repo/notifquota.js";
 import {
@@ -1732,6 +1739,27 @@ app.post("/monitor/groups/category", async (c) => {
   // name_prefix → pra-daftar (grup belum pernah kirim pesan, JID belum diketahui).
   if (!jid) return c.json(await setWaGroupPrefixCategory(prefix, cat, note));
   return c.json(await setWaGroupCategory(jid, cat, note));
+});
+
+// Set/hapus nama manual satu grup — untuk grup yang tak punya subject di openclaw
+// (kartunya tampil sebagai JID angka). body: {group_jid, name: string|null};
+// name ""/null → hapus. Subject openclaw tetap menang di tampilan.
+// Gate admin ada di layer WEB (apps/web .../monitor/groups/name requireAdmin).
+app.post("/monitor/groups/name", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  let body: { group_jid?: string; name?: string | null } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  const jid = (body.group_jid || "").trim();
+  if (!jid.endsWith("@g.us")) return c.json({ error: "body.group_jid (…@g.us) wajib" }, 400);
+  const name = body.name == null ? null : String(body.name);
+  if (name && name.trim().length > GROUP_NAME_MAX) {
+    return c.json({ error: `nama maksimal ${GROUP_NAME_MAX} karakter` }, 400);
+  }
+  return c.json(await setWaGroupName(jid, name));
 });
 
 // Generate rekap/resume via services/ai dari wa_message (generate-only — TIDAK

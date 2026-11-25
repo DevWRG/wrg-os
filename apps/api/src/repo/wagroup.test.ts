@@ -127,3 +127,37 @@ test("awalan terpanjang menang saat dua awalan sama-sama cocok", () => {
   // sudah ada di daftar, cuma diklaim awalan yang lebih spesifik.
   assert.equal(out.length, 1, "tak ada kartu pra-daftar tambahan");
 });
+
+// --- nama manual (wa_group_name, migrasi 339) --------------------------------
+// Grup yang bot-nya ikut tapi tak pernah membuka sesi agen tak punya subject di
+// openclaw → kartunya JID angka. Admin mengisi namanya dari UI.
+
+test("grup tanpa subject openclaw → nama manual dipakai, sumber 'manual'", () => {
+  const jid = "120363406580562564@g.us";
+  const rows = [baris({ group_jid: jid, group_name: jid })];
+  const [g] = rakitDaftarGrup(rows, {}, [], { [jid]: "Grup Uji Manual" });
+  assert.equal(g.group_name, "Grup Uji Manual");
+  assert.equal(g.name_source, "manual");
+});
+
+test("subject openclaw tetap menang atas nama manual", () => {
+  const jid = "120363406580562564@g.us";
+  const rows = [baris({ group_jid: jid, group_name: jid })];
+  const [g] = rakitDaftarGrup(rows, { [jid]: "Nama Dari WA" }, [], { [jid]: "Nama Manual" });
+  assert.equal(g.group_name, "Nama Dari WA");
+  assert.equal(g.name_source, "openclaw");
+});
+
+test("nama manual menang atas nama monitor_pola", () => {
+  const jid = "6281335118687-1527497998@g.us";
+  const rows = [baris({ group_jid: jid, group_name: "Nama Pola Lama" })];
+  const [g] = rakitDaftarGrup(rows, {}, [], { [jid]: "Nama Manual" });
+  assert.equal(g.group_name, "Nama Manual");
+});
+
+test("tanpa nama dari sumber mana pun → JID, sumber null", () => {
+  const jid = "120363411890258936@g.us";
+  const [g] = rakitDaftarGrup([baris({ group_jid: jid, group_name: jid })], {}, []);
+  assert.equal(g.group_name, jid);
+  assert.equal(g.name_source, null);
+});
