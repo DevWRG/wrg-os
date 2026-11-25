@@ -630,6 +630,11 @@ export async function simpanBiayaOtomatis(userId: string, b: Record<string, unkn
   const p = await bacaParam();
   return db().begin(async (tx) => {
     const disimpan: string[] = [], dilewati: string[] = [];
+    // 342: keberadaan model dicek SEKALI untuk semua baris — model_v dihitung penuh tiap kali dibaca, jadi
+    // `WHERE model_key = …` per baris di dalam loop = satu model_v penuh per model.
+    const kunci = baris.map((r) => (typeof r.model_key === "string" ? r.model_key : "")).filter(Boolean);
+    const adaModel = new Set((await tx`SELECT model_key FROM kso_bottomline_model_v WHERE model_key = ANY(${kunci})`)
+      .map((x) => String(x.model_key)));
     for (const r of baris) {
       const key = typeof r.model_key === "string" ? r.model_key : "";
       const reagen = angka(r.biaya_per_tes, "Reagen per tes", { boleh0: true });
@@ -640,8 +645,7 @@ export async function simpanBiayaOtomatis(userId: string, b: Record<string, unkn
         throw new GalatKso(400, "Pilihan kemasan tidak sah.");
       const rincian = typeof r.rincian === "string" && r.rincian.trim() ? ` — ${r.rincian.trim().slice(0, 160)}` : "";
       if (!key || reagen == null) continue;
-      const [ada] = await tx`SELECT 1 FROM kso_bottomline_model_v WHERE model_key = ${key}`;
-      if (!ada) { dilewati.push(key); continue; }
+      if (!adaModel.has(key)) { dilewati.push(key); continue; }
       const hasil = await tx`
         INSERT INTO kso_bottomline_biaya (model_key, biaya_per_tes, biaya_tetap_harian, biaya_tetap_bulan, biaya_tangga, sumber, keyakinan, diubah_oleh)
         VALUES (${key}, ${reagen}, ${harian}, ${Math.round(harian * p.hariKerja)},
