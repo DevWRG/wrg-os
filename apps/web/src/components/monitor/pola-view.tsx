@@ -384,7 +384,9 @@ export function PolaView({ groups: initial, canEdit }: { groups: WaGroup[]; canE
               {g.note ? (
                 <p className="text-muted-foreground line-clamp-2 pl-12 text-xs italic">{g.note}</p>
               ) : null}
-              <div className="flex items-center gap-2 pl-12">
+              {/* flex-wrap: badge + "Beri nama" + dropdown kategori tak muat satu baris di
+                  kartu 3 kolom — tanpa wrap dropdown menjebol tepi kartu. */}
+              <div className="flex flex-wrap items-center gap-2 pl-12">
                 {g.category ? (
                   <Badge className={CAT[g.category].badge}>{CAT[g.category].label}</Badge>
                 ) : (
