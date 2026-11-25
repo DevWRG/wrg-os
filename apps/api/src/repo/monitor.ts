@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { callAi, aiDryRun } from "../ai.js";
-import { loadGroupSubjects, namaGrup } from "./group-names.js";
+import { loadGroupNames, namaGrup } from "./group-names.js";
 
 // WRG Monitor — direktori member WA (gabungan roster + members.json), di-key HP.
 
@@ -192,7 +192,7 @@ export async function digestStats(date: string): Promise<DigestStats> {
     WHERE m.received_at::date = ${date}
     GROUP BY m.group_jid ORDER BY count DESC LIMIT 8
   `;
-  const subjects = groupRows.length > 0 ? loadGroupSubjects() : {};
+  const subjects = groupRows.length > 0 ? await loadGroupNames() : {};
 
   // Gabung message_type mentah → bucket kategori.
   const byTypeMap = new Map<string, { type: string; label: string; count: number }>();
