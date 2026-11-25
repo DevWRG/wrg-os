@@ -45,3 +45,16 @@ insert into kso.kategori (kode, label, harga_standar_per_test, kontribusi_asumsi
   on conflict do nothing;
 insert into kso.alat values ('HDX', 'Mesin HD — hemodialisa', 'hemodialisa', 150000000), ('TANPA', 'Alat tanpa peta — hematologi', 'hematologi', 40000000)
   on conflict do nothing;
+
+-- 340: hitung_gpm membaca bahan lewat kso.bahan_gpm_model / app_hd lewat kso.satuan_model (aslinya menghitung dari
+-- kso_asset + aset tetap + tabel biaya/jenis F172). DB uji hanya punya tiruan model_v di atas → kedua fungsi ditiru
+-- dari tabel itu. Kesetaraan fungsi asli dengan view prod: cek_bahan_gpm_model.sql.
+create or replace function kso.bahan_gpm_model(p_model_key text)
+returns table (hpp double precision, biaya_per_tes numeric, biaya_tetap_bulan numeric, biaya_tetap_harian numeric,
+               qc_bulan numeric, satuan text, biaya_tangga jsonb)
+language sql stable as $$
+  select b.hpp::float8, b.biaya_per_tes, b.biaya_tetap_bulan, b.biaya_tetap_harian, b.qc_bulan, b.satuan, b.biaya_tangga
+    from public.kso_bottomline_model_v b where b.model_key = p_model_key
+$$;
+create or replace function kso.satuan_model(p_model_key text) returns text
+language sql stable as $$ select b.satuan from public.kso_bottomline_model_v b where b.model_key = p_model_key $$;
