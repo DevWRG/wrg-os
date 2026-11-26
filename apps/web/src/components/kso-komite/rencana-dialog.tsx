@@ -564,21 +564,21 @@ function FormDireksi({ d, jalankan }: { d: Detail; jalankan: Jalankan }) {
 /** Status yang opini Komite-nya masih boleh diubah (338): sejak diajukan sampai sebelum Direksi memutus. */
 const OPINI_TERBUKA = ["DIAJUKAN", "JALUR_FORUM", "DIAGENDAKAN", "DITAHAN", "DIREKOMENDASIKAN", "DIREKOMENDASIKAN_BERSYARAT", "TIDAK_DIREKOMENDASIKAN"];
 
-/** 338: opini Komite untuk usulan Zona Direktur — dibaca Direktur sebelum memutus; diisi/diubah Komite (tab Agenda Forum). */
+/** 338/343: opini Komite untuk usulan Zona Forum & Direktur — bahan forum/putusan Direksi; diisi/diubah Komite (tab Agenda Forum). */
 function OpiniKomite({ tab, d, bolehAksi, jalankan }: { tab: TabKso; d: Detail; bolehAksi: boolean; jalankan: Jalankan }) {
   const r = d.rencana;
-  const bolehIsi = tab === "agenda" && bolehAksi && r.zona === "direktur" && OPINI_TERBUKA.includes(r.status);
+  const bolehIsi = tab === "agenda" && bolehAksi && (r.zona === "forum" || r.zona === "direktur") && OPINI_TERBUKA.includes(r.status);
   const [ubah, setUbah] = useState(false);
   if (!r.opini_komite && !bolehIsi) return null;
   return (
     <section className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/60 p-3 dark:border-violet-900 dark:bg-violet-950/30">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-semibold">Opini Komite untuk Direktur</h3>
+        <h3 className="text-sm font-semibold">{r.zona === "direktur" ? "Opini Komite untuk Direktur" : "Opini Komite"}</h3>
         {r.opini_komite_at && <span className="text-muted-foreground text-xs">diperbarui {waktu(r.opini_komite_at)}</span>}
       </div>
       {ubah ? <FormOpiniKomite awal={r.opini_komite ?? ""} jalankan={jalankan} onSelesai={() => setUbah(false)} />
         : r.opini_komite ? <TeksKaya md={r.opini_komite} />
-        : <p className="text-muted-foreground text-sm">Belum ada opini. Komite bisa menulis kajian kelayakan (NPV, IRR, payback, syarat, tabel arus kas) sebagai bahan putusan Direktur.</p>}
+        : <p className="text-muted-foreground text-sm">Belum ada opini. Komite bisa menulis kajian kelayakan (NPV, IRR, payback, syarat, tabel arus kas) sebagai bahan {r.zona === "direktur" ? "putusan Direktur" : "forum & putusan Direksi"}.</p>}
       {bolehIsi && !ubah && <Button size="sm" variant="outline" onClick={() => setUbah(true)}>{r.opini_komite ? "Ubah opini" : "Tulis opini"}</Button>}
     </section>
   );
