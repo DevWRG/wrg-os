@@ -655,7 +655,7 @@ export function terjemahGalatWeb(m: string): { status: number; pesan: string } {
     [/NOMOR_SPH_BELUM_DIATUR/, 409, "Penomoran SPH belum diatur — isi Pengaturan SPH (nomor berikutnya) dulu."],
     [/sph_nomor_uq/, 409, "Nomor SPH berikutnya sudah pernah dipakai — periksa 'nomor berikutnya' di Pengaturan SPH."],
     [/SPH_BELUM_BOLEH/, 409, "SPH hanya terbit bersama penawaran."],
-    [/OPINI_HANYA_ZONA_DIREKTUR/, 409, "Opini Komite hanya untuk usulan Zona Direktur."],
+    [/OPINI_HANYA_ZONA_(FORUM_)?DIREKTUR/, 409, "Opini Komite hanya untuk usulan Zona Forum atau Direktur."],
     [/OPINI_TERKUNCI/, 409, "Direksi sudah memutus — opini Komite tidak bisa diubah lagi."],
     [/OPINI_TERLALU_PANJANG/, 400, "Opini paling panjang 20.000 huruf."],
     [/PKS_SUDAH_COCOK/, 409, "PKS cocok dengan putusan — tidak perlu restu, catat langsung dengan Cocokkan & simpan."],
