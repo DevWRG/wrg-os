@@ -64,6 +64,22 @@ export interface OpenclawRecord {
   geo_lon?: number | null;
   geo_ts?: string | null;
   geo_address?: string | null;
+  // diisi tap V4 openclaw untuk pesan tumpukan offline
+  offline_backlog?: boolean;
+  arrived_ms?: number;
+}
+
+/** processed_result untuk baris tumpukan offline (lihat ingestOpenclawMessages). */
+export function tandaBacklog(rec: OpenclawRecord): Record<string, unknown> {
+  const pesanMs = typeof rec.ts_ms === "number" ? rec.ts_ms : rec.ts ? Date.parse(rec.ts) : NaN;
+  const tibaMs = typeof rec.arrived_ms === "number" ? rec.arrived_ms : NaN;
+  return {
+    src: "openclaw offline backlog",
+    tiba: Number.isFinite(tibaMs) ? new Date(tibaMs).toISOString() : null,
+    telat_menit:
+      Number.isFinite(tibaMs) && Number.isFinite(pesanMs) ? Math.round((tibaMs - pesanMs) / 60000) : null,
+    catatan: "tidak diproses/dibalas otomatis — tiba setelah reconnect",
+  };
 }
 
 function mapOpenclaw(rec: OpenclawRecord): {
@@ -107,8 +123,14 @@ function mapOpenclaw(rec: OpenclawRecord): {
 }
 
 // Ingest record openclaw → wa_message, idempoten by input_hash (skip duplikat).
+//
+// `backlog: true` = pesan tumpukan offline (tap V4 openclaw: tiba lewat
+// `append` setelah reconnect, lebih tua dari jendela balas). Disimpan dengan
+// processed_at terisi supaya processUnprocessed TIDAK menyapunya → bot diam,
+// tidak membalas ratusan pesan basi sekaligus setelah gangguan panjang.
 export async function ingestOpenclawMessages(
   records: OpenclawRecord[],
+  opts: { backlog?: boolean } = {},
 ): Promise<{ ingested: number; skipped: number; groups: string[] }> {
   const sql = db();
   const groups = new Set<string>();
@@ -129,13 +151,16 @@ export async function ingestOpenclawMessages(
     await sql`
       INSERT INTO wa_message
         (group_jid, group_name, sender_jid, sender_name, message_type, body, input_hash, received_at, message_id,
-         media_path, geo_lat, geo_lon, geo_ts, geo_address)
+         media_path, geo_lat, geo_lon, geo_ts, geo_address,
+         processed_at, processed_kind, processed_result)
       VALUES
         (${input.group_jid}, ${input.group_name ?? null}, ${input.sender_jid ?? null},
          ${input.sender_name ?? null}, ${input.message_type ?? "text"}, ${input.body ?? null},
          ${hash}, ${input.received_at ?? sql`now()`}, ${messageId},
          ${input.media_path ?? null}, ${input.geo_lat ?? null}, ${input.geo_lon ?? null},
-         ${input.geo_ts ?? null}, ${input.geo_address ?? null})
+         ${input.geo_ts ?? null}, ${input.geo_address ?? null},
+         ${opts.backlog ? sql`now()` : null}, ${opts.backlog ? "offline-backlog" : null},
+         ${opts.backlog ? sql.json(tandaBacklog(rec) as never) : null})
     `;
     groups.add(input.group_jid);
     ingested += 1;
