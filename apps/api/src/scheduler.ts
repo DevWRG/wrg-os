@@ -105,6 +105,7 @@ let status: ScheduleStatus = { enabled: false, timezone: "", jobs: [] };
 // mengikuti pola yang sama. Lihat repo/job-run.ts.
 interface SlotJob { nama: string | null; expr: string; task?: ScheduledTask }
 const terdaftar = new Map<string, SlotJob>();
+const MISSED_TOLERANCE_MS = 30_000;
 let slotTerakhir: SlotJob | null = null;
 
 const cron = {
@@ -116,13 +117,24 @@ const cron = {
     if (!ok) console.warn(`[scheduler] ekspresi cron TIDAK VALID, job dilewati: ${JSON.stringify(expr)}`);
     return ok;
   },
+  // Toleransi telat: bawaan node-cron 4 hanya 1 dtk — tick yang telat >1 dtk (event loop
+  // sibuk, Mac bangun dari sleep) DIBUANG diam-diam, bukan ditunda. Begitulah detect-leave,
+  // accurate-po-sync, sales-alert-eval dkk. tak jalan 11/15/16 Nov tanpa jejak di job_run.
+  // 30 dtk menelan jeda event loop wajar; sleep berjam-jam tetap dilewati (sengaja — job
+  // basi tak perlu menyusul). Yang tetap terlewat kini tercatat di log.
   schedule(expr: string, fn: () => unknown, opts?: Parameters<typeof nodeCron.schedule>[2]): ScheduledTask {
     const slot: SlotJob = { nama: null, expr };
     const task = nodeCron.schedule(
       expr,
       () => catatJalan(slot.nama ?? `tanpa-nama ${expr}`, expr, () => task.getNextRun(), fn),
-      opts,
+      { missedExecutionTolerance: MISSED_TOLERANCE_MS, ...opts },
     );
+    // Listener ini sekaligus menggantikan peringatan bawaan node-cron (yang tanpa nama job).
+    task.on("execution:missed", (ctx) => {
+      console.warn(
+        `[scheduler] run TERLEWAT (telat >${MISSED_TOLERANCE_MS} ms): ${slot.nama ?? expr} @ ${ctx.date?.toISOString?.() ?? "?"}`,
+      );
+    });
     slot.task = task;
     slotTerakhir = slot;
     return task;
