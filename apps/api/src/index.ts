@@ -6544,8 +6544,9 @@ app.get("/cashin/kelengkapan", async (c) => {
   return c.json({ dari, sampai, ...(await matriksKelengkapan(dari, sampai)) });
 });
 
-app.post("/webhooks/wa", async (c) => {
-  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+// Baca body webhook openclaw → array record. Mengembalikan Response bila
+// ditolak (secret salah / body tak valid). Dipakai /webhooks/wa & /webhooks/wa/backlog.
+async function bacaWebhookWa(c: Context): Promise<OpenclawRecord[] | Response> {
   const secret = process.env.WA_WEBHOOK_SECRET;
   if (secret && c.req.header("x-wa-secret") !== secret) {
     return c.json({ error: "unauthorized" }, 401);
@@ -6557,16 +6558,35 @@ app.post("/webhooks/wa", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
   // Normalisasi ke array record openclaw.
-  let records: OpenclawRecord[];
-  if (Array.isArray(body)) records = body as OpenclawRecord[];
-  else if (body && typeof body === "object") {
+  if (Array.isArray(body)) return body as OpenclawRecord[];
+  if (body && typeof body === "object") {
     const b = body as { messages?: unknown; events?: unknown };
-    if (Array.isArray(b.messages)) records = b.messages as OpenclawRecord[];
-    else if (Array.isArray(b.events)) records = b.events as OpenclawRecord[];
-    else records = [body as OpenclawRecord]; // single record
-  } else {
-    return c.json({ error: "payload tidak dikenali" }, 400);
+    if (Array.isArray(b.messages)) return b.messages as OpenclawRecord[];
+    if (Array.isArray(b.events)) return b.events as OpenclawRecord[];
+    return [body as OpenclawRecord]; // single record
   }
+  return c.json({ error: "payload tidak dikenali" }, 400);
+}
+
+// Tumpukan offline dari tap V4 openclaw: pesan yang baru tiba setelah gateway
+// reconnect (gangguan internet), lebih tua dari jendela balas openclaw. HANYA
+// disimpan (processed_at terisi, kind 'offline-backlog'); sengaja TIDAK memicu
+// processUnprocessed / balasan — membalas ratusan pesan basi sekaligus ke grup
+// lebih merugikan daripada diam. Endpoint terpisah (bukan flag di /webhooks/wa)
+// supaya bridge baru yang bicara ke API lama dapat 404 dan menahan pesannya,
+// bukan diam-diam diproses & dibalas.
+app.post("/webhooks/wa/backlog", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const records = await bacaWebhookWa(c);
+  if (records instanceof Response) return records;
+  if (records.length === 0) return c.json({ ingested: 0, skipped: 0, groups: [] });
+  return c.json(await ingestOpenclawMessages(records, { backlog: true }), 201);
+});
+
+app.post("/webhooks/wa", async (c) => {
+  if (!isDbEnabled()) return c.json({ error: "DATABASE_URL off" }, 503);
+  const records = await bacaWebhookWa(c);
+  if (records instanceof Response) return records;
   if (records.length === 0) return c.json({ ingested: 0, skipped: 0, groups: [] });
   const result = await ingestOpenclawMessages(records);
   // Proses inbound (#PLAN/#REPORT → tabel + balas) bila WA_INBOUND_PROCESS=true.

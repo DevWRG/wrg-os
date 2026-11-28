@@ -17,13 +17,14 @@
 //   WRG_WEBHOOK_URL         ('' = inbound OFF)        mis. http://localhost:4000/webhooks/wa
 //   WRG_WEBHOOK_SECRET      ('')                      header x-wa-secret ke webhook
 //   CAPTURE_DIR             (default ~/.openclaw/tmp/wrg-monitor/messages)
+//   BACKLOG_DIR             (default ~/.openclaw/tmp/wrg-monitor/backlog)  tumpukan offline tap V4
 //   POLL_MS                 (default 4000)            interval tail inbound
 //   OFFSET_FILE             (default ~/.wrg-wa-bridge-offsets.json)
 
 import http from "node:http";
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
-import { parseDevGroups, pilihTujuan, ringkasRouting } from "./routing.mjs";
+import { parseDevGroups, pilihTujuan, ringkasRouting, urlBacklog } from "./routing.mjs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -41,6 +42,7 @@ const WEBHOOK_URL_DEV = process.env.WRG_WEBHOOK_URL_DEV || "";
 const WEBHOOK_SECRET_DEV = process.env.WRG_WEBHOOK_SECRET_DEV || "";
 const ROUTING = { devGroups: DEV_GROUPS, devUrl: WEBHOOK_URL_DEV, devSecret: WEBHOOK_SECRET_DEV, prodUrl: WEBHOOK_URL, prodSecret: WEBHOOK_SECRET };
 const CAPTURE_DIR = process.env.CAPTURE_DIR || join(homedir(), ".openclaw/tmp/wrg-monitor/messages");
+const BACKLOG_DIR = process.env.BACKLOG_DIR || join(homedir(), ".openclaw/tmp/wrg-monitor/backlog");
 const POLL_MS = Number(process.env.POLL_MS || 4000);
 const OFFSET_FILE = process.env.OFFSET_FILE || join(homedir(), ".wrg-wa-bridge-offsets.json");
 const OCR_ENABLED = (process.env.WA_BRIDGE_OCR || "true").toLowerCase() !== "false";
@@ -157,14 +159,26 @@ function scanDirs() {
   ]);
   return [...dates].map((d) => join(CAPTURE_DIR, d));
 }
-async function postWebhook(rec) {
+// Tumpukan offline (tap V4 openclaw) ditulis ke BACKLOG_DIR/<tanggal-UTC-TIBA>/
+// — dir terpisah supaya bridge lama tak pernah meneruskannya ke /webhooks/wa
+// (yang memproses & membalas). Scan 7 hari: tumpukan tetap terkirim walau
+// bridge sempat mati beberapa hari.
+function scanBacklogDirs() {
+  const now = Date.now();
+  return Array.from({ length: 7 }, (_, i) => join(BACKLOG_DIR, new Date(now - i * 86400000).toISOString().slice(0, 10)));
+}
+async function postWebhook(rec, { backlog = false } = {}) {
   // Melempar kalau grup dev terdaftar tapi tujuannya belum dikonfigurasi —
   // pesan tertahan & terlihat, TIDAK dialihkan diam-diam ke prod.
   const tujuan = pilihTujuan(rec, ROUTING);
+  // Backlog → /webhooks/wa/backlog (simpan saja, tanpa proses/balas). API lama
+  // yang belum punya endpoint ini menjawab 404 → dilempar → pesan TERTAHAN,
+  // bukan jatuh ke /webhooks/wa.
+  const url = backlog ? urlBacklog(tujuan.url) : tujuan.url;
   const headers = { "content-type": "application/json" };
   if (tujuan.secret) headers["x-wa-secret"] = tujuan.secret;
-  const r = await fetch(tujuan.url, { method: "POST", headers, body: JSON.stringify(rec) });
-  if (!r.ok) throw new Error(`webhook ${tujuan.keDev ? "DEV" : "prod"} ${r.status} (${tujuan.url})`);
+  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(rec) });
+  if (!r.ok) throw new Error(`webhook ${backlog ? "backlog " : ""}${tujuan.keDev ? "DEV" : "prod"} ${r.status} (${url})`);
 }
 
 let offsets = loadOffsets();
@@ -182,10 +196,22 @@ async function pollInbound() {
       await pollFile(join(dir, f));
     }
   }
+  for (const dir of scanBacklogDirs()) {
+    if (!existsSync(dir)) continue;
+    let files;
+    try {
+      files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      await pollFile(join(dir, f), { backlog: true });
+    }
+  }
   firstScan = false;
 }
 
-async function pollFile(path) {
+async function pollFile(path, { backlog = false } = {}) {
   let size;
   try {
     size = statSync(path).size;
@@ -194,9 +220,12 @@ async function pollFile(path) {
   }
   const prev = offsets[path] ?? null;
   // Scan pertama: set offset = EOF (jangan replay histori), kecuali file baru.
+  // Backlog selalu dari 0: isinya memang tumpukan yang belum terkirim, dan
+  // /webhooks/wa/backlog idempoten (input_hash) serta tak pernah membalas.
   if (prev === null) {
-    offsets[path] = firstScan ? size : 0;
-    if (firstScan) return;
+    const lewati = firstScan && !backlog;
+    offsets[path] = lewati ? size : 0;
+    if (lewati) return;
   }
   const from = offsets[path];
   if (size <= from) return;
@@ -237,7 +266,7 @@ async function pollFile(path) {
       }
     }
     try {
-      await postWebhook(rec); // format capture = OpenclawRecord (idempoten di wrg-os)
+      await postWebhook(rec, { backlog }); // format capture = OpenclawRecord (idempoten di wrg-os)
     } catch (e) {
       log("[inbound] forward gagal:", String(e));
       // jangan majukan offset jika gagal → retry lain kali

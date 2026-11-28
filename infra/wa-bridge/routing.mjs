@@ -48,6 +48,21 @@ export function pilihTujuan(rec, cfg) {
   return { url: cfg.devUrl, secret: cfg.devSecret, keDev: true };
 }
 
+/**
+ * URL endpoint tumpukan offline dari URL webhook biasa:
+ * …/webhooks/wa → …/webhooks/wa/backlog. Melempar bila URL tak berakhiran
+ * /webhooks/wa — lebih baik tertahan daripada menebak endpoint yang salah.
+ */
+export function urlBacklog(webhookUrl) {
+  const u = new URL(webhookUrl);
+  const p = u.pathname.replace(/\/+$/, "");
+  if (!p.endsWith("/webhooks/wa")) {
+    throw new Error(`tak bisa menurunkan URL backlog dari ${webhookUrl} (harus berakhiran /webhooks/wa)`);
+  }
+  u.pathname = p + "/backlog";
+  return u.toString();
+}
+
 /** Ringkasan konfigurasi untuk dicetak saat bridge menyala. */
 export function ringkasRouting(cfg) {
   if (cfg.devGroups.size === 0) return "routing dev: MATI (WA_DEV_GROUPS kosong) — semua ke prod";

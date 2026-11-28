@@ -49,3 +49,17 @@ Daemonize (pilih salah satu): `launchd` plist, `pm2 start bridge.mjs`, atau
   diteruskan. Format capture = `OpenclawRecord` → wrg-os idempoten (input_hash),
   aman bila terkirim ganda.
 - Pesan `fromMe` di-skip (tak ikut diproses).
+
+## Tumpukan offline (backlog)
+
+Setelah gangguan internet, WhatsApp mengirim ulang pesan yang tertahan sebagai
+`append`. openclaw membuang yang lebih tua dari jendela balasnya (filter
+`shouldSkipStaleAppend`) — gangguan 26–27 Nov 2026 kehilangan 420 pesan grup
+dengan cara ini. Tap V4 (`wrg-monitor/scripts/reapply-patch.sh`) tetap menulis
+pesan itu, tapi ke `BACKLOG_DIR/<tanggal-UTC-tiba>/<jid>.jsonl` (bukan
+`CAPTURE_DIR`) dengan `offline_backlog: true`.
+
+Bridge meneruskan isi `BACKLOG_DIR` ke `/webhooks/wa/backlog`, yang menyimpan
+baris dengan `processed_kind='offline-backlog'` dan **tidak** memproses atau
+membalas. API lama tanpa endpoint itu menjawab 404 → pesan tertahan & dicoba
+lagi, tidak pernah jatuh ke `/webhooks/wa`.
